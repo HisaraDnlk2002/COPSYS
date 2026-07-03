@@ -1,0 +1,112 @@
+.app-shell {
+  display: flex;
+  min-height: 100vh;
+  background: var(--color-bg);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px var(--space-xl);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.topbar-brand {
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  color: var(--color-accent);
+}
+
+.topbar-user {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.topbar-user img {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.topbar-user .name {
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+}
+
+.topbar-user .role {
+  font-size: 12px;
+  color: var(--color-text-faint);
+  text-transform: capitalize;
+}
+
+.sidebar {
+  width: 248px;
+  border-right: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: var(--space-lg) var(--space-md);
+  min-height: 100vh;
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  color: #333;
+  text-decoration: none;
+  font-size: var(--font-size-base);
+}
+
+.sidebar-link:hover {
+  background: var(--color-surface-muted);
+}
+
+.sidebar-link.active {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.logout-btn {
+  background: var(--color-primary);
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 14px;
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.logout-btn:hover {
+  background: var(--color-primary-hover);
+}
+
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.page-body {
+  padding: var(--space-xl);
+}
+
+.page-loading {
+  padding: 48px;
+  text-align: center;
+  color: var(--color-text-faint);
+}

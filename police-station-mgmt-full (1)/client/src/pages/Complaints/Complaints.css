@@ -1,0 +1,26 @@
+.complaints-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-lg);
+}
+
+.complaint-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 var(--space-lg);
+}
+
+.complaint-form-grid .field-full {
+  grid-column: 1 / -1;
+}
+
+.section-label {
+  font-size: var(--font-size-base);
+  font-weight: 700;
+  margin: var(--space-lg) 0 var(--space-md);
+}
+
+.section-label:first-child {
+  margin-top: 0;
+}

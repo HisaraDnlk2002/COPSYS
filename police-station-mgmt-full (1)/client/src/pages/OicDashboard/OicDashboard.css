@@ -1,0 +1,70 @@
+.oic-header {
+  margin-bottom: var(--space-lg);
+}
+
+.oic-subtitle {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.oic-panels {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-lg);
+  margin-top: var(--space-lg);
+}
+
+@media (max-width: 1000px) {
+  .oic-panels {
+    grid-template-columns: 1fr;
+  }
+}
+
+.oic-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
+}
+
+.oic-panel-header h3 {
+  font-size: var(--font-size-base);
+}
+
+.pending-count-badge {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.inline-actions {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+.icon-btn {
+  border: none;
+  background: var(--color-surface-muted);
+  border-radius: var(--radius-sm);
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-btn.approve { color: var(--color-success); }
+.icon-btn.reject { color: var(--color-danger); }
+.icon-btn:hover { background: var(--color-border); }
+
+.assign-select {
+  font-size: var(--font-size-sm);
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+}

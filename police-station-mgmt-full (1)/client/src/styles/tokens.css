@@ -1,0 +1,54 @@
+/* Design tokens — every component should reference these variables
+   instead of hardcoding colors/spacing, so the whole app stays visually
+   consistent and easy to retheme later. */
+
+:root {
+  /* Brand */
+  --color-primary: #1c3f9e;       /* main blue — buttons, active nav, links */
+  --color-primary-hover: #16327d;
+  --color-primary-light: #d8e6fb; /* active nav background, light accents */
+  --color-accent: #2f5fd6;        /* lighter blue — topbar brand text */
+
+  /* Surfaces */
+  --color-bg: #ffffff;
+  --color-surface-muted: #f3f6fd; /* hover states, subtle panels */
+  --color-surface-card: #eaf2fd;  /* dashboard stat cards */
+
+  /* Borders */
+  --color-border: #e2e2e2;
+  --color-border-strong: #1a1a1a;
+
+  /* Text */
+  --color-text: #1a1a1a;
+  --color-text-muted: #6b6b6b;
+  --color-text-faint: #9a9a9a;
+
+  /* Status */
+  --color-success: #1e7e34;
+  --color-success-bg: #e6f4ea;
+  --color-warning: #b8860b;
+  --color-warning-bg: #fff6e0;
+  --color-danger: #c62828;
+  --color-danger-bg: #fdecea;
+  --color-info: #1c3f9e;
+  --color-info-bg: #e8f0fc;
+
+  /* Spacing scale */
+  --space-xs: 6px;
+  --space-sm: 10px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+
+  /* Radius */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  /* Type */
+  --font-base: "Segoe UI", Arial, sans-serif;
+  --font-size-sm: 13px;
+  --font-size-base: 15px;
+  --font-size-lg: 20px;
+  --font-size-xl: 26px;
+}

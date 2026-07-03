@@ -1,0 +1,142 @@
+.roster-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-lg);
+}
+
+.roster-tool-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr auto;
+  gap: var(--space-md);
+  align-items: end;
+}
+
+@media (max-width: 900px) {
+  .roster-tool-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.roster-weeks-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-lg);
+}
+
+.roster-week-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.roster-week-row:hover {
+  background: var(--color-surface-muted);
+}
+
+.roster-week-row.active {
+  border-color: var(--color-primary);
+  background: var(--color-primary-light);
+}
+
+.roster-grid-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+}
+
+.roster-grid-table th,
+.roster-grid-table td {
+  border: 1px solid var(--color-border);
+  padding: 8px 12px;
+  text-align: center;
+}
+
+.roster-grid-table th:first-child,
+.roster-grid-table td:first-child {
+  text-align: left;
+  font-weight: 600;
+}
+
+.roster-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.roster-cell.p { background: var(--color-success-bg); color: var(--color-success); }
+.roster-cell.l { background: var(--color-warning-bg); color: var(--color-warning); }
+.roster-cell.t { background: var(--color-info-bg); color: var(--color-info); }
+.roster-cell.empty { background: transparent; color: var(--color-text-faint); cursor: default; }
+
+.roster-footer-stats {
+  display: flex;
+  gap: var(--space-xl);
+  margin-top: var(--space-lg);
+  padding-top: var(--space-lg);
+  border-top: 1px solid var(--color-border);
+}
+
+.roster-footer-stat {
+  text-align: center;
+}
+
+.roster-footer-stat .value {
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+}
+
+.roster-footer-stat .label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.roster-actions-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  margin-top: var(--space-lg);
+}
+
+.unfilled-warning {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+  padding: var(--space-md);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-md);
+  font-size: var(--font-size-sm);
+}
+
+.suggestion-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.suggestion-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.suggestion-item .officer-name {
+  font-weight: 600;
+}
+
+.suggestion-item .reason {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}

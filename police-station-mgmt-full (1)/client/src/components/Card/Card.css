@@ -1,0 +1,41 @@
+.card {
+  border-radius: var(--radius-lg);
+  box-sizing: border-box;
+}
+
+/* Panel — large bordered container, e.g. "Weekly Duty Schedule" */
+.card-panel {
+  border: 1px solid var(--color-border-strong);
+  padding: var(--space-lg);
+  background: var(--color-bg);
+}
+
+/* Stat — small dashboard tile, e.g. "Today's Duty" */
+.card-stat {
+  padding: var(--space-md) var(--space-lg);
+  border: 1px solid var(--color-border);
+}
+
+.card-stat.card-muted {
+  background: var(--color-surface-card);
+  border-color: transparent;
+}
+
+.stat-card-label {
+  margin: 0 0 var(--space-sm) 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.stat-card-value {
+  margin: 0 0 var(--space-xs) 0;
+  font-size: var(--font-size-xl);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.stat-card-caption {
+  margin: 0;
+  font-size: var(--font-size-base);
+  color: var(--color-text);
+}
