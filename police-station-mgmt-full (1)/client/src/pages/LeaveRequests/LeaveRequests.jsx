@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Button, InputField, Card, StatCard, Table, Badge, Loader } from "../../components";
+import { SearchableSelect } from "../../components";
 import { getMyLeaveRequests, getMyLeaveBalance, applyForLeave } from "../../services/leave";
+import { searchOfficers } from "../../services/officers";
 import "./LeaveRequests.css";
 
 const LEAVE_CATEGORY_OPTIONS = [
@@ -30,7 +32,8 @@ export function LeaveRequestsPage() {
     startDate: "",
     endDate: "",
     justification: "",
-    emergencyContact: "",
+    emergencyContact: "", // phone number kept for the submission payload
+    emergencyContactOfficer: null, // full { value, label, phone } option for the search field
     actingOfficer: "",
   });
   const [formError, setFormError] = useState("");
@@ -70,6 +73,14 @@ export function LeaveRequestsPage() {
     setForm((f) => ({ ...f, [key]: value }));
   }
 
+  function handleEmergencyContactChange(option) {
+    setForm((f) => ({
+      ...f,
+      emergencyContactOfficer: option,
+      emergencyContact: option?.phone || "",
+    }));
+  }
+
   const days = daysBetween(form.startDate, form.endDate);
   const needsLongJustification = form.leaveType === "annual" && days > 5;
 
@@ -101,7 +112,15 @@ export function LeaveRequestsPage() {
         emergencyContact: form.emergencyContact,
         remarks: form.justification.slice(0, 60),
       });
-      setForm({ leaveType: "", startDate: "", endDate: "", justification: "", emergencyContact: "", actingOfficer: "" });
+      setForm({
+        leaveType: "",
+        startDate: "",
+        endDate: "",
+        justification: "",
+        emergencyContact: "",
+        emergencyContactOfficer: null,
+        actingOfficer: "",
+      });
       setView("history");
       await loadData();
     } catch (err) {
@@ -157,8 +176,15 @@ export function LeaveRequestsPage() {
               />
             </div>
 
-            <InputField label="Emergency Contact" value={form.emergencyContact}
-              onChange={(e) => updateField("emergencyContact", e.target.value)} placeholder="Phone number" />
+            <SearchableSelect
+              label="Emergency Contact"
+              required
+              value={form.emergencyContactOfficer}
+              onChange={handleEmergencyContactChange}
+              searchFn={searchOfficers}
+              placeholder="Search officer by name…"
+              helperText="Search the central officer directory and select a contact"
+            />
 
             <div className="consent-box">
               <input type="checkbox" required defaultChecked style={{ marginTop: 3 }} />

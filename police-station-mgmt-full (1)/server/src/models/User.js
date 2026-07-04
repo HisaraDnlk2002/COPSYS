@@ -14,6 +14,10 @@ const userSchema = new mongoose.Schema(
 
     role: { type: String, enum: ROLES, required: true },
 
+    phoneNumber: { type: String, required: true, trim: true },
+
+    address: { type: String, required: true, trim: true },
+
     status: {
       type: String,
       enum: ["active", "disabled", "pending"],
@@ -31,6 +35,7 @@ const userSchema = new mongoose.Schema(
 // calls user.toJSON() directly when returning the logged-in user.
 userSchema.methods.toJSON = function () {
   const obj = this.toObject();
+  obj.id = obj._id.toString();
   delete obj.passwordHash;
   return obj;
 };

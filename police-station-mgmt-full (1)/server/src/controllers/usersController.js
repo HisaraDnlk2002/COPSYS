@@ -31,11 +31,11 @@ const VALID_ROLES = ["admin", "oic", "duty_officer", "inventory_officer", "offic
 
 // POST /api/users — admin only, registers a new officer
 // Matches the "Register new Personnel" form: full name, rank & number,
-// department, role, plus a password to set their login.
+// department, role, phone number, address, plus a password to set their login.
 async function createUser(req, res) {
-  const { fullName, rankAndNumber, department, role, password } = req.body;
+  const { fullName, rankAndNumber, department, role, phoneNumber, address, password } = req.body;
 
-  if (!fullName || !rankAndNumber || !department || !role || !password) {
+  if (!fullName || !rankAndNumber || !department || !role || !phoneNumber || !address || !password) {
     return res.status(400).json({ error: "All fields are required" });
   }
 
@@ -56,6 +56,8 @@ async function createUser(req, res) {
       rankAndNumber,
       department,
       role,
+      phoneNumber,
+      address,
       passwordHash,
       stationId: req.user.stationId,
       status: "active",
@@ -118,4 +120,21 @@ async function resetPassword(req, res) {
   }
 }
 
-module.exports = { getMe, listUsers, createUser, updateUserStatus, resetPassword };
+// GET /api/users/stats — admin only. Powers the four stat cards on the
+// Personnel & User Management page (Total / Active / Pending / Disabled).
+async function getStats(req, res) {
+  try {
+    const [totalPersonnel, activeSystemUsers, pendingApproves, disabledAccounts] = await Promise.all([
+      User.countDocuments({ stationId: req.user.stationId }),
+      User.countDocuments({ stationId: req.user.stationId, status: "active" }),
+      User.countDocuments({ stationId: req.user.stationId, status: "pending" }),
+      User.countDocuments({ stationId: req.user.stationId, status: "disabled" }),
+    ]);
+    return res.json({ totalPersonnel, activeSystemUsers, pendingApproves, disabledAccounts });
+  } catch (err) {
+    console.error("getStats error:", err);
+    return res.status(500).json({ error: "Could not load personnel stats" });
+  }
+}
+
+module.exports = { getMe, listUsers, getStats, createUser, updateUserStatus, resetPassword };

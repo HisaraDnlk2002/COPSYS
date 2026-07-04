@@ -19,6 +19,7 @@ const CATEGORY_OPTIONS = [
 const EMPTY_FORM = {
   fullName: "",
   nic: "",
+  passportId: "",
   contactNumber: "",
   occupation: "",
   address: "",
@@ -37,6 +38,8 @@ export function ComplaintsPage() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [formError, setFormError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [search, setSearch] = useState("");
+  const [viewing, setViewing] = useState(null);
 
   async function loadData() {
     setLoading(true);
@@ -96,9 +99,28 @@ export function ComplaintsPage() {
     }
   }
 
+  // Real records nest complainant fields under `complainant`; dummy data
+  // keeps them flat. This helper reads either shape safely.
+  function complainantName(row) {
+    return row.complainant?.fullName || row.fullName || "";
+  }
+
+  const filteredComplaints = complaints.filter((row) => {
+    if (!search.trim()) return true;
+    const q = search.trim().toLowerCase();
+    return (
+      row.refId?.toLowerCase().includes(q) ||
+      complainantName(row).toLowerCase().includes(q) ||
+      row.category?.toLowerCase().includes(q) ||
+      row.description?.toLowerCase().includes(q) ||
+      (row.complainant?.nic || "").toLowerCase().includes(q) ||
+      (row.complainant?.passportId || "").toLowerCase().includes(q)
+    );
+  });
+
   const columns = [
     { key: "refId", label: "Ref ID" },
-    { key: "fullName", label: "Complainant" },
+    { key: "fullName", label: "Complainant", render: (row) => complainantName(row) },
     { key: "category", label: "Category" },
     { key: "dateOfIncident", label: "Date of Incident" },
     {
@@ -110,6 +132,15 @@ export function ComplaintsPage() {
         ) : (
           <Badge status={row.status} />
         ),
+    },
+    {
+      key: "actions",
+      label: "",
+      render: (row) => (
+        <Button variant="ghost" type="button" onClick={() => setViewing(row)}>
+          View
+        </Button>
+      ),
     },
   ];
 
@@ -133,6 +164,7 @@ export function ComplaintsPage() {
             <div className="complaint-form-grid">
               <InputField label="Full Name" required value={form.fullName} onChange={(e) => updateField("fullName", e.target.value)} />
               <InputField label="NIC Number" required value={form.nic} onChange={(e) => updateField("nic", e.target.value)} />
+              <InputField label="Passport ID (Optional)" value={form.passportId} onChange={(e) => updateField("passportId", e.target.value)} placeholder="For foreign nationals" />
               <InputField label="Contact Number" required value={form.contactNumber} onChange={(e) => updateField("contactNumber", e.target.value)} />
               <InputField label="Occupation (Optional)" value={form.occupation} onChange={(e) => updateField("occupation", e.target.value)} />
               <div className="field-full">
@@ -180,9 +212,54 @@ export function ComplaintsPage() {
         )}
       </div>
 
+      <div style={{ marginBottom: 16, maxWidth: 360 }}>
+        <InputField
+          label="Search complaints"
+          placeholder="Search by ref ID, complainant, category, NIC…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+      </div>
+
       <Card variant="panel">
-        <Table columns={columns} data={complaints} emptyMessage="No complaints registered yet" />
+        <Table columns={columns} data={filteredComplaints} emptyMessage="No complaints match your search" />
       </Card>
+
+      {viewing && (
+        <div
+          onClick={() => setViewing(null)}
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
+            display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50,
+          }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520, width: "90%" }}>
+            <Card variant="panel">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <h3 style={{ margin: 0 }}>Complaint {viewing.refId}</h3>
+                <Button variant="ghost" type="button" onClick={() => setViewing(null)}>Close</Button>
+              </div>
+
+              <h4 className="section-label">Complainant</h4>
+              <p><strong>Name:</strong> {complainantName(viewing)}</p>
+              <p><strong>NIC:</strong> {viewing.complainant?.nic || "—"}</p>
+              <p><strong>Passport ID:</strong> {viewing.complainant?.passportId || "—"}</p>
+              <p><strong>Contact Number:</strong> {viewing.complainant?.contactNumber || "—"}</p>
+              <p><strong>Occupation:</strong> {viewing.complainant?.occupation || "—"}</p>
+              <p><strong>Address:</strong> {viewing.complainant?.address || "—"}</p>
+
+              <h4 className="section-label">Incident</h4>
+              <p><strong>Category:</strong> {viewing.category}</p>
+              <p><strong>Date of Incident:</strong> {viewing.dateOfIncident?.slice ? viewing.dateOfIncident.slice(0, 10) : viewing.dateOfIncident}</p>
+              <p><strong>Description:</strong> {viewing.description || "—"}</p>
+              <p>
+                <strong>Status:</strong>{" "}
+                {viewing.severity === "critical" ? <Badge tone="danger">Critical</Badge> : <Badge status={viewing.status} />}
+              </p>
+            </Card>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

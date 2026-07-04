@@ -4,6 +4,7 @@ const complainantSchema = new mongoose.Schema(
   {
     fullName: { type: String, required: true },
     nic: { type: String, default: "" },
+    passportId: { type: String, default: "" },
     contactNumber: { type: String, default: "" },
     occupation: { type: String, default: "" },
     address: { type: String, default: "" },

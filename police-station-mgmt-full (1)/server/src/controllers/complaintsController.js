@@ -48,7 +48,7 @@ async function getOne(req, res) {
 // POST /api/complaints — oic, duty_officer, officer
 // Matches the "Complaint Registration" form: complainant details + incident particulars
 async function create(req, res) {
-  const { fullName, nic, contactNumber, occupation, address, category, dateOfIncident, description, severity } = req.body;
+  const { fullName, nic, passportId, contactNumber, occupation, address, category, dateOfIncident, description, severity } = req.body;
 
   if (!fullName || !nic || !contactNumber || !address || !category || !dateOfIncident || !description) {
     return res.status(400).json({ error: "Please complete all required fields" });
@@ -57,7 +57,7 @@ async function create(req, res) {
   try {
     const complaint = await Complaint.create({
       refId: await generateRefId(),
-      complainant: { fullName, nic, contactNumber, occupation, address },
+      complainant: { fullName, nic, passportId, contactNumber, occupation, address },
       category,
       dateOfIncident,
       description,

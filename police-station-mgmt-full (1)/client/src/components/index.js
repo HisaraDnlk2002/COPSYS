@@ -5,3 +5,4 @@ export { Table } from "./Table/Table";
 export { Badge } from "./Badge/Badge";
 export { Modal } from "./Modal/Modal";
 export { Loader } from "./Loader/Loader";
+export * from "./SearchableSelect/SearchableSelect";

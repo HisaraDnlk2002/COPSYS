@@ -25,7 +25,15 @@ const DEPARTMENT_OPTIONS = [
   { value: "Stores", label: "Stores" },
 ];
 
-const EMPTY_FORM = { fullName: "", rankAndNumber: "", department: "", role: "", password: "" };
+const EMPTY_FORM = {
+  fullName: "",
+  rankAndNumber: "",
+  department: "",
+  role: "",
+  phoneNumber: "",
+  address: "",
+  password: "",
+};
 
 export function PersonnelPage() {
   const [view, setView] = useState("list"); // "list" | "register"
@@ -42,6 +50,8 @@ export function PersonnelPage() {
   const [resetModalUser, setResetModalUser] = useState(null);
   const [newPassword, setNewPassword] = useState("");
   const [resetting, setResetting] = useState(false);
+
+  const [viewUser, setViewUser] = useState(null); // officer shown in the "View More" modal
 
   function loadData() {
     setLoading(true);
@@ -79,7 +89,7 @@ export function PersonnelPage() {
     e.preventDefault();
     setFormError("");
 
-    const required = ["fullName", "rankAndNumber", "department", "role", "password"];
+    const required = ["fullName", "rankAndNumber", "department", "role", "phoneNumber", "address", "password"];
     if (required.some((key) => !form[key])) {
       setFormError("Please complete all fields, including a password.");
       return;
@@ -143,6 +153,7 @@ export function PersonnelPage() {
       label: "Actions",
       render: (r) => (
         <div className="personnel-row-actions">
+          <Button variant="ghost" onClick={() => setViewUser(r)}>View More</Button>
           <Button variant="ghost" onClick={() => setResetModalUser(r)}>Reset Password</Button>
           <Button variant={r.status === "active" ? "danger" : "outline"} onClick={() => handleToggleStatus(r)}>
             {r.status === "active" ? "Disable" : "Enable"}
@@ -190,6 +201,10 @@ export function PersonnelPage() {
                   onChange={(e) => updateField("department", e.target.value)} options={DEPARTMENT_OPTIONS} />
                 <InputField label="Role" type="select" required value={form.role}
                   onChange={(e) => updateField("role", e.target.value)} options={ROLE_OPTIONS} />
+                <InputField label="Phone Number" required value={form.phoneNumber}
+                  onChange={(e) => updateField("phoneNumber", e.target.value)} placeholder="e.g. 0771234567" />
+                <InputField label="Address" required value={form.address}
+                  onChange={(e) => updateField("address", e.target.value)} />
               </div>
 
               <InputField label="Set Password" type="password" required value={form.password}
@@ -257,6 +272,41 @@ export function PersonnelPage() {
           onChange={(e) => setNewPassword(e.target.value)}
           helperText="Minimum 6 characters"
         />
+      </Modal>
+
+      <Modal
+        open={Boolean(viewUser)}
+        onClose={() => setViewUser(null)}
+        title={viewUser ? viewUser.fullName : ""}
+      >
+        {viewUser && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
+            <div>
+              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>Rank & Number</p>
+              <p>{viewUser.rankAndNumber}</p>
+            </div>
+            <div>
+              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>Role</p>
+              <p style={{ textTransform: "capitalize" }}>{viewUser.role?.replace("_", " ")}</p>
+            </div>
+            <div>
+              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>Department</p>
+              <p>{viewUser.department}</p>
+            </div>
+            <div>
+              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>Status</p>
+              <Badge status={viewUser.status} />
+            </div>
+            <div>
+              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>Phone Number</p>
+              <p>{viewUser.phoneNumber || "—"}</p>
+            </div>
+            <div>
+              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>Address</p>
+              <p>{viewUser.address || "—"}</p>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );
