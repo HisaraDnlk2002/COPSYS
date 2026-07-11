@@ -16,13 +16,12 @@ const SystemSettings = require("./models/SystemSettings");
 
 // One account per role so every screen/permission is testable right away.
 const STARTER_ACCOUNTS = [
-  { fullName: "Sgt. Bandara", rankAndNumber: "77412", department: "Administration", role: "admin", password: "admin123" },
-  { fullName: "Insp. Wijesinghe", rankAndNumber: "88214", department: "Command", role: "oic", password: "oic123" },
-  { fullName: "PC Perera", rankAndNumber: "91022", department: "Traffic Control", role: "duty_officer", password: "duty123" },
-  { fullName: "WPC Silva", rankAndNumber: "73310", department: "Stores", role: "inventory_officer", password: "inv123" },
-  { fullName: "PC Nishadi", rankAndNumber: "65521", department: "Crime", role: "officer", password: "officer123" },
+  { fullName: "Sgt. Bandara", rankAndNumber: "77412", department: "Administration", role: "admin", password: "admin123", phoneNumber: "0771234567", address: "Police Headquarters, Colombo" },
+  { fullName: "Insp. Wijesinghe", rankAndNumber: "88214", department: "Command", role: "oic", password: "oic123", phoneNumber: "0772345678", address: "Police Headquarters, Colombo" },
+  { fullName: "PC Perera", rankAndNumber: "91022", department: "Traffic Control", role: "duty_officer", password: "duty123", phoneNumber: "0773456789", address: "Police Headquarters, Colombo" },
+  { fullName: "WPC Silva", rankAndNumber: "73310", department: "Stores", role: "inventory_officer", password: "inv123", phoneNumber: "0774567890", address: "Police Headquarters, Colombo" },
+  { fullName: "PC Nishadi", rankAndNumber: "65521", department: "Crime", role: "officer", password: "officer123", phoneNumber: "0775678901", address: "Police Headquarters, Colombo" },
 ];
-
 async function seed() {
   await connectDB();
 
@@ -32,13 +31,14 @@ async function seed() {
       console.log(`Skipping ${account.rankAndNumber} (${account.role}) — already exists`);
       continue;
     }
-
-    const passwordHash = await bcrypt.hash(account.password, 10);
+const passwordHash = await bcrypt.hash(account.password, 10);
     const user = await User.create({
       fullName: account.fullName,
       rankAndNumber: account.rankAndNumber,
       department: account.department,
       role: account.role,
+      phoneNumber: account.phoneNumber,
+      address: account.address,
       passwordHash,
       status: "active",
     });
