@@ -6,6 +6,13 @@
   background: var(--color-bg);
 }
 
+.login-logo {
+  display: block;
+  width: 120px;
+  height: auto;
+  margin: 0 auto var(--space-lg);
+}
+
 .login-card {
   width: 460px;
   background: var(--color-info-bg);

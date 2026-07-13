@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth";
+import policeLogo from "../../assets/Sri_Lanka_Police_logo.svg.png";
 import "./Login.css";
 
 export function LoginPage() {
@@ -29,6 +30,7 @@ export function LoginPage() {
   return (
     <div className="login-page">
       <form className="login-card" onSubmit={handleSubmit}>
+        <img src={policeLogo} alt="Sri Lanka Police" className="login-logo" />
         <h1 className="login-title">SRI LANKA POLICE</h1>
         <p className="login-subtitle">Airport Station Management System</p>
 

@@ -15,6 +15,12 @@ function wordCount(text) {
   return (text || "").trim().split(/\s+/).filter(Boolean).length;
 }
 
+function todayISO() {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 10);
+}
+
 function daysBetween(start, end) {
   if (!start || !end) return 0;
   const ms = new Date(end) - new Date(start);
@@ -160,9 +166,9 @@ export function LeaveRequestsPage() {
 
             <div className="leave-form-grid">
               <InputField label="Commencing Date" type="date" required value={form.startDate}
-                onChange={(e) => updateField("startDate", e.target.value)} />
+                onChange={(e) => updateField("startDate", e.target.value)} min={todayISO()} />
               <InputField label="Resuming Date" type="date" required value={form.endDate}
-                onChange={(e) => updateField("endDate", e.target.value)} />
+                onChange={(e) => updateField("endDate", e.target.value)} min={form.startDate || todayISO()} />
             </div>
 
             <div className="field-full">

@@ -14,6 +14,8 @@ export function InputField({
   helperText,
   rows = 4,
   id,
+  min,
+  max,
 }) {
   const inputId = id || label?.toLowerCase().replace(/\s+/g, "-");
 
@@ -62,6 +64,8 @@ export function InputField({
           onChange={onChange}
           placeholder={placeholder}
           required={required}
+          min={min}
+          max={max}
         />
       )}
 

@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../auth/useAuth";
 import { navItemsByRole } from "../config/navConfig";
+import policeLogo from "../assets/Sri_Lanka_Police_logo.svg.png";
 import "./DashboardLayout.css";
 
 export function DashboardLayout() {
@@ -30,7 +31,10 @@ export function DashboardLayout() {
 
       <div className="main-content">
         <header className="topbar">
-          <span className="topbar-brand">Police Station Management System</span>
+          <div className="topbar-brand-group">
+            <img src={policeLogo} alt="Sri Lanka Police" className="topbar-logo" />
+            <span className="topbar-brand">Police Station Management System</span>
+          </div>
           <div className="topbar-user">
             <div>
               <div className="name">{user?.fullName}</div>

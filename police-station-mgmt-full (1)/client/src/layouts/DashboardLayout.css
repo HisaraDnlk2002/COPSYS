@@ -13,6 +13,18 @@
   background: var(--color-bg);
 }
 
+.topbar-brand-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.topbar-logo {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+}
+
 .topbar-brand {
   font-size: var(--font-size-lg);
   font-weight: 700;
