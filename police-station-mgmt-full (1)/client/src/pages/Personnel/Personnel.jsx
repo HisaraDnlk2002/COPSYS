@@ -4,6 +4,7 @@ import {
   listUsers,
   getPersonnelStats,
   createUser,
+  updateUser,
   updateUserStatus,
   resetPassword,
 } from "../../services/users";
@@ -35,6 +36,17 @@ const EMPTY_FORM = {
   password: "",
 };
 
+// Fields the Edit User modal can change. Rank & Number (login username)
+// and password are deliberately excluded — those go through their own
+// dedicated flows (registration and Reset Password).
+const EMPTY_EDIT_FORM = {
+  fullName: "",
+  department: "",
+  role: "",
+  phoneNumber: "",
+  address: "",
+};
+
 export function PersonnelPage() {
   const [view, setView] = useState("list"); // "list" | "register"
   const [loading, setLoading] = useState(true);
@@ -52,6 +64,11 @@ export function PersonnelPage() {
   const [resetting, setResetting] = useState(false);
 
   const [viewUser, setViewUser] = useState(null); // officer shown in the "View More" modal
+
+  const [editUser, setEditUser] = useState(null); // officer shown in the "Edit User" modal
+  const [editForm, setEditForm] = useState(EMPTY_EDIT_FORM);
+  const [editError, setEditError] = useState("");
+  const [editSubmitting, setEditSubmitting] = useState(false);
 
   function loadData() {
     setLoading(true);
@@ -98,6 +115,10 @@ export function PersonnelPage() {
       setFormError("Password must be at least 6 characters.");
       return;
     }
+    if (form.phoneNumber.length !== 10) {
+      setFormError("Phone number must be exactly 10 digits.");
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -133,6 +154,52 @@ export function PersonnelPage() {
     }
   }
 
+  // Opens the Edit User modal, pre-filled with that officer's current details.
+  function openEditModal(user) {
+    setEditUser(user);
+    setEditForm({
+      fullName: user.fullName || "",
+      department: user.department || "",
+      role: user.role || "",
+      phoneNumber: user.phoneNumber || "",
+      address: user.address || "",
+    });
+    setEditError("");
+  }
+
+  function updateEditField(key, value) {
+    setEditForm((f) => ({ ...f, [key]: value }));
+  }
+
+  async function handleEditSubmit(e) {
+    e.preventDefault();
+    if (!editUser) return;
+    setEditError("");
+
+    const required = ["fullName", "department", "role", "phoneNumber", "address"];
+    if (required.some((key) => !editForm[key])) {
+      setEditError("Please complete all fields.");
+      return;
+    }
+    if (editForm.phoneNumber.length !== 10) {
+      setEditError("Phone number must be exactly 10 digits.");
+      return;
+    }
+
+    setEditSubmitting(true);
+    try {
+      const updated = await updateUser(editUser.id, editForm);
+      setUsers((prev) =>
+        prev.map((u) => (u.id === editUser.id ? { ...u, ...editForm, ...updated } : u))
+      );
+      setEditUser(null);
+    } catch (err) {
+      setEditError(err.message || "Could not update personnel details");
+    } finally {
+      setEditSubmitting(false);
+    }
+  }
+
   const filteredUsers = users.filter((u) => {
     const term = search.toLowerCase();
     return (
@@ -154,6 +221,7 @@ export function PersonnelPage() {
       render: (r) => (
         <div className="personnel-row-actions">
           <Button variant="ghost" onClick={() => setViewUser(r)}>View More</Button>
+          <Button variant="ghost" onClick={() => openEditModal(r)}>Edit</Button>
           <Button variant="ghost" onClick={() => setResetModalUser(r)}>Reset Password</Button>
           <Button variant={r.status === "active" ? "danger" : "outline"} onClick={() => handleToggleStatus(r)}>
             {r.status === "active" ? "Disable" : "Enable"}
@@ -202,7 +270,8 @@ export function PersonnelPage() {
                 <InputField label="Role" type="select" required value={form.role}
                   onChange={(e) => updateField("role", e.target.value)} options={ROLE_OPTIONS} />
                 <InputField label="Phone Number" required value={form.phoneNumber}
-                  onChange={(e) => updateField("phoneNumber", e.target.value)} placeholder="e.g. 0771234567" />
+                  onChange={(e) => updateField("phoneNumber", e.target.value.replace(/\D/g, "").slice(0, 10))}
+                  placeholder="e.g. 0771234567" />
                 <InputField label="Address" required value={form.address}
                   onChange={(e) => updateField("address", e.target.value)} />
               </div>
@@ -306,6 +375,65 @@ export function PersonnelPage() {
               <p>{viewUser.address || "—"}</p>
             </div>
           </div>
+        )}
+      </Modal>
+
+      <Modal
+        open={Boolean(editUser)}
+        onClose={() => setEditUser(null)}
+        title={editUser ? `Edit ${editUser.fullName}` : ""}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setEditUser(null)}>Cancel</Button>
+            <Button variant="primary" onClick={handleEditSubmit} disabled={editSubmitting}>
+              {editSubmitting ? "Saving…" : "Save Changes"}
+            </Button>
+          </>
+        }
+      >
+        {editUser && (
+          <form onSubmit={handleEditSubmit}>
+            <div style={{ marginBottom: 16 }}>
+              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>RANK AND NUMBER</p>
+              <p>{editUser.rankAndNumber} <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>(login username — cannot be changed here)</span></p>
+            </div>
+            <InputField
+              label="Full Name"
+              required
+              value={editForm.fullName}
+              onChange={(e) => updateEditField("fullName", e.target.value)}
+            />
+            <InputField
+              label="Department/Division"
+              type="select"
+              required
+              value={editForm.department}
+              onChange={(e) => updateEditField("department", e.target.value)}
+              options={DEPARTMENT_OPTIONS}
+            />
+            <InputField
+              label="Role"
+              type="select"
+              required
+              value={editForm.role}
+              onChange={(e) => updateEditField("role", e.target.value)}
+              options={ROLE_OPTIONS}
+            />
+            <InputField
+              label="Phone Number"
+              required
+              value={editForm.phoneNumber}
+              onChange={(e) => updateEditField("phoneNumber", e.target.value.replace(/\D/g, "").slice(0, 10))}
+            />
+            <InputField
+              label="Address"
+              required
+              value={editForm.address}
+              onChange={(e) => updateEditField("address", e.target.value)}
+            />
+
+            {editError && <p style={{ color: "var(--color-danger)" }}>{editError}</p>}
+          </form>
         )}
       </Modal>
     </div>

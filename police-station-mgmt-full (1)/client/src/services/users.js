@@ -39,6 +39,19 @@ export async function createUser(payload) {
   return api.post("/users", payload);
 }
 
+// Edits an existing officer's profile details (name, department, role,
+// phone, address). Does not change rankAndNumber (login username) or
+// password — those have their own dedicated flows.
+export async function updateUser(id, payload) {
+  if (USE_DUMMY_DATA) {
+    const user = dummyUsers.find((u) => u.id === id);
+    if (user) Object.assign(user, payload);
+    return Promise.resolve(user);
+  }
+  // Matches server/src/controllers/usersController.js -> PATCH /api/users/:id
+  return api.patch(`/users/${id}`, payload);
+}
+
 export async function updateUserStatus(id, status) {
   if (USE_DUMMY_DATA) {
     const user = dummyUsers.find((u) => u.id === id);

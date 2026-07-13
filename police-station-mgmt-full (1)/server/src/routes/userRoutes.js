@@ -6,6 +6,7 @@ const {
   listUsers,
   getStats,
   createUser,
+  updateUser,
   updateUserStatus,
   resetPassword,
 } = require("../controllers/usersController");
@@ -18,6 +19,7 @@ router.get("/me", getMe);
 router.get("/stats", requireRole("admin"), getStats);
 router.get("/", requireRole("admin"), listUsers);
 router.post("/", requireRole("admin"), createUser);
+router.patch("/:id", requireRole("admin"), updateUser);
 router.patch("/:id/status", requireRole("admin"), updateUserStatus);
 router.patch("/:id/password", requireRole("admin"), resetPassword);
 

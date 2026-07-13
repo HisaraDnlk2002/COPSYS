@@ -73,6 +73,46 @@ async function createUser(req, res) {
   }
 }
 
+// PATCH /api/users/:id — admin only, edits an existing officer's profile
+// details (name, department, role, phone, address). Deliberately does NOT
+// touch rankAndNumber (that's the login username — changing it is a
+// bigger operation than a profile edit) or the password (use the
+// dedicated "Reset Password" flow for that). Matches the "Edit User"
+// action next to "View More" on the Personnel & User Management page.
+async function updateUser(req, res) {
+  const { id } = req.params;
+  const { fullName, department, role, phoneNumber, address } = req.body;
+
+  if (role && !VALID_ROLES.includes(role)) {
+    return res.status(400).json({ error: "Invalid role" });
+  }
+
+  const updates = {};
+  if (fullName !== undefined) updates.fullName = fullName;
+  if (department !== undefined) updates.department = department;
+  if (role !== undefined) updates.role = role;
+  if (phoneNumber !== undefined) updates.phoneNumber = phoneNumber;
+  if (address !== undefined) updates.address = address;
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: "No fields to update" });
+  }
+
+  try {
+    const user = await User.findByIdAndUpdate(id, updates, {
+      new: true,
+      runValidators: true,
+    });
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    return res.json(user.toJSON());
+  } catch (err) {
+    console.error("updateUser error:", err);
+    return res.status(500).json({ error: "Could not update personnel details" });
+  }
+}
+
 // PATCH /api/users/:id/status — admin only, enable/disable an account
 async function updateUserStatus(req, res) {
   const { id } = req.params;
@@ -137,4 +177,12 @@ async function getStats(req, res) {
   }
 }
 
-module.exports = { getMe, listUsers, getStats, createUser, updateUserStatus, resetPassword };
+module.exports = {
+  getMe,
+  listUsers,
+  getStats,
+  createUser,
+  updateUser,
+  updateUserStatus,
+  resetPassword,
+};
