@@ -1,15 +1,40 @@
 const Complaint = require("../models/Complaint");
+const User = require("../models/User");
 
 async function generateRefId() {
   const count = await Complaint.countDocuments();
   return `CMP-${String(count + 1).padStart(3, "0")}`;
 }
 
-// GET /api/complaints — registry view: oic, duty_officer, officer (own station)
+// GET /api/complaints — registry view: oic, duty_officer, officer, admin (own station)
+// GET /api/complaints?assignedToMe=true — "My assigned complaints" on the Officer Dashboard
+//
+// Deliberately doesn't .populate("assignedOfficerId") — the OIC dashboard's
+// assign dropdown compares assignedOfficerId against a separately-fetched
+// officer list by raw id string, so it needs to stay a plain id. The
+// registry table just needs a name to display, so we attach that
+// separately as `assignedOfficerName` instead of replacing the id field.
 async function list(req, res) {
   try {
-    const complaints = await Complaint.find({ stationId: req.user.stationId }).sort({ createdAt: -1 });
-    return res.json(complaints.map((c) => c.toJSON()));
+    const filter = { stationId: req.user.stationId };
+    if (req.query.assignedToMe === "true") {
+      filter.assignedOfficerId = req.user.uid;
+    }
+    const complaints = await Complaint.find(filter).sort({ createdAt: -1 });
+
+    const officerIds = [...new Set(complaints.map((c) => c.assignedOfficerId?.toString()).filter(Boolean))];
+    const officers = await User.find({ _id: { $in: officerIds } }).select("fullName");
+    const officerNameById = new Map(officers.map((o) => [o._id.toString(), o.fullName]));
+
+    return res.json(
+      complaints.map((c) => {
+        const json = c.toJSON();
+        json.assignedOfficerName = json.assignedOfficerId
+          ? officerNameById.get(json.assignedOfficerId) || ""
+          : "";
+        return json;
+      })
+    );
   } catch (err) {
     console.error("list complaints error:", err);
     return res.status(500).json({ error: "Could not load complaints" });
@@ -45,23 +70,52 @@ async function getOne(req, res) {
   }
 }
 
-// POST /api/complaints — oic, duty_officer, officer
-// Matches the "Complaint Registration" form: complainant details + incident particulars
-async function create(req, res) {
-  const { fullName, nic, passportId, contactNumber, occupation, address, category, dateOfIncident, description, severity } = req.body;
+const SEVERITY_VALUES = ["General", "Serious", "Grave Crime"];
 
-  if (!fullName || !nic || !contactNumber || !address || !category || !dateOfIncident || !description) {
+// POST /api/complaints — oic, duty_officer, officer
+// Matches the "Complaint Registration" form: classification + complainant
+// details + incident particulars.
+async function create(req, res) {
+  const {
+    complaintBook,
+    title,
+    complaintSource,
+    priority,
+    fullName,
+    nic,
+    passportId,
+    contactNumber,
+    occupation,
+    address,
+    category,
+    severity,
+    dateOfIncident,
+    incidentTime,
+    incidentLocation,
+    description,
+  } = req.body;
+
+  if (!complaintBook || !title || !fullName || !address || !category || !dateOfIncident || !incidentLocation || !description) {
     return res.status(400).json({ error: "Please complete all required fields" });
+  }
+  if (!nic && !passportId) {
+    return res.status(400).json({ error: "Please provide either a NIC Number or Passport ID" });
   }
 
   try {
     const complaint = await Complaint.create({
       refId: await generateRefId(),
+      complaintBook,
+      title,
+      complaintSource,
+      priority,
       complainant: { fullName, nic, passportId, contactNumber, occupation, address },
       category,
+      severity: SEVERITY_VALUES.includes(severity) ? severity : "General",
       dateOfIncident,
+      incidentTime,
+      incidentLocation,
       description,
-      severity: severity === "critical" ? "critical" : "normal",
       registeredBy: req.user.uid,
       stationId: req.user.stationId,
     });

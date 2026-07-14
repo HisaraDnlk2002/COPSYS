@@ -16,7 +16,7 @@ async function getMe(req, res) {
   }
 }
 
-// GET /api/users — admin only, lists all personnel at this station
+// GET /api/users — admin and oic, lists all personnel at this station
 async function listUsers(req, res) {
   try {
     const users = await User.find({ stationId: req.user.stationId });

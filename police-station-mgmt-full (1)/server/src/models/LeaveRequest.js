@@ -35,4 +35,12 @@ const leaveRequestSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Frontend tables/handlers key off `id`, not `_id` — see User.js for the
+// same convention.
+leaveRequestSchema.methods.toJSON = function () {
+  const obj = this.toObject();
+  obj.id = obj._id.toString();
+  return obj;
+};
+
 module.exports = mongoose.model("LeaveRequest", leaveRequestSchema);

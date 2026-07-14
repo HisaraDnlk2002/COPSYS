@@ -17,7 +17,7 @@ router.use(verifyToken);
 
 router.get("/me", getMe);
 router.get("/stats", requireRole("admin"), getStats);
-router.get("/", requireRole("admin"), listUsers);
+router.get("/", requireRole("admin", "oic"), listUsers);
 router.post("/", requireRole("admin"), createUser);
 router.patch("/:id", requireRole("admin"), updateUser);
 router.patch("/:id/status", requireRole("admin"), updateUserStatus);

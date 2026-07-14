@@ -1,14 +1,11 @@
 const express = require("express");
 const { verifyToken } = require("../middleware/verifyToken");
 const { requireRole } = require("../middleware/requireRole");
-const { getSettings, updateSettings } = require("../controllers/settingsController");
+const { list } = require("../controllers/auditLogController");
 
 const router = express.Router();
 
 router.use(verifyToken);
-router.use(requireRole("oic", "admin"));
-
-router.get("/", getSettings);
-router.patch("/", updateSettings);
+router.get("/", requireRole("admin"), list);
 
 module.exports = router;

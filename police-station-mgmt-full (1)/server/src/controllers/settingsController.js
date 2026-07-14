@@ -1,6 +1,6 @@
 const SystemSettings = require("../models/SystemSettings");
 
-// GET /api/settings — oic only
+// GET /api/settings — oic and admin only
 // Returns the station's settings doc, creating a default one on first
 // access so the frontend never has to handle "no settings exist yet".
 async function getSettings(req, res) {
@@ -16,7 +16,7 @@ async function getSettings(req, res) {
   }
 }
 
-// PATCH /api/settings — oic only
+// PATCH /api/settings — oic and admin only
 // Matches page 15's "Save changes" button — accepts the whole settings
 // shape (Communication Protocols toggles + RBAC matrix) and overwrites it.
 async function updateSettings(req, res) {
