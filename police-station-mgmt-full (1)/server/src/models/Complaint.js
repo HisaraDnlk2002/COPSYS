@@ -42,7 +42,7 @@ const complaintSchema = new mongoose.Schema(
     // Shown to OIC as Unassigned / In-Progress / Resolved on the Incident Monitor
     status: {
       type: String,
-      enum: ["open", "investigating", "closed"],
+      enum: ["open", "investigating", "paused", "closed"],
       default: "open",
     },
 

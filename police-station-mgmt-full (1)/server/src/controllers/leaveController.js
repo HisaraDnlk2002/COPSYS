@@ -96,12 +96,18 @@ async function approve(req, res) {
   return setStatus(req, res, "approved");
 }
 
-// PATCH /api/leave-requests/:id/reject — admin/oic
+// PATCH /api/leave-requests/:id/reject — admin/oic. Requires a remark
+// explaining the rejection, which is then shown wherever this request
+// appears (the officer's own history, the OIC's registry view, etc).
 async function reject(req, res) {
-  return setStatus(req, res, "rejected");
+  const remarks = (req.body.remarks || "").trim();
+  if (!remarks) {
+    return res.status(400).json({ error: "A remark is required when rejecting a leave request" });
+  }
+  return setStatus(req, res, "rejected", remarks);
 }
 
-async function setStatus(req, res, status) {
+async function setStatus(req, res, status, remarks) {
   const { id } = req.params;
 
   try {
@@ -116,6 +122,9 @@ async function setStatus(req, res, status) {
     leaveRequest.status = status;
     leaveRequest.reviewedBy = req.user.uid;
     leaveRequest.reviewedAt = new Date();
+    if (remarks) {
+      leaveRequest.remarks = remarks;
+    }
     await leaveRequest.save();
 
     // Deduct from balance only on approval

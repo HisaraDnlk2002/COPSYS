@@ -7,6 +7,12 @@
 // Safe to re-run — skips any account whose rankAndNumber already exists.
 
 require("dotenv").config();
+
+// See src/index.js for why — some mobile-hotspot networks hijack the
+// default DNS path for the Atlas hostnames even with 8.8.8.8 configured
+// system-wide, so this forces Node's own resolver to use it directly.
+require("dns").setServers(["8.8.8.8", "8.8.4.4"]);
+
 const bcrypt = require("bcryptjs");
 const mongoose = require("mongoose");
 const { connectDB } = require("./config/db");

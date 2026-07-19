@@ -18,6 +18,12 @@ const userSchema = new mongoose.Schema(
 
     address: { type: String, required: true, trim: true },
 
+    // This officer's own personal emergency contact — e.g. a family
+    // member — not to be confused with the "Acting Officer" picked per
+    // leave application (see LeaveRequest's emergencyContact field).
+    emergencyContactName: { type: String, default: "" },
+    emergencyContactPhone: { type: String, default: "" },
+
     status: {
       type: String,
       enum: ["active", "disabled", "pending"],

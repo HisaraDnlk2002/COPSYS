@@ -33,7 +33,17 @@ const VALID_ROLES = ["admin", "oic", "duty_officer", "inventory_officer", "offic
 // Matches the "Register new Personnel" form: full name, rank & number,
 // department, role, phone number, address, plus a password to set their login.
 async function createUser(req, res) {
-  const { fullName, rankAndNumber, department, role, phoneNumber, address, password } = req.body;
+  const {
+    fullName,
+    rankAndNumber,
+    department,
+    role,
+    phoneNumber,
+    address,
+    password,
+    emergencyContactName,
+    emergencyContactPhone,
+  } = req.body;
 
   if (!fullName || !rankAndNumber || !department || !role || !phoneNumber || !address || !password) {
     return res.status(400).json({ error: "All fields are required" });
@@ -49,6 +59,13 @@ async function createUser(req, res) {
       return res.status(409).json({ error: "That rank and number is already registered" });
     }
 
+    if (role === "oic") {
+      const existingOic = await User.findOne({ stationId: req.user.stationId, role: "oic" });
+      if (existingOic) {
+        return res.status(409).json({ error: "This station already has an OIC. Only one OIC account is allowed." });
+      }
+    }
+
     const passwordHash = await bcrypt.hash(password, 10);
 
     const user = await User.create({
@@ -58,6 +75,8 @@ async function createUser(req, res) {
       role,
       phoneNumber,
       address,
+      emergencyContactName,
+      emergencyContactPhone,
       passwordHash,
       stationId: req.user.stationId,
       status: "active",
@@ -74,14 +93,15 @@ async function createUser(req, res) {
 }
 
 // PATCH /api/users/:id — admin only, edits an existing officer's profile
-// details (name, department, role, phone, address). Deliberately does NOT
+// details (name, department, role, phone, address, emergency contact).
+// Deliberately does NOT
 // touch rankAndNumber (that's the login username — changing it is a
 // bigger operation than a profile edit) or the password (use the
 // dedicated "Reset Password" flow for that). Matches the "Edit User"
 // action next to "View More" on the Personnel & User Management page.
 async function updateUser(req, res) {
   const { id } = req.params;
-  const { fullName, department, role, phoneNumber, address } = req.body;
+  const { fullName, department, role, phoneNumber, address, emergencyContactName, emergencyContactPhone } = req.body;
 
   if (role && !VALID_ROLES.includes(role)) {
     return res.status(400).json({ error: "Invalid role" });
@@ -93,12 +113,21 @@ async function updateUser(req, res) {
   if (role !== undefined) updates.role = role;
   if (phoneNumber !== undefined) updates.phoneNumber = phoneNumber;
   if (address !== undefined) updates.address = address;
+  if (emergencyContactName !== undefined) updates.emergencyContactName = emergencyContactName;
+  if (emergencyContactPhone !== undefined) updates.emergencyContactPhone = emergencyContactPhone;
 
   if (Object.keys(updates).length === 0) {
     return res.status(400).json({ error: "No fields to update" });
   }
 
   try {
+    if (role === "oic") {
+      const existingOic = await User.findOne({ stationId: req.user.stationId, role: "oic", _id: { $ne: id } });
+      if (existingOic) {
+        return res.status(409).json({ error: "This station already has an OIC. Only one OIC account is allowed." });
+      }
+    }
+
     const user = await User.findByIdAndUpdate(id, updates, {
       new: true,
       runValidators: true,

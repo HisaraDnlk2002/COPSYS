@@ -1,4 +1,13 @@
 require("dotenv").config();
+
+// On some mobile-hotspot networks, the OS's default DNS resolver
+// transparently hijacks/mis-resolves the MongoDB Atlas hostnames (returns
+// NXDOMAIN) even when 8.8.8.8 is configured system-wide — but the same
+// query succeeds when sent directly to 8.8.8.8. Forcing Node's own
+// resolver here bypasses whatever the OS/network is doing to the default
+// path, for local dev on flaky networks.
+require("dns").setServers(["8.8.8.8", "8.8.4.4"]);
+
 const express = require("express");
 const cors = require("cors");
 const { connectDB } = require("./config/db");
@@ -13,6 +22,7 @@ const inventoryRoutes = require("./routes/inventoryRoutes");
 const reportsRoutes = require("./routes/reportsRoutes");
 const settingsRoutes = require("./routes/settingsRoutes");
 const auditLogRoutes = require("./routes/auditLogRoutes");
+const officerRoutes = require("./routes/officerRoutes");
 
 const app = express();
 
@@ -37,6 +47,7 @@ app.use("/api/inventory", inventoryRoutes);
 app.use("/api/reports", reportsRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/audit-logs", auditLogRoutes);
+app.use("/api/officers", officerRoutes);
 
 app.use("/api", (req, res) => {
   res.status(404).json({ error: "Not found" });
