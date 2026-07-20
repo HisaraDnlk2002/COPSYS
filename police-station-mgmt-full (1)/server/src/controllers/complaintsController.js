@@ -30,7 +30,7 @@ async function list(req, res) {
       complaints.map((c) => {
         const json = c.toJSON();
         json.assignedOfficerName = json.assignedOfficerId
-          ? officerNameById.get(json.assignedOfficerId) || ""
+          ? officerNameById.get(json.assignedOfficerId.toString()) || ""
           : "";
         return json;
       })
