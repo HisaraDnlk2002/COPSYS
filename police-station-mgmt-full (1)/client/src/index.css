@@ -11,3 +11,19 @@ body {
 h1, h2, h3 {
   margin: 0;
 }
+
+/* Shared stat-card row used across every dashboard page. Auto-fits as
+   many cards per row as will comfortably fit, and stacks to a single
+   column on phones so captions don't get crushed. */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+
+@media (max-width: 480px) {
+  .stat-grid {
+    grid-template-columns: 1fr;
+  }
+}

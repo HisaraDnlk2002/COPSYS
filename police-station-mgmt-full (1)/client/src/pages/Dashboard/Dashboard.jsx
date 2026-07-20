@@ -1,24 +1,27 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth";
+import { useLanguage } from "../../i18n/useLanguage";
 import { Button, StatCard, Card, Table, Badge, Loader } from "../../components";
 import { getDashboardSummary } from "../../services/dashboard";
 import { getMyLeaveBalance } from "../../services/leave";
 import { getMySchedule } from "../../services/dutySchedule";
 import { getMyAssignedComplaints } from "../../services/complaints";
+import { formatDateAndTime } from "../../utils/formatDate";
 import "./Dashboard.css";
-
-const DASHBOARD_TITLE_BY_ROLE = {
-  admin: "ADMIN DASHBOARD",
-  oic: "OIC DASHBOARD",
-  duty_officer: "DUTY OFFICER DASHBOARD",
-  inventory_officer: "OFFICER DASHBOARD",
-  officer: "OFFICER DASHBOARD",
-};
 
 export function DashboardPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { t } = useLanguage();
+
+  const DASHBOARD_TITLE_BY_ROLE = {
+    admin: t("dashboard.titleAdmin"),
+    oic: t("dashboard.titleOic"),
+    duty_officer: t("dashboard.titleDutyOfficer"),
+    inventory_officer: t("dashboard.titleOfficer"),
+    officer: t("dashboard.titleOfficer"),
+  };
 
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState(null);
@@ -55,34 +58,34 @@ export function DashboardPage() {
     };
   }, []);
 
-  if (loading) return <Loader label="Loading dashboard…" />;
+  if (loading) return <Loader label={t("dashboard.loading")} />;
 
   const totalLeaveDays = leaveBalance
     ? leaveBalance.annual + leaveBalance.sick + leaveBalance.casual
     : 0;
 
   const scheduleColumns = [
-    { key: "day", label: "Day" },
+    { key: "day", label: t("dashboard.colDay") },
     {
       key: "shift",
-      label: "Shift Timing",
+      label: t("dashboard.colShiftTiming"),
       render: (row) => `${row.shiftStart} - ${row.shiftEnd}`,
     },
-    { key: "department", label: "Assign Department" },
+    { key: "department", label: t("dashboard.colAssignDepartment") },
     {
       key: "status",
-      label: "Status",
+      label: t("common.status"),
       render: (row) => <Badge status={row.status} />,
     },
   ];
 
   const complaintColumns = [
-    { key: "refId", label: "Case Id" },
-    { key: "category", label: "Incident Type" },
-    { key: "dateOfIncident", label: "Reported Date" },
+    { key: "refId", label: t("dashboard.colCaseId") },
+    { key: "category", label: t("dashboard.colIncidentType") },
+    { key: "dateOfIncident", label: t("dashboard.colReportedDate"), render: (row) => formatDateAndTime(row.dateOfIncident, row.incidentTime) },
     {
       key: "status",
-      label: "Status",
+      label: t("common.status"),
       render: (row) => <Badge status={row.status} />,
     },
   ];
@@ -90,52 +93,52 @@ export function DashboardPage() {
   return (
     <div>
       <div className="dashboard-header">
-        <h1>{DASHBOARD_TITLE_BY_ROLE[user?.role] || "DASHBOARD"}</h1>
+        <h1>{DASHBOARD_TITLE_BY_ROLE[user?.role] || t("dashboard.titleDefault")}</h1>
         <div className="dashboard-header-actions">
           <Button variant="outline" onClick={() => navigate("/leave")}>
-            Apply Leave
+            {t("dashboard.applyLeave")}
           </Button>
           <Button variant="primary" onClick={() => navigate("/complaints")}>
-            Register complaint
+            {t("dashboard.registerComplaint")}
           </Button>
         </div>
       </div>
 
       <div className="stat-grid">
         <StatCard
-          label="Today's Duty"
+          label={t("dashboard.todaysDuty")}
           value={summary?.todaysDuty || "—"}
-          caption={summary?.todaysDutyShift ? `shift ${summary.todaysDutyShift}` : ""}
+          caption={summary?.todaysDutyShift ? `${t("dashboard.shift")} ${summary.todaysDutyShift}` : ""}
         />
-        <StatCard label="Leave Status" value={`${totalLeaveDays} Days`} caption="Available Balance" />
+        <StatCard label={t("dashboard.leaveStatus")} value={`${totalLeaveDays} ${t("dashboard.days")}`} caption={t("dashboard.availableBalance")} />
         <StatCard
-          label="Assigned Complaints"
-          value={`${String(summary?.activeComplaints ?? 0).padStart(2, "0")} Cases`}
-          caption="Active Investigations"
+          label={t("dashboard.assignedComplaints")}
+          value={`${String(summary?.activeComplaints ?? 0).padStart(2, "0")} ${t("dashboard.cases")}`}
+          caption={t("dashboard.activeInvestigations")}
         />
         <StatCard
-          label="Next Shift"
+          label={t("dashboard.nextShift")}
           value={summary?.nextShift || "—"}
-          caption={summary?.nextShiftTime ? `shift ${summary.nextShiftTime}` : ""}
+          caption={summary?.nextShiftTime ? `${t("dashboard.shift")} ${summary.nextShiftTime}` : ""}
         />
       </div>
 
       <div className="dashboard-panels">
         <Card variant="panel">
           <div className="panel-header">
-            <h3>Weekly Duty Schedule</h3>
+            <h3>{t("dashboard.weeklyDutySchedule")}</h3>
           </div>
-          <Table columns={scheduleColumns} data={schedule} emptyMessage="No shifts scheduled this week" />
+          <Table columns={scheduleColumns} data={schedule} emptyMessage={t("dashboard.noShiftsScheduled")} />
         </Card>
 
         <Card variant="panel">
           <div className="panel-header">
-            <h3>My assigned complaints</h3>
+            <h3>{t("dashboard.myAssignedComplaints")}</h3>
             <a className="panel-view-all" href="#" onClick={(e) => { e.preventDefault(); navigate("/complaints"); }}>
-              View All
+              {t("dashboard.viewAll")}
             </a>
           </div>
-          <Table columns={complaintColumns} data={assignedComplaints} emptyMessage="No complaints assigned to you" />
+          <Table columns={complaintColumns} data={assignedComplaints} emptyMessage={t("dashboard.noComplaintsAssigned")} />
         </Card>
       </div>
     </div>

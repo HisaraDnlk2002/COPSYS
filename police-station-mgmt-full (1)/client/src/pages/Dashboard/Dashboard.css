@@ -1,7 +1,9 @@
 .dashboard-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-sm);
   margin-bottom: var(--space-lg);
 }
 
@@ -12,20 +14,8 @@
 
 .dashboard-header-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-sm);
-}
-
-.stat-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: var(--space-md);
-  margin-bottom: var(--space-lg);
-}
-
-@media (max-width: 900px) {
-  .stat-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
 }
 
 .dashboard-panels {

@@ -1,7 +1,9 @@
 .complaints-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-sm);
   margin-bottom: var(--space-lg);
 }
 
@@ -9,6 +11,12 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0 var(--space-lg);
+}
+
+@media (max-width: 600px) {
+  .complaint-form-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .complaint-form-grid .field-full {

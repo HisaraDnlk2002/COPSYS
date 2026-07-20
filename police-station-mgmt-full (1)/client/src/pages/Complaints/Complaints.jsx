@@ -1,22 +1,32 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../../auth/useAuth";
-import { Button, InputField, Card, Table, Badge, Loader } from "../../components";
-import { getComplaints, registerComplaint } from "../../services/complaints";
+import { useLanguage } from "../../i18n/useLanguage";
+import { Button, InputField, Card, Table, Badge, Loader, AssignmentCell } from "../../components";
+import { getComplaints, registerComplaint, updateComplaintStatus, assignComplaint } from "../../services/complaints";
+import { listUsers } from "../../services/users";
+import { formatDateAndTime } from "../../utils/formatDate";
 import "./Complaints.css";
 
-const CATEGORY_OPTIONS = [
-  { value: "Theft", label: "Theft" },
-  { value: "Assault", label: "Assault" },
-  { value: "Residential Burglary", label: "Residential Burglary" },
-  { value: "Vehicle Theft", label: "Vehicle Theft" },
-  { value: "Public Disturbance", label: "Public Disturbance" },
-  { value: "Public Nuisance", label: "Public Nuisance" },
-  { value: "Traffic", label: "Traffic" },
-  { value: "Missing Person", label: "Missing Person" },
-  { value: "Other", label: "Other" },
+const ASSIGNABLE_ROLES = ["duty_officer", "officer"];
+
+// Register names are official/abbreviated terms — left untranslated,
+// matching how they're printed on the physical station registers.
+const COMPLAINT_BOOK_OPTIONS = [
+  { value: "IB", label: "IB — Information Book" },
+  { value: "CR", label: "CR — Crime Register" },
+  { value: "TR", label: "TR — Traffic Register" },
+  { value: "LPR", label: "LPR — Lost Property Register" },
+  { value: "MPR", label: "MPR — Missing Persons Register" },
+  { value: "WCD", label: "WCD — Women & Children's Desk" },
+  { value: "DVR", label: "DVR — Domestic Violence Register" },
+  { value: "GCR", label: "GCR — General Complaint Register" },
 ];
 
 const EMPTY_FORM = {
+  complaintBook: "",
+  title: "",
+  complaintSource: "Walk-in",
+  priority: "Medium",
   fullName: "",
   nic: "",
   passportId: "",
@@ -24,22 +34,69 @@ const EMPTY_FORM = {
   occupation: "",
   address: "",
   category: "",
+  severity: "General",
   dateOfIncident: "",
+  incidentTime: "",
+  incidentLocation: "",
   description: "",
 };
 
 export function ComplaintsPage() {
   const { user } = useAuth();
+  const { t } = useLanguage();
   const canManage = ["oic", "duty_officer", "officer"].includes(user?.role);
+  const canChangeStatus = ["oic", "admin"].includes(user?.role);
+  const canAssign = user?.role === "oic";
+
+  const CATEGORY_OPTIONS = [
+    { value: "Theft", label: t("complaints.categoryTheft") },
+    { value: "Assault", label: t("complaints.categoryAssault") },
+    { value: "Residential Burglary", label: t("complaints.categoryResidentialBurglary") },
+    { value: "Vehicle Theft", label: t("complaints.categoryVehicleTheft") },
+    { value: "Public Disturbance", label: t("complaints.categoryPublicDisturbance") },
+    { value: "Public Nuisance", label: t("complaints.categoryPublicNuisance") },
+    { value: "Traffic", label: t("complaints.categoryTraffic") },
+    { value: "Missing Person", label: t("complaints.categoryMissingPerson") },
+    { value: "Other", label: t("complaints.categoryOther") },
+  ];
+
+  const SEVERITY_OPTIONS = [
+    { value: "General", label: t("complaints.severityGeneral") },
+    { value: "Serious", label: t("complaints.severitySerious") },
+    { value: "Grave Crime", label: t("complaints.severityGraveCrime") },
+  ];
+
+  const PRIORITY_OPTIONS = [
+    { value: "Low", label: t("complaints.priorityLow") },
+    { value: "Medium", label: t("complaints.priorityMedium") },
+    { value: "High", label: t("complaints.priorityHigh") },
+    { value: "Urgent", label: t("complaints.priorityUrgent") },
+  ];
+
+  const SOURCE_OPTIONS = [
+    { value: "Walk-in", label: t("complaints.sourceWalkIn") },
+    { value: "Telephone", label: t("complaints.sourceTelephone") },
+    { value: "Online", label: t("complaints.sourceOnline") },
+    { value: "Referral", label: t("complaints.sourceReferral") },
+  ];
+
+  const STATUS_OPTIONS = [
+    { value: "open", label: t("complaints.statusOpen") },
+    { value: "investigating", label: t("complaints.statusInvestigating") },
+    { value: "paused", label: t("complaints.statusPaused") },
+    { value: "closed", label: t("complaints.statusClosed") },
+  ];
 
   const [view, setView] = useState("list"); // "list" | "register"
   const [loading, setLoading] = useState(true);
   const [complaints, setComplaints] = useState([]);
+  const [officers, setOfficers] = useState([]);
   const [form, setForm] = useState(EMPTY_FORM);
   const [formError, setFormError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [search, setSearch] = useState("");
   const [viewing, setViewing] = useState(null);
+  const [statusSaving, setStatusSaving] = useState(false);
 
   async function loadData() {
     setLoading(true);
@@ -67,6 +124,19 @@ export function ComplaintsPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!canAssign) return;
+    let cancelled = false;
+    listUsers()
+      .then((res) => {
+        if (!cancelled) setOfficers(res.filter((u) => ASSIGNABLE_ROLES.includes(u.role)));
+      })
+      .catch((err) => console.error("Failed to load officers:", err));
+    return () => {
+      cancelled = true;
+    };
+  }, [canAssign]);
+
   function updateField(key, value) {
     setForm((f) => ({ ...f, [key]: value }));
   }
@@ -80,9 +150,13 @@ export function ComplaintsPage() {
     e.preventDefault();
     setFormError("");
 
-    const required = ["fullName", "nic", "contactNumber", "address", "category", "dateOfIncident", "description"];
+    const required = ["complaintBook", "title", "fullName", "address", "category", "dateOfIncident", "incidentLocation", "description"];
     if (required.some((key) => !form[key])) {
-      setFormError("Please complete all required fields.");
+      setFormError(t("complaints.errRequiredFields"));
+      return;
+    }
+    if (!form.nic && !form.passportId) {
+      setFormError(t("complaints.errNicOrPassport"));
       return;
     }
 
@@ -93,7 +167,7 @@ export function ComplaintsPage() {
       setView("list");
       await loadData();
     } catch (err) {
-      setFormError(err.message || "Could not register complaint");
+      setFormError(err.message || t("complaints.errRegisterFailed"));
     } finally {
       setSubmitting(false);
     }
@@ -103,6 +177,25 @@ export function ComplaintsPage() {
   // keeps them flat. This helper reads either shape safely.
   function complainantName(row) {
     return row.complainant?.fullName || row.fullName || "";
+  }
+
+  async function handleStatusChange(id, status) {
+    setStatusSaving(true);
+    try {
+      const updated = await updateComplaintStatus(id, status);
+      setComplaints((prev) => prev.map((c) => (c.id === id ? { ...c, ...updated } : c)));
+      setViewing((prev) => (prev && prev.id === id ? { ...prev, ...updated } : prev));
+    } catch (err) {
+      console.error("Failed to update complaint status:", err);
+      alert(err.message || "Could not update complaint status");
+    } finally {
+      setStatusSaving(false);
+    }
+  }
+
+  async function handleAssign(complaintId, officerId) {
+    const updated = await assignComplaint(complaintId, officerId);
+    setComplaints((prev) => prev.map((c) => (c.id === complaintId ? { ...c, ...updated } : c)));
   }
 
   const filteredComplaints = complaints.filter((row) => {
@@ -119,18 +212,28 @@ export function ComplaintsPage() {
   });
 
   const columns = [
-    { key: "refId", label: "Ref ID" },
-    { key: "fullName", label: "Complainant", render: (row) => complainantName(row) },
-    { key: "category", label: "Category" },
-    { key: "dateOfIncident", label: "Date of Incident" },
+    { key: "refId", label: t("complaints.colRefId") },
+    { key: "fullName", label: t("complaints.colComplainant"), render: (row) => complainantName(row) },
+    { key: "category", label: t("complaints.colCategory") },
+    { key: "dateOfIncident", label: t("complaints.colDateTimeIncident"), render: (row) => formatDateAndTime(row.dateOfIncident, row.incidentTime) },
     {
       key: "status",
-      label: "Status",
+      label: t("common.status"),
       render: (row) =>
-        row.severity === "critical" ? (
-          <Badge tone="danger">Critical</Badge>
+        row.severity === "Grave Crime" ? (
+          <Badge tone="danger">{t("status.critical")}</Badge>
         ) : (
           <Badge status={row.status} />
+        ),
+    },
+    {
+      key: "assignedOfficerName",
+      label: t("complaints.colAssignedOfficer"),
+      render: (row) =>
+        canAssign ? (
+          <AssignmentCell complaint={row} officers={officers} onAssign={handleAssign} />
+        ) : (
+          row.assignedOfficerName || <span style={{ color: "var(--color-text-muted)" }}>{t("common.unassigned")}</span>
         ),
     },
     {
@@ -138,50 +241,72 @@ export function ComplaintsPage() {
       label: "",
       render: (row) => (
         <Button variant="ghost" type="button" onClick={() => setViewing(row)}>
-          View
+          {t("common.view")}
         </Button>
       ),
     },
   ];
 
-  if (loading) return <Loader label="Loading complaints…" />;
+  if (loading) return <Loader label={t("complaints.loading")} />;
 
   if (view === "register") {
     return (
       <div>
         <div className="complaints-header">
           <div>
-            <h1>COMPLAINT REGISTRATION</h1>
+            <h1>{t("complaints.registrationTitle")}</h1>
             <p style={{ color: "var(--color-text-muted)", fontSize: 14 }}>
-              Official intake for citizen complaints, incident reports, and public statements
+              {t("complaints.registrationSubtitle")}
             </p>
           </div>
         </div>
 
         <Card variant="panel">
           <form onSubmit={handleSubmit}>
-            <h3 className="section-label">Complaint Details</h3>
+            <h3 className="section-label">{t("complaints.registerClassification")}</h3>
             <div className="complaint-form-grid">
-              <InputField label="Full Name" required value={form.fullName} onChange={(e) => updateField("fullName", e.target.value)} />
-              <InputField label="NIC Number" required value={form.nic} onChange={(e) => updateField("nic", e.target.value)} />
-              <InputField label="Passport ID (Optional)" value={form.passportId} onChange={(e) => updateField("passportId", e.target.value)} placeholder="For foreign nationals" />
-              <InputField label="Contact Number" required value={form.contactNumber} onChange={(e) => updateField("contactNumber", e.target.value)} />
-              <InputField label="Occupation (Optional)" value={form.occupation} onChange={(e) => updateField("occupation", e.target.value)} />
+              <InputField label={t("complaints.complaintBook")} type="select" required value={form.complaintBook}
+                onChange={(e) => updateField("complaintBook", e.target.value)} options={COMPLAINT_BOOK_OPTIONS} />
+              <InputField label={t("complaints.complaintTitle")} required value={form.title}
+                onChange={(e) => updateField("title", e.target.value)} placeholder={t("complaints.complaintTitlePlaceholder")} />
+              <InputField label={t("complaints.complaintSource")} type="select" value={form.complaintSource}
+                onChange={(e) => updateField("complaintSource", e.target.value)} options={SOURCE_OPTIONS} />
+              <InputField label={t("complaints.priority")} type="select" value={form.priority}
+                onChange={(e) => updateField("priority", e.target.value)} options={PRIORITY_OPTIONS} />
+            </div>
+
+            <h3 className="section-label">{t("complaints.complaintDetails")}</h3>
+            <div className="complaint-form-grid">
+              <InputField label={t("complaints.fullName")} required value={form.fullName} onChange={(e) => updateField("fullName", e.target.value)} />
+              <InputField label={t("complaints.contactNumber")} value={form.contactNumber} onChange={(e) => updateField("contactNumber", e.target.value)} />
+              <InputField label={t("complaints.nicNumber")} value={form.nic} onChange={(e) => updateField("nic", e.target.value)}
+                helperText={t("complaints.nicOrPassportHelper")} />
+              <InputField label={t("complaints.passportId")} value={form.passportId} onChange={(e) => updateField("passportId", e.target.value)}
+                helperText={t("complaints.nicOrPassportHelper")} />
+              <InputField label={t("complaints.occupationOptional")} value={form.occupation} onChange={(e) => updateField("occupation", e.target.value)} />
               <div className="field-full">
-                <InputField label="Residential Address" type="textarea" rows={2} required value={form.address}
-                  onChange={(e) => updateField("address", e.target.value)} placeholder="Complete Permanent Address" />
+                <InputField label={t("complaints.residentialAddress")} type="textarea" rows={2} required value={form.address}
+                  onChange={(e) => updateField("address", e.target.value)} placeholder={t("complaints.addressPlaceholder")} />
               </div>
             </div>
 
-            <h3 className="section-label">Incident Particulars</h3>
+            <h3 className="section-label">{t("complaints.incidentParticulars")}</h3>
             <div className="complaint-form-grid">
-              <InputField label="Complaint Category" type="select" required value={form.category}
+              <InputField label={t("complaints.complaintCategory")} type="select" required value={form.category}
                 onChange={(e) => updateField("category", e.target.value)} options={CATEGORY_OPTIONS} />
-              <InputField label="Date of Incident" type="date" required value={form.dateOfIncident}
+              <InputField label={t("complaints.severity")} type="select" value={form.severity}
+                onChange={(e) => updateField("severity", e.target.value)} options={SEVERITY_OPTIONS} />
+              <InputField label={t("complaints.dateOfIncident")} type="date" required value={form.dateOfIncident}
                 onChange={(e) => updateField("dateOfIncident", e.target.value)} />
+              <InputField label={t("complaints.timeOfIncident")} type="time" value={form.incidentTime}
+                onChange={(e) => updateField("incidentTime", e.target.value)} />
               <div className="field-full">
-                <InputField label="Detailed Description" type="textarea" required value={form.description}
-                  onChange={(e) => updateField("description", e.target.value)} placeholder="Complete account of the incident" />
+                <InputField label={t("complaints.incidentLocation")} required value={form.incidentLocation}
+                  onChange={(e) => updateField("incidentLocation", e.target.value)} placeholder={t("complaints.incidentLocationPlaceholder")} />
+              </div>
+              <div className="field-full">
+                <InputField label={t("complaints.detailedDescription")} type="textarea" required value={form.description}
+                  onChange={(e) => updateField("description", e.target.value)} placeholder={t("complaints.descriptionPlaceholder")} />
               </div>
             </div>
 
@@ -189,10 +314,10 @@ export function ComplaintsPage() {
 
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
               <Button variant="ghost" type="button" onClick={() => { clearForm(); setView("list"); }}>
-                Clear Form
+                {t("complaints.clearForm")}
               </Button>
               <Button variant="primary" type="submit" disabled={submitting}>
-                {submitting ? "Submitting…" : "Submit"}
+                {submitting ? t("complaints.submitting") : t("complaints.submit")}
               </Button>
             </div>
           </form>
@@ -204,25 +329,25 @@ export function ComplaintsPage() {
   return (
     <div>
       <div className="complaints-header">
-        <h1>Complaints Registry</h1>
+        <h1>{t("complaints.registryTitle")}</h1>
         {canManage && (
           <Button variant="primary" onClick={() => setView("register")}>
-            Register complaint
+            {t("complaints.registerComplaint")}
           </Button>
         )}
       </div>
 
       <div style={{ marginBottom: 16, maxWidth: 360 }}>
         <InputField
-          label="Search complaints"
-          placeholder="Search by ref ID, complainant, category, NIC…"
+          label={t("complaints.searchComplaints")}
+          placeholder={t("complaints.searchComplaintsPlaceholder")}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
       </div>
 
       <Card variant="panel">
-        <Table columns={columns} data={filteredComplaints} emptyMessage="No complaints match your search" />
+        <Table columns={columns} data={filteredComplaints} emptyMessage={t("complaints.noComplaintsMatch")} />
       </Card>
 
       {viewing && (
@@ -233,29 +358,58 @@ export function ComplaintsPage() {
             display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50,
           }}
         >
-          <div onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520, width: "90%" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ maxWidth: 720, width: "90%", maxHeight: "90vh", overflowY: "auto" }}>
             <Card variant="panel">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                <h3 style={{ margin: 0 }}>Complaint {viewing.refId}</h3>
-                <Button variant="ghost" type="button" onClick={() => setViewing(null)}>Close</Button>
+                <h3 style={{ margin: 0 }}>{t("complaints.complaintPrefix")} {viewing.refId}</h3>
+                <Button variant="ghost" type="button" onClick={() => setViewing(null)}>{t("complaints.close")}</Button>
               </div>
 
-              <h4 className="section-label">Complainant</h4>
-              <p><strong>Name:</strong> {complainantName(viewing)}</p>
-              <p><strong>NIC:</strong> {viewing.complainant?.nic || "—"}</p>
-              <p><strong>Passport ID:</strong> {viewing.complainant?.passportId || "—"}</p>
-              <p><strong>Contact Number:</strong> {viewing.complainant?.contactNumber || "—"}</p>
-              <p><strong>Occupation:</strong> {viewing.complainant?.occupation || "—"}</p>
-              <p><strong>Address:</strong> {viewing.complainant?.address || "—"}</p>
+              <h3 className="section-label">{t("complaints.complainant")}</h3>
+              <div className="complaint-form-grid">
+                <InputField label={t("complaints.fullName")} readOnly value={complainantName(viewing)} />
+                <InputField label={t("complaints.nicNumber")} readOnly value={viewing.complainant?.nic || "—"} />
+                <InputField label={t("complaints.passportId")} readOnly value={viewing.complainant?.passportId || "—"} />
+                <InputField label={t("complaints.contactNumber")} readOnly value={viewing.complainant?.contactNumber || "—"} />
+                <InputField label={t("complaints.occupation")} readOnly value={viewing.complainant?.occupation || "—"} />
+                <div className="field-full">
+                  <InputField label={t("complaints.residentialAddress")} type="textarea" rows={2} readOnly value={viewing.complainant?.address || "—"} />
+                </div>
+              </div>
 
-              <h4 className="section-label">Incident</h4>
-              <p><strong>Category:</strong> {viewing.category}</p>
-              <p><strong>Date of Incident:</strong> {viewing.dateOfIncident?.slice ? viewing.dateOfIncident.slice(0, 10) : viewing.dateOfIncident}</p>
-              <p><strong>Description:</strong> {viewing.description || "—"}</p>
-              <p>
-                <strong>Status:</strong>{" "}
-                {viewing.severity === "critical" ? <Badge tone="danger">Critical</Badge> : <Badge status={viewing.status} />}
-              </p>
+              <h3 className="section-label">{t("complaints.incidentParticulars")}</h3>
+              <div className="complaint-form-grid">
+                <InputField label={t("complaints.complaintCategory")} readOnly value={viewing.category} />
+                <InputField
+                  label={t("complaints.colDateTimeIncident")}
+                  readOnly
+                  value={formatDateAndTime(viewing.dateOfIncident, viewing.incidentTime)}
+                />
+                <div className="field-full">
+                  <InputField label={t("complaints.detailedDescription")} type="textarea" readOnly value={viewing.description || "—"} />
+                </div>
+              </div>
+
+              <h3 className="section-label">{t("complaints.status")}</h3>
+              {viewing.severity === "Grave Crime" && <Badge tone="danger">{t("status.critical")}</Badge>}
+              {canChangeStatus ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 8 }}>
+                  <select
+                    className="field-control"
+                    style={{ maxWidth: 220 }}
+                    value={viewing.status}
+                    disabled={statusSaving}
+                    onChange={(e) => handleStatusChange(viewing.id, e.target.value)}
+                  >
+                    {STATUS_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                  {statusSaving && <span style={{ fontSize: 13, color: "var(--color-text-muted)" }}>{t("complaints.saving")}</span>}
+                </div>
+              ) : (
+                <Badge status={viewing.status} />
+              )}
             </Card>
           </div>
         </div>

@@ -54,11 +54,14 @@ export async function approveLeaveRequest(id) {
   return api.patch(`/leave-requests/${id}/approve`);
 }
 
-export async function rejectLeaveRequest(id) {
+export async function rejectLeaveRequest(id, remarks) {
   if (USE_DUMMY_DATA) {
     const req = dummyLeaveRequests.find((l) => l.id === id);
-    if (req) req.status = "rejected";
+    if (req) {
+      req.status = "rejected";
+      req.remarks = remarks;
+    }
     return Promise.resolve(req);
   }
-  return api.patch(`/leave-requests/${id}/reject`);
+  return api.patch(`/leave-requests/${id}/reject`, { remarks });
 }

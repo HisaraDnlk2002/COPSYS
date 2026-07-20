@@ -1,6 +1,3 @@
-// One Sidebar component, fed a different list per role.
-// This is UX only — actual security is enforced server-side and via
-// ProtectedRoute, not by hiding a nav link.
 
 export const navItemsByRole = {
   admin: [
@@ -8,6 +5,8 @@ export const navItemsByRole = {
     { key: "personnel", label: "Personnel & User Managment", path: "/personnel" },
     { key: "leave", label: "Leave Requests", path: "/leave" },
     { key: "complaints", label: "Complaints registry", path: "/complaints" },
+    { key: "audit-log", label: "Activity Log", path: "/audit-log" },
+    { key: "settings", label: "Settings", path: "/settings" },
   ],
   oic: [
     { key: "dashboard", label: "Dashboard", path: "/dashboard" },

@@ -49,6 +49,15 @@ export async function getComplaintLog() {
   return api.get("/complaints/log");
 }
 
+export async function updateComplaintStatus(id, status) {
+  if (USE_DUMMY_DATA) {
+    const complaint = dummyComplaints.find((c) => c.id === id);
+    if (complaint) complaint.status = status;
+    return Promise.resolve(complaint);
+  }
+  return api.patch(`/complaints/${id}`, { status });
+}
+
 export async function assignComplaint(id, assignedOfficerId) {
   if (USE_DUMMY_DATA) {
     const complaint = dummyComplaints.find((c) => c.id === id);

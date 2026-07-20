@@ -1,7 +1,9 @@
 .settings-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-sm);
   margin-bottom: var(--space-lg);
 }
 
@@ -21,6 +23,7 @@
 
 .toggle-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
   padding: var(--space-md) 0;

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button, InputField, Card, StatCard, Table, Badge, Loader, Modal } from "../../components";
+import { useLanguage } from "../../i18n/useLanguage";
 import {
   listUsers,
   getPersonnelStats,
@@ -10,21 +11,22 @@ import {
 } from "../../services/users";
 import "./Personnel.css";
 
-const ROLE_OPTIONS = [
-  { value: "admin", label: "Admin" },
-  { value: "oic", label: "OIC" },
-  { value: "duty_officer", label: "Duty Officer" },
-  { value: "inventory_officer", label: "Inventory Officer" },
-  { value: "officer", label: "Officer" },
+// Katunayake Airport Police Station's five branches.
+const DEPARTMENT_OPTIONS = [
+  { value: "Administration Branch (පාලන අංශය)", label: "Administration Branch (පාලන අංශය)" },
+  { value: "Complaint Branch / Minor Complaints (පැමිණිලි අංශය)", label: "Complaint Branch / Minor Complaints (පැමිණිලි අංශය)" },
+  { value: "Traffic Branch (ගමනාගමන අංශය)", label: "Traffic Branch (ගමනාගමන අංශය)" },
+  { value: "Children & Women Bureau (ළමා හා කාන්තා කාර්යාංශය)", label: "Children & Women Bureau (ළමා හා කාන්තා කාර්යාංශය)" },
+  { value: "General Duty Branch (සාමාන්‍ය රාජකාරි අංශය)", label: "General Duty Branch (සාමාන්‍ය රාජකාරි අංශය)" },
 ];
 
-const DEPARTMENT_OPTIONS = [
-  { value: "Administration", label: "Administration" },
-  { value: "Command", label: "Command" },
-  { value: "Traffic Control", label: "Traffic Control" },
-  { value: "Crime", label: "Crime" },
-  { value: "Stores", label: "Stores" },
-];
+// Letters (any script) plus combining marks — needed so Sinhala vowel
+// signs (e.g. the ු in "චතුර") aren't stripped, since those are Unicode
+// "Mark" characters, not "Letter" — plus spaces and periods. Blocks
+// digits and symbols while still allowing names like "Sgt. Bandara".
+function sanitizeName(value) {
+  return value.replace(/[^\p{L}\p{M}\s.]/gu, "");
+}
 
 const EMPTY_FORM = {
   fullName: "",
@@ -33,6 +35,8 @@ const EMPTY_FORM = {
   role: "",
   phoneNumber: "",
   address: "",
+  emergencyContactName: "",
+  emergencyContactPhone: "",
   password: "",
 };
 
@@ -45,9 +49,21 @@ const EMPTY_EDIT_FORM = {
   role: "",
   phoneNumber: "",
   address: "",
+  emergencyContactName: "",
+  emergencyContactPhone: "",
 };
 
 export function PersonnelPage() {
+  const { t } = useLanguage();
+
+  const ROLE_OPTIONS = [
+    { value: "admin", label: t("personnel.roleAdmin") },
+    { value: "oic", label: t("personnel.roleOic") },
+    { value: "duty_officer", label: t("personnel.roleDutyOfficer") },
+    { value: "inventory_officer", label: t("personnel.roleInventoryOfficer") },
+    { value: "officer", label: t("personnel.roleOfficer") },
+  ];
+
   const [view, setView] = useState("list"); // "list" | "register"
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState(null);
@@ -108,15 +124,15 @@ export function PersonnelPage() {
 
     const required = ["fullName", "rankAndNumber", "department", "role", "phoneNumber", "address", "password"];
     if (required.some((key) => !form[key])) {
-      setFormError("Please complete all fields, including a password.");
+      setFormError(t("personnel.errAllFields"));
       return;
     }
     if (form.password.length < 6) {
-      setFormError("Password must be at least 6 characters.");
+      setFormError(t("personnel.errPasswordLength"));
       return;
     }
     if (form.phoneNumber.length !== 10) {
-      setFormError("Phone number must be exactly 10 digits.");
+      setFormError(t("personnel.errPhoneLength"));
       return;
     }
 
@@ -128,7 +144,7 @@ export function PersonnelPage() {
       loadData();
       void created;
     } catch (err) {
-      setFormError(err.message || "Could not create personnel account");
+      setFormError(err.message || t("personnel.errCreateFailed"));
     } finally {
       setSubmitting(false);
     }
@@ -163,6 +179,8 @@ export function PersonnelPage() {
       role: user.role || "",
       phoneNumber: user.phoneNumber || "",
       address: user.address || "",
+      emergencyContactName: user.emergencyContactName || "",
+      emergencyContactPhone: user.emergencyContactPhone || "",
     });
     setEditError("");
   }
@@ -178,11 +196,11 @@ export function PersonnelPage() {
 
     const required = ["fullName", "department", "role", "phoneNumber", "address"];
     if (required.some((key) => !editForm[key])) {
-      setEditError("Please complete all fields.");
+      setEditError(t("personnel.errEditAllFields"));
       return;
     }
     if (editForm.phoneNumber.length !== 10) {
-      setEditError("Phone number must be exactly 10 digits.");
+      setEditError(t("personnel.errEditPhoneLength"));
       return;
     }
 
@@ -194,7 +212,7 @@ export function PersonnelPage() {
       );
       setEditUser(null);
     } catch (err) {
-      setEditError(err.message || "Could not update personnel details");
+      setEditError(err.message || t("personnel.errUpdateFailed"));
     } finally {
       setEditSubmitting(false);
     }
@@ -210,51 +228,50 @@ export function PersonnelPage() {
   });
 
   const columns = [
-    { key: "fullName", label: "Officer Name" },
-    { key: "rankAndNumber", label: "Rank & No" },
-    { key: "role", label: "System Roles", render: (r) => <span style={{ textTransform: "capitalize" }}>{r.role?.replace("_", " ")}</span> },
-    { key: "department", label: "Department" },
-    { key: "status", label: "Status", render: (r) => <Badge status={r.status} /> },
+    { key: "fullName", label: t("personnel.colOfficerName") },
+    { key: "rankAndNumber", label: t("personnel.colRankNo") },
+    { key: "role", label: t("personnel.colSystemRoles"), render: (r) => <span style={{ textTransform: "capitalize" }}>{r.role?.replace("_", " ")}</span> },
+    { key: "department", label: t("personnel.colDepartment") },
+    { key: "status", label: t("common.status"), render: (r) => <Badge status={r.status} /> },
     {
       key: "actions",
-      label: "Actions",
+      label: t("common.actions"),
       render: (r) => (
         <div className="personnel-row-actions">
-          <Button variant="ghost" onClick={() => setViewUser(r)}>View More</Button>
-          <Button variant="ghost" onClick={() => openEditModal(r)}>Edit</Button>
-          <Button variant="ghost" onClick={() => setResetModalUser(r)}>Reset Password</Button>
+          <Button variant="ghost" onClick={() => setViewUser(r)}>{t("personnel.viewMore")}</Button>
+          <Button variant="ghost" onClick={() => openEditModal(r)}>{t("personnel.edit")}</Button>
+          <Button variant="ghost" onClick={() => setResetModalUser(r)}>{t("personnel.resetPassword")}</Button>
           <Button variant={r.status === "active" ? "danger" : "outline"} onClick={() => handleToggleStatus(r)}>
-            {r.status === "active" ? "Disable" : "Enable"}
+            {r.status === "active" ? t("personnel.disable") : t("personnel.enable")}
           </Button>
         </div>
       ),
     },
   ];
 
-  if (loading) return <Loader label="Loading personnel…" />;
+  if (loading) return <Loader label={t("personnel.loading")} />;
 
   if (view === "register") {
     return (
       <div>
         <div className="personnel-header">
-          <h1>Register new Personnel</h1>
+          <h1>{t("personnel.registerTitle")}</h1>
         </div>
 
         {createdAccount ? (
           <Card variant="panel">
-            <h3 style={{ marginBottom: 12 }}>Account created</h3>
+            <h3 style={{ marginBottom: 12 }}>{t("personnel.accountCreated")}</h3>
             <p>
-              Give these credentials to <strong>{createdAccount.fullName}</strong> — this is the only time the
-              password is shown. Use "Reset Password" from the list later if it needs to change.
+              {t("personnel.accountCreatedText1")} <strong>{createdAccount.fullName}</strong> {t("personnel.accountCreatedText2")}
             </p>
             <p style={{ marginTop: 12 }}>
-              <strong>Username:</strong> {createdAccount.rankAndNumber}
+              <strong>{t("personnel.username")}</strong> {createdAccount.rankAndNumber}
               <br />
-              <strong>Password:</strong> {createdAccount.password}
+              <strong>{t("personnel.password")}</strong> {createdAccount.password}
             </p>
             <div style={{ marginTop: 24 }}>
               <Button variant="primary" onClick={() => { setCreatedAccount(null); setView("list"); }}>
-                Done
+                {t("personnel.done")}
               </Button>
             </div>
           </Card>
@@ -262,30 +279,35 @@ export function PersonnelPage() {
           <Card variant="panel">
             <form onSubmit={handleSubmit}>
               <div className="personnel-form-grid">
-                <InputField label="Full Name" required value={form.fullName} onChange={(e) => updateField("fullName", e.target.value)} />
-                <InputField label="Rank and Number" required value={form.rankAndNumber} onChange={(e) => updateField("rankAndNumber", e.target.value)}
-                  placeholder="This becomes their login username" />
-                <InputField label="Department/Division" type="select" required value={form.department}
+                <InputField label={t("personnel.fullName")} required value={form.fullName} onChange={(e) => updateField("fullName", sanitizeName(e.target.value))} />
+                <InputField label={t("personnel.rankAndNumber")} required value={form.rankAndNumber} onChange={(e) => updateField("rankAndNumber", e.target.value)}
+                  placeholder={t("personnel.rankAndNumberPlaceholder")} />
+                <InputField label={t("personnel.departmentDivision")} type="select" required value={form.department}
                   onChange={(e) => updateField("department", e.target.value)} options={DEPARTMENT_OPTIONS} />
-                <InputField label="Role" type="select" required value={form.role}
+                <InputField label={t("personnel.role")} type="select" required value={form.role}
                   onChange={(e) => updateField("role", e.target.value)} options={ROLE_OPTIONS} />
-                <InputField label="Phone Number" required value={form.phoneNumber}
+                <InputField label={t("personnel.phoneNumber")} required value={form.phoneNumber}
                   onChange={(e) => updateField("phoneNumber", e.target.value.replace(/\D/g, "").slice(0, 10))}
-                  placeholder="e.g. 0771234567" />
-                <InputField label="Address" required value={form.address}
+                  placeholder={t("personnel.phonePlaceholder")} />
+                <InputField label={t("personnel.address")} required value={form.address}
                   onChange={(e) => updateField("address", e.target.value)} />
+                <InputField label={t("personnel.emergencyContactName")} value={form.emergencyContactName}
+                  onChange={(e) => updateField("emergencyContactName", sanitizeName(e.target.value))} />
+                <InputField label={t("personnel.emergencyContactPhone")} value={form.emergencyContactPhone}
+                  onChange={(e) => updateField("emergencyContactPhone", e.target.value.replace(/\D/g, "").slice(0, 10))}
+                  placeholder={t("personnel.phonePlaceholder")} />
               </div>
 
-              <InputField label="Set Password" type="password" required value={form.password}
+              <InputField label={t("personnel.setPassword")} type="password" required value={form.password}
                 onChange={(e) => updateField("password", e.target.value)}
-                helperText="Minimum 6 characters. Share this with the officer directly — there is no self-service signup." />
+                helperText={t("personnel.setPasswordHelper")} />
 
               {formError && <p style={{ color: "var(--color-danger)", marginBottom: 16 }}>{formError}</p>}
 
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
-                <Button variant="ghost" type="button" onClick={() => setView("list")}>Cancel</Button>
+                <Button variant="ghost" type="button" onClick={() => setView("list")}>{t("personnel.cancel")}</Button>
                 <Button variant="primary" type="submit" disabled={submitting}>
-                  {submitting ? "Saving…" : "Save Officer Details"}
+                  {submitting ? t("personnel.saving") : t("personnel.saveOfficerDetails")}
                 </Button>
               </div>
             </form>
@@ -299,47 +321,47 @@ export function PersonnelPage() {
     <div>
       <div className="personnel-header">
         <div>
-          <h1>Personnel & User Managment</h1>
+          <h1>{t("personnel.pageTitle")}</h1>
         </div>
-        <Button variant="primary" onClick={() => setView("register")}>ADD NEW USER</Button>
+        <Button variant="primary" onClick={() => setView("register")}>{t("personnel.addNewUser")}</Button>
       </div>
-      <p className="personnel-subtitle">Manage Station Officer access roles, Department Assignment, and System Status</p>
+      <p className="personnel-subtitle">{t("personnel.subtitle")}</p>
 
-      <div className="stat-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 }}>
-        <StatCard label="Total Personnel" value={stats?.totalPersonnel} />
-        <StatCard label="Active System Users" value={stats?.activeSystemUsers} />
-        <StatCard label="Pending Approves" value={stats?.pendingApproves} />
-        <StatCard label="Disabled Accounts" value={stats?.disabledAccounts} />
+      <div className="stat-grid">
+        <StatCard label={t("personnel.totalPersonnel")} value={stats?.totalPersonnel} />
+        <StatCard label={t("personnel.activeSystemUsers")} value={stats?.activeSystemUsers} />
+        <StatCard label={t("personnel.pendingApproves")} value={stats?.pendingApproves} />
+        <StatCard label={t("personnel.disabledAccounts")} value={stats?.disabledAccounts} />
       </div>
 
       <input
         className="personnel-search"
-        placeholder="Search by name, NIC, or rank no"
+        placeholder={t("personnel.searchPlaceholder")}
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         style={{ marginBottom: 16, width: "100%", boxSizing: "border-box" }}
       />
 
       <Card variant="panel">
-        <Table columns={columns} data={filteredUsers} emptyMessage="No personnel found" />
+        <Table columns={columns} data={filteredUsers} emptyMessage={t("personnel.noPersonnelFound")} />
       </Card>
 
       <Modal
         open={Boolean(resetModalUser)}
         onClose={() => setResetModalUser(null)}
-        title={resetModalUser ? `Reset password for ${resetModalUser.fullName}` : ""}
+        title={resetModalUser ? `${t("personnel.resetPasswordFor")} ${resetModalUser.fullName}` : ""}
         footer={
           <Button variant="primary" onClick={handleResetPassword} disabled={resetting || newPassword.length < 6}>
-            {resetting ? "Saving…" : "Set New Password"}
+            {resetting ? t("personnel.saving") : t("personnel.setNewPassword")}
           </Button>
         }
       >
         <InputField
-          label="New Password"
+          label={t("personnel.newPassword")}
           type="password"
           value={newPassword}
           onChange={(e) => setNewPassword(e.target.value)}
-          helperText="Minimum 6 characters"
+          helperText={t("personnel.newPasswordHelper")}
         />
       </Modal>
 
@@ -351,28 +373,36 @@ export function PersonnelPage() {
         {viewUser && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
             <div>
-              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>Rank & Number</p>
+              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("personnel.rankNumber")}</p>
               <p>{viewUser.rankAndNumber}</p>
             </div>
             <div>
-              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>Role</p>
+              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("personnel.role")}</p>
               <p style={{ textTransform: "capitalize" }}>{viewUser.role?.replace("_", " ")}</p>
             </div>
             <div>
-              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>Department</p>
+              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("personnel.colDepartment")}</p>
               <p>{viewUser.department}</p>
             </div>
             <div>
-              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>Status</p>
+              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("common.status")}</p>
               <Badge status={viewUser.status} />
             </div>
             <div>
-              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>Phone Number</p>
+              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("personnel.phoneNumber")}</p>
               <p>{viewUser.phoneNumber || "—"}</p>
             </div>
             <div>
-              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>Address</p>
+              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("personnel.address")}</p>
               <p>{viewUser.address || "—"}</p>
+            </div>
+            <div>
+              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("personnel.emergencyContact")}</p>
+              <p>
+                {viewUser.emergencyContactName || viewUser.emergencyContactPhone
+                  ? [viewUser.emergencyContactName, viewUser.emergencyContactPhone].filter(Boolean).join(" — ")
+                  : "—"}
+              </p>
             </div>
           </div>
         )}
@@ -381,12 +411,12 @@ export function PersonnelPage() {
       <Modal
         open={Boolean(editUser)}
         onClose={() => setEditUser(null)}
-        title={editUser ? `Edit ${editUser.fullName}` : ""}
+        title={editUser ? `${t("personnel.edit")} ${editUser.fullName}` : ""}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setEditUser(null)}>Cancel</Button>
+            <Button variant="ghost" onClick={() => setEditUser(null)}>{t("personnel.cancel")}</Button>
             <Button variant="primary" onClick={handleEditSubmit} disabled={editSubmitting}>
-              {editSubmitting ? "Saving…" : "Save Changes"}
+              {editSubmitting ? t("personnel.saving") : t("personnel.saveChanges")}
             </Button>
           </>
         }
@@ -394,17 +424,17 @@ export function PersonnelPage() {
         {editUser && (
           <form onSubmit={handleEditSubmit}>
             <div style={{ marginBottom: 16 }}>
-              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>RANK AND NUMBER</p>
-              <p>{editUser.rankAndNumber} <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>(login username — cannot be changed here)</span></p>
+              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("personnel.rankNumber").toUpperCase()}</p>
+              <p>{editUser.rankAndNumber} <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>{t("personnel.loginUsernameNote")}</span></p>
             </div>
             <InputField
-              label="Full Name"
+              label={t("personnel.fullName")}
               required
               value={editForm.fullName}
-              onChange={(e) => updateEditField("fullName", e.target.value)}
+              onChange={(e) => updateEditField("fullName", sanitizeName(e.target.value))}
             />
             <InputField
-              label="Department/Division"
+              label={t("personnel.departmentDivision")}
               type="select"
               required
               value={editForm.department}
@@ -412,7 +442,7 @@ export function PersonnelPage() {
               options={DEPARTMENT_OPTIONS}
             />
             <InputField
-              label="Role"
+              label={t("personnel.role")}
               type="select"
               required
               value={editForm.role}
@@ -420,16 +450,27 @@ export function PersonnelPage() {
               options={ROLE_OPTIONS}
             />
             <InputField
-              label="Phone Number"
+              label={t("personnel.phoneNumber")}
               required
               value={editForm.phoneNumber}
               onChange={(e) => updateEditField("phoneNumber", e.target.value.replace(/\D/g, "").slice(0, 10))}
             />
             <InputField
-              label="Address"
+              label={t("personnel.address")}
               required
               value={editForm.address}
               onChange={(e) => updateEditField("address", e.target.value)}
+            />
+            <InputField
+              label={t("personnel.emergencyContactName")}
+              value={editForm.emergencyContactName}
+              onChange={(e) => updateEditField("emergencyContactName", sanitizeName(e.target.value))}
+            />
+            <InputField
+              label={t("personnel.emergencyContactPhone")}
+              value={editForm.emergencyContactPhone}
+              onChange={(e) => updateEditField("emergencyContactPhone", e.target.value.replace(/\D/g, "").slice(0, 10))}
+              placeholder={t("personnel.phonePlaceholder")}
             />
 
             {editError && <p style={{ color: "var(--color-danger)" }}>{editError}</p>}

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../../auth/useAuth";
+import { useLanguage } from "../../i18n/useLanguage";
 import { Button, InputField, Card, StatCard, Table, Loader, Modal } from "../../components";
 import {
   getInventoryStats,
@@ -13,20 +14,21 @@ import {
 } from "../../services/inventory";
 import "./Inventory.css";
 
-const TABS = [
-  { key: "weapons", label: "Weapon Details" },
-  { key: "issue", label: "Issue records" },
-  { key: "return", label: "Return Records" },
-  { key: "damaged", label: "Damaged Records" },
-];
-
 const EMPTY_ISSUE_FORM = { officerId: "", weaponSerialId: "", quantity: "", deploymentDate: "" };
 const EMPTY_RETURN_FORM = { officerId: "", weaponSerialId: "", returnDate: "", condition: "" };
 const EMPTY_ADD_FORM = { officerId: "", weaponSerialId: "", quantity: "", weaponType: "" };
 
 export function InventoryPage() {
   const { user } = useAuth();
+  const { t } = useLanguage();
   const canManage = user?.role === "inventory_officer";
+
+  const TABS = [
+    { key: "weapons", label: t("inventory.tabWeapons") },
+    { key: "issue", label: t("inventory.tabIssue") },
+    { key: "return", label: t("inventory.tabReturn") },
+    { key: "damaged", label: t("inventory.tabDamaged") },
+  ];
 
   const [activeTab, setActiveTab] = useState("weapons");
   const [loading, setLoading] = useState(true);
@@ -132,52 +134,52 @@ export function InventoryPage() {
     }
   }
 
-  if (loading) return <Loader label="Loading inventory…" />;
+  if (loading) return <Loader label={t("inventory.loading")} />;
 
   const ledgerColumns = [
-    { key: "itemId", label: "Item ID" },
-    { key: "itemName", label: "Item Name" },
-    { key: "category", label: "Category" },
-    { key: "quantity", label: "Quantity" },
-    { key: "status", label: "Status" },
+    { key: "itemId", label: t("inventory.colItemId") },
+    { key: "itemName", label: t("inventory.colItemName") },
+    { key: "category", label: t("inventory.colCategory") },
+    { key: "quantity", label: t("inventory.colQuantity") },
+    { key: "status", label: t("common.status") },
   ];
 
   const issueColumns = [
-    { key: "itemId", label: "Item ID" },
-    { key: "officerName", label: "Officer Name" },
-    { key: "dutyType", label: "Duty Type" },
-    { key: "dateTime", label: "Date & Time" },
-    { key: "status", label: "Status" },
+    { key: "itemId", label: t("inventory.colItemId") },
+    { key: "officerName", label: t("inventory.colOfficerName") },
+    { key: "dutyType", label: t("inventory.colDutyType") },
+    { key: "dateTime", label: t("inventory.colDateTime") },
+    { key: "status", label: t("common.status") },
   ];
 
   const returnColumns = [
-    { key: "itemId", label: "Item ID" },
-    { key: "officerName", label: "Officer Name" },
-    { key: "dutyType", label: "Duty Type" },
-    { key: "dateTime", label: "Date & Time" },
-    { key: "condition", label: "Condition" },
-    { key: "remarks", label: "Remarks" },
+    { key: "itemId", label: t("inventory.colItemId") },
+    { key: "officerName", label: t("inventory.colOfficerName") },
+    { key: "dutyType", label: t("inventory.colDutyType") },
+    { key: "dateTime", label: t("inventory.colDateTime") },
+    { key: "condition", label: t("inventory.colCondition") },
+    { key: "remarks", label: t("inventory.colRemarks") },
   ];
 
   return (
     <div>
       <div className="inventory-header">
-        <h1>Inventory Dashboard</h1>
+        <h1>{t("inventory.dashboardTitle")}</h1>
         {canManage && (
           <div className="inventory-header-actions">
-            <Button variant="outline" onClick={() => setOpenModal("issue")}>Issue Item</Button>
-            <Button variant="outline" onClick={() => setOpenModal("return")}>Return Item</Button>
-            <Button variant="primary" onClick={() => setOpenModal("add")}>Add New Item</Button>
+            <Button variant="outline" onClick={() => setOpenModal("issue")}>{t("inventory.issueItem")}</Button>
+            <Button variant="outline" onClick={() => setOpenModal("return")}>{t("inventory.returnItem")}</Button>
+            <Button variant="primary" onClick={() => setOpenModal("add")}>{t("inventory.addNewItem")}</Button>
           </div>
         )}
       </div>
-      <p className="inventory-subtitle">Station Asset Registry: {stats?.stationLabel}</p>
+      <p className="inventory-subtitle">{t("inventory.stationAssetRegistry")} {stats?.stationLabel}</p>
 
-      <div className="stat-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 }}>
-        <StatCard label="Total Assets" value={stats?.totalAssets} caption="All categories combined" />
-        <StatCard label="Issued Items" value={stats?.issuedItems} caption="Currently in operational use" />
-        <StatCard label="Available Stock" value={stats?.availableStock} caption="Ready for Deployment" />
-        <StatCard label="Damaged/Repairs" value={stats?.damagedRepairs} caption="Requires immediate attention" />
+      <div className="stat-grid">
+        <StatCard label={t("inventory.totalAssets")} value={stats?.totalAssets} caption={t("inventory.allCategoriesCombined")} />
+        <StatCard label={t("inventory.issuedItems")} value={stats?.issuedItems} caption={t("inventory.currentlyInUse")} />
+        <StatCard label={t("inventory.availableStock")} value={stats?.availableStock} caption={t("inventory.readyForDeployment")} />
+        <StatCard label={t("inventory.damagedRepairs")} value={stats?.damagedRepairs} caption={t("inventory.requiresAttention")} />
       </div>
 
       <div className="inventory-tabs">
@@ -195,36 +197,36 @@ export function InventoryPage() {
       <Card variant="panel">
         {activeTab === "weapons" && (
           <>
-            <p className="inventory-ledger-title">Equipment Inventory Ledger</p>
-            <p className="inventory-ledger-subtitle">Official registry of firearms, communications, and safety gear</p>
-            <Table columns={ledgerColumns} data={items} emptyMessage="No inventory items yet" />
+            <p className="inventory-ledger-title">{t("inventory.equipmentLedgerTitle")}</p>
+            <p className="inventory-ledger-subtitle">{t("inventory.equipmentLedgerSubtitle")}</p>
+            <Table columns={ledgerColumns} data={items} emptyMessage={t("inventory.noInventoryItems")} />
             <div className="inventory-footer-row">
-              <span>Showing {items.length} of {stats?.totalAssets ?? items.length} unique items registered.</span>
+              <span>{t("inventory.showingItems")} {items.length} / {stats?.totalAssets ?? items.length} {t("inventory.ofItemsRegistered")}</span>
             </div>
           </>
         )}
 
         {activeTab === "issue" && (
           <>
-            <p className="inventory-ledger-title">Equipment Issuing Log</p>
-            <p className="inventory-ledger-subtitle">Focused on what is currently out in the field</p>
-            <Table columns={issueColumns} data={issueTx} emptyMessage="No items currently issued" />
+            <p className="inventory-ledger-title">{t("inventory.issuingLogTitle")}</p>
+            <p className="inventory-ledger-subtitle">{t("inventory.issuingLogSubtitle")}</p>
+            <Table columns={issueColumns} data={issueTx} emptyMessage={t("inventory.noItemsIssued")} />
           </>
         )}
 
         {activeTab === "return" && (
           <>
-            <p className="inventory-ledger-title">Equipment Returned Log</p>
-            <p className="inventory-ledger-subtitle">Focused on what has come back from the field</p>
-            <Table columns={returnColumns} data={returnTx} emptyMessage="No returns recorded yet" />
+            <p className="inventory-ledger-title">{t("inventory.returnedLogTitle")}</p>
+            <p className="inventory-ledger-subtitle">{t("inventory.returnedLogSubtitle")}</p>
+            <Table columns={returnColumns} data={returnTx} emptyMessage={t("inventory.noReturnsRecorded")} />
           </>
         )}
 
         {activeTab === "damaged" && (
           <>
-            <p className="inventory-ledger-title">Damaged / Repair Records</p>
-            <p className="inventory-ledger-subtitle">Items returned in faulty condition, requiring attention</p>
-            <Table columns={returnColumns} data={damagedTx} emptyMessage="No damaged items reported" />
+            <p className="inventory-ledger-title">{t("inventory.damagedRecordsTitle")}</p>
+            <p className="inventory-ledger-subtitle">{t("inventory.damagedRecordsSubtitle")}</p>
+            <Table columns={returnColumns} data={damagedTx} emptyMessage={t("inventory.noDamagedItems")} />
           </>
         )}
       </Card>
@@ -232,63 +234,63 @@ export function InventoryPage() {
       <Modal
         open={openModal === "issue"}
         onClose={closeModal}
-        title="Issue Item Form"
+        title={t("inventory.issueItemForm")}
         footer={
           <Button variant="primary" fullWidth onClick={handleIssueSubmit} disabled={submitting}>
-            {submitting ? "Processing…" : "Confirm Issue Transaction"}
+            {submitting ? t("inventory.processing") : t("inventory.confirmIssueTransaction")}
           </Button>
         }
       >
         <p style={{ color: "var(--color-text-muted)", fontSize: 13, marginBottom: 16 }}>
-          Record weapon issuing to the officers
+          {t("inventory.recordIssuingText")}
         </p>
         <div className="modal-form-grid">
-          <InputField label="Officer ID" value={issueForm.officerId} onChange={(e) => setIssueForm((f) => ({ ...f, officerId: e.target.value }))} />
-          <InputField label="Weapon Serial ID" value={issueForm.weaponSerialId} onChange={(e) => setIssueForm((f) => ({ ...f, weaponSerialId: e.target.value }))} />
-          <InputField label="Quantity to Issue" value={issueForm.quantity} onChange={(e) => setIssueForm((f) => ({ ...f, quantity: e.target.value }))} />
-          <InputField label="Deployment Date" type="date" value={issueForm.deploymentDate} onChange={(e) => setIssueForm((f) => ({ ...f, deploymentDate: e.target.value }))} />
+          <InputField label={t("inventory.officerId")} value={issueForm.officerId} onChange={(e) => setIssueForm((f) => ({ ...f, officerId: e.target.value }))} />
+          <InputField label={t("inventory.weaponSerialId")} value={issueForm.weaponSerialId} onChange={(e) => setIssueForm((f) => ({ ...f, weaponSerialId: e.target.value }))} />
+          <InputField label={t("inventory.quantityToIssue")} value={issueForm.quantity} onChange={(e) => setIssueForm((f) => ({ ...f, quantity: e.target.value }))} />
+          <InputField label={t("inventory.deploymentDate")} type="date" value={issueForm.deploymentDate} onChange={(e) => setIssueForm((f) => ({ ...f, deploymentDate: e.target.value }))} />
         </div>
       </Modal>
 
       <Modal
         open={openModal === "return"}
         onClose={closeModal}
-        title="Return Item Form"
+        title={t("inventory.returnItemForm")}
         footer={
           <Button variant="primary" fullWidth onClick={handleReturnSubmit} disabled={submitting}>
-            {submitting ? "Processing…" : "Process Return Audit"}
+            {submitting ? t("inventory.processing") : t("inventory.processReturnAudit")}
           </Button>
         }
       >
         <p style={{ color: "var(--color-text-muted)", fontSize: 13, marginBottom: 16 }}>
-          Record weapon returning from the officers
+          {t("inventory.recordReturningText")}
         </p>
         <div className="modal-form-grid">
-          <InputField label="Officer ID" value={returnForm.officerId} onChange={(e) => setReturnForm((f) => ({ ...f, officerId: e.target.value }))} />
-          <InputField label="Weapon Serial ID" value={returnForm.weaponSerialId} onChange={(e) => setReturnForm((f) => ({ ...f, weaponSerialId: e.target.value }))} />
-          <InputField label="Return Date" type="date" value={returnForm.returnDate} onChange={(e) => setReturnForm((f) => ({ ...f, returnDate: e.target.value }))} />
-          <InputField label="Weapon Condition" value={returnForm.condition} onChange={(e) => setReturnForm((f) => ({ ...f, condition: e.target.value }))} />
+          <InputField label={t("inventory.officerId")} value={returnForm.officerId} onChange={(e) => setReturnForm((f) => ({ ...f, officerId: e.target.value }))} />
+          <InputField label={t("inventory.weaponSerialId")} value={returnForm.weaponSerialId} onChange={(e) => setReturnForm((f) => ({ ...f, weaponSerialId: e.target.value }))} />
+          <InputField label={t("inventory.returnDate")} type="date" value={returnForm.returnDate} onChange={(e) => setReturnForm((f) => ({ ...f, returnDate: e.target.value }))} />
+          <InputField label={t("inventory.weaponCondition")} value={returnForm.condition} onChange={(e) => setReturnForm((f) => ({ ...f, condition: e.target.value }))} />
         </div>
       </Modal>
 
       <Modal
         open={openModal === "add"}
         onClose={closeModal}
-        title="Add New Item Form"
+        title={t("inventory.addNewItemForm")}
         footer={
           <Button variant="primary" fullWidth onClick={handleAddSubmit} disabled={submitting}>
-            {submitting ? "Processing…" : "Confirm Add"}
+            {submitting ? t("inventory.processing") : t("inventory.confirmAdd")}
           </Button>
         }
       >
         <p style={{ color: "var(--color-text-muted)", fontSize: 13, marginBottom: 16 }}>
-          Record a new item into the inventory ledger
+          {t("inventory.recordNewItemText")}
         </p>
         <div className="modal-form-grid">
-          <InputField label="Officer ID" value={addForm.officerId} onChange={(e) => setAddForm((f) => ({ ...f, officerId: e.target.value }))} />
-          <InputField label="Weapon Serial ID" value={addForm.weaponSerialId} onChange={(e) => setAddForm((f) => ({ ...f, weaponSerialId: e.target.value }))} />
-          <InputField label="Quantity to Add" value={addForm.quantity} onChange={(e) => setAddForm((f) => ({ ...f, quantity: e.target.value }))} />
-          <InputField label="Weapon Type" value={addForm.weaponType} onChange={(e) => setAddForm((f) => ({ ...f, weaponType: e.target.value }))} />
+          <InputField label={t("inventory.officerId")} value={addForm.officerId} onChange={(e) => setAddForm((f) => ({ ...f, officerId: e.target.value }))} />
+          <InputField label={t("inventory.weaponSerialId")} value={addForm.weaponSerialId} onChange={(e) => setAddForm((f) => ({ ...f, weaponSerialId: e.target.value }))} />
+          <InputField label={t("inventory.quantityToAdd")} value={addForm.quantity} onChange={(e) => setAddForm((f) => ({ ...f, quantity: e.target.value }))} />
+          <InputField label={t("inventory.weaponType")} value={addForm.weaponType} onChange={(e) => setAddForm((f) => ({ ...f, weaponType: e.target.value }))} />
         </div>
       </Modal>
     </div>

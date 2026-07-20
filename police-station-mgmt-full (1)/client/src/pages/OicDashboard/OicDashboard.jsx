@@ -1,135 +1,190 @@
 import { useEffect, useState } from "react";
-import { StatCard, Card, Table, Badge, Loader } from "../../components";
+import { StatCard, Card, Table, Badge, Loader, Modal, Button, InputField, AssignmentCell } from "../../components";
+import { useLanguage } from "../../i18n/useLanguage";
 import { getOicStats } from "../../services/oicDashboard";
 import { getAllLeaveRequests, approveLeaveRequest, rejectLeaveRequest } from "../../services/leave";
 import { getComplaints, assignComplaint } from "../../services/complaints";
-import { dummyUsers } from "../../services/dummyData";
+import { listUsers } from "../../services/users";
+import { formatDate } from "../../utils/formatDate";
 import "./OicDashboard.css";
 
+const ASSIGNABLE_ROLES = ["duty_officer", "officer"];
+
 export function OicDashboardPage() {
+  const { t } = useLanguage();
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState(null);
   const [leaveRequests, setLeaveRequests] = useState([]);
   const [complaints, setComplaints] = useState([]);
+  const [officers, setOfficers] = useState([]);
+
+  const [rejectingId, setRejectingId] = useState(null); // id of the request shown in the reject-remark modal
+  const [rejectRemarks, setRejectRemarks] = useState("");
+  const [rejectSubmitting, setRejectSubmitting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([getOicStats(), getAllLeaveRequests(), getComplaints()])
-      .then(([statsRes, leaveRes, complaintsRes]) => {
-        if (cancelled) return;
-        setStats(statsRes);
-        setLeaveRequests(leaveRes.filter((l) => l.status === "pending"));
-        setComplaints(complaintsRes);
-      })
-      .catch((err) => console.error("Failed to load OIC dashboard:", err))
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    Promise.allSettled([getOicStats(), getAllLeaveRequests(), getComplaints(), listUsers()]).then((results) => {
+      if (cancelled) return;
+      const [statsRes, leaveRes, complaintsRes, usersRes] = results;
+
+      if (statsRes.status === "fulfilled") {
+        setStats(statsRes.value);
+      } else {
+        console.error("Failed to load OIC stats:", statsRes.reason);
+      }
+
+      if (leaveRes.status === "fulfilled") {
+        setLeaveRequests(leaveRes.value.filter((l) => l.status === "pending"));
+      } else {
+        console.error("Failed to load leave requests:", leaveRes.reason);
+      }
+
+      if (complaintsRes.status === "fulfilled") {
+        setComplaints(complaintsRes.value);
+      } else {
+        console.error("Failed to load complaints:", complaintsRes.reason);
+      }
+
+      if (usersRes.status === "fulfilled") {
+        setOfficers(usersRes.value.filter((u) => ASSIGNABLE_ROLES.includes(u.role)));
+      } else {
+        console.error("Failed to load officers:", usersRes.reason);
+      }
+
+      setLoading(false);
+    });
     return () => {
       cancelled = true;
     };
   }, []);
 
   async function handleApprove(id) {
-    await approveLeaveRequest(id);
-    setLeaveRequests((prev) => prev.filter((l) => l.id !== id));
+    try {
+      await approveLeaveRequest(id);
+      setLeaveRequests((prev) => prev.filter((l) => l.id !== id));
+    } catch (err) {
+      console.error("Failed to approve leave request:", err);
+      alert(err.message || "Could not approve this leave request");
+    }
   }
 
-  async function handleReject(id) {
-    await rejectLeaveRequest(id);
-    setLeaveRequests((prev) => prev.filter((l) => l.id !== id));
+  function openRejectModal(id) {
+    setRejectingId(id);
+    setRejectRemarks("");
+  }
+
+  async function handleReject() {
+    if (!rejectRemarks.trim()) return;
+    setRejectSubmitting(true);
+    try {
+      await rejectLeaveRequest(rejectingId, rejectRemarks.trim());
+      setLeaveRequests((prev) => prev.filter((l) => l.id !== rejectingId));
+      setRejectingId(null);
+      setRejectRemarks("");
+    } catch (err) {
+      console.error("Failed to reject leave request:", err);
+      alert(err.message || "Could not reject this leave request");
+    } finally {
+      setRejectSubmitting(false);
+    }
   }
 
   async function handleAssign(complaintId, officerId) {
-    if (!officerId) return;
     const updated = await assignComplaint(complaintId, officerId);
     setComplaints((prev) => prev.map((c) => (c.id === complaintId ? { ...c, ...updated } : c)));
   }
 
-  if (loading) return <Loader label="Loading command dashboard…" />;
+  if (loading) return <Loader label={t("oic.loading")} />;
 
   const leaveColumns = [
-    { key: "officerName", label: "Officer / Rank" },
-    { key: "duration", label: "Dates", render: (r) => `${r.startDate} - ${r.endDate}` },
-    { key: "leaveType", label: "Type", render: (r) => <span style={{ textTransform: "capitalize" }}>{r.leaveType}</span> },
+    { key: "officerName", label: t("oic.colOfficerRank") },
+    { key: "duration", label: t("oic.colDates"), render: (r) => `${formatDate(r.startDate)} - ${formatDate(r.endDate)}` },
+    { key: "leaveType", label: t("oic.colType"), render: (r) => <span style={{ textTransform: "capitalize" }}>{r.leaveType}</span> },
     {
       key: "actions",
-      label: "Actions",
+      label: t("common.actions"),
       render: (r) => (
         <div className="inline-actions">
-          <button className="icon-btn approve" title="Approve" onClick={() => handleApprove(r.id)}>✓</button>
-          <button className="icon-btn reject" title="Reject" onClick={() => handleReject(r.id)}>✕</button>
+          <button className="leave-action-btn approve" onClick={() => handleApprove(r.id)}>{t("oic.approve")}</button>
+          <button className="leave-action-btn deny" onClick={() => openRejectModal(r.id)}>{t("oic.deny")}</button>
         </div>
       ),
     },
   ];
 
   const complaintColumns = [
-    { key: "refId", label: "Complaint ID" },
-    { key: "category", label: "Nature" },
+    { key: "refId", label: t("oic.colComplaintId") },
+    { key: "category", label: t("oic.colNature") },
     {
       key: "status",
-      label: "Status",
+      label: t("common.status"),
       render: (r) =>
-        r.severity === "critical" ? <Badge tone="danger">Critical</Badge> : <Badge status={r.status} />,
+        r.severity === "Grave Crime" ? <Badge tone="danger">{t("status.critical")}</Badge> : <Badge status={r.status} />,
     },
     {
       key: "assignment",
-      label: "Assignment",
-      render: (r) => {
-        const assignedOfficer = dummyUsers.find((u) => u.id === r.assignedOfficerId);
-        if (assignedOfficer) return assignedOfficer.fullName;
-        return (
-          <select
-            className="assign-select"
-            defaultValue=""
-            onChange={(e) => handleAssign(r.id, e.target.value)}
-          >
-            <option value="" disabled>Assign…</option>
-            {dummyUsers
-              .filter((u) => ["duty_officer", "officer"].includes(u.role))
-              .map((u) => (
-                <option key={u.id} value={u.id}>{u.fullName}</option>
-              ))}
-          </select>
-        );
-      },
+      label: t("oic.colAssignment"),
+      render: (r) => <AssignmentCell complaint={r} officers={officers} onAssign={handleAssign} />,
     },
   ];
 
   return (
     <div>
       <div className="oic-header">
-        <h1>OIC Command Dashboard</h1>
-        <p className="oic-subtitle">District Oversight & Control — Administrative Command Oversight</p>
+        <h1>{t("oic.title")}</h1>
+        <p className="oic-subtitle">{t("oic.subtitle")}</p>
       </div>
 
-      <div className="stat-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
-        <StatCard label="Total Officers" value={stats?.totalOfficers} caption={`Current station strength ${stats?.currentStationStrength || ""}`} />
-        <StatCard label="Pending Leaves" value={stats?.pendingLeaves} caption="Required immediate reviews" />
-        <StatCard label="Active Complaints" value={stats?.activeComplaints} caption={stats?.activeComplaintsCaption} />
-        <StatCard label="Today's Duties" value={stats?.todaysDuties} caption={stats?.todaysDutiesCaption} />
+      <div className="stat-grid">
+        <StatCard label={t("oic.totalOfficers")} value={stats?.totalOfficers} caption={`${t("oic.currentStationStrength")} ${stats?.currentStationStrength || ""}`} />
+        <StatCard label={t("oic.pendingLeaves")} value={stats?.pendingLeaves} caption={t("oic.requiredImmediateReviews")} />
+        <StatCard label={t("oic.activeComplaints")} value={stats?.activeComplaints} caption={stats?.activeComplaintsCaption} />
+        <StatCard label={t("oic.todaysDuties")} value={stats?.todaysDuties} caption={stats?.todaysDutiesCaption} />
       </div>
 
       <div className="oic-panels">
         <Card variant="panel">
           <div className="oic-panel-header">
-            <h3>Personnel Leave Requests</h3>
-            <span className="pending-count-badge">{leaveRequests.length} Pending</span>
+            <h3>{t("oic.personnelLeaveRequests")}</h3>
+            <span className="pending-count-badge">{leaveRequests.length} {t("oic.pending")}</span>
           </div>
-          <Table columns={leaveColumns} data={leaveRequests} emptyMessage="No pending leave requests" />
+          <Table columns={leaveColumns} data={leaveRequests} emptyMessage={t("oic.noPendingLeaveRequests")} />
         </Card>
 
         <Card variant="panel">
           <div className="oic-panel-header">
-            <h3>Incident & Complaint Monitor</h3>
+            <h3>{t("oic.incidentComplaintMonitor")}</h3>
             <span className="pending-count-badge">
-              {complaints.filter((c) => !c.assignedOfficerId).length} Unassigned
+              {complaints.filter((c) => !c.assignedOfficerId).length} {t("oic.unassignedCount")}
             </span>
           </div>
-          <Table columns={complaintColumns} data={complaints} emptyMessage="No active complaints" />
+          <Table columns={complaintColumns} data={complaints} emptyMessage={t("oic.noActiveComplaints")} />
         </Card>
       </div>
+
+      <Modal
+        open={rejectingId !== null}
+        onClose={() => setRejectingId(null)}
+        title={t("oic.rejectModalTitle")}
+        footer={
+          <>
+            <Button variant="ghost" type="button" onClick={() => setRejectingId(null)}>{t("common.cancel")}</Button>
+            <Button variant="primary" onClick={handleReject} disabled={rejectSubmitting || !rejectRemarks.trim()}>
+              {rejectSubmitting ? t("oic.rejecting") : t("oic.rejectRequest")}
+            </Button>
+          </>
+        }
+      >
+        <InputField
+          label={t("oic.reasonForRejection")}
+          type="textarea"
+          required
+          value={rejectRemarks}
+          onChange={(e) => setRejectRemarks(e.target.value)}
+          placeholder={t("oic.reasonForRejectionPlaceholder")}
+        />
+      </Modal>
     </div>
   );
 }

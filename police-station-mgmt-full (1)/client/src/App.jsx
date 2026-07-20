@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./auth/AuthContext";
+import { LanguageProvider } from "./i18n/LanguageContext";
 import { ProtectedRoute } from "./auth/ProtectedRoute";
 import { DashboardLayout } from "./layouts/DashboardLayout";
 import { LoginPage } from "./pages/Login/Login";
@@ -11,69 +12,80 @@ import { DutyRosterPage } from "./pages/DutyRoster/DutyRoster";
 import { PersonnelPage } from "./pages/Personnel/Personnel";
 import { ReportsPage } from "./pages/Reports/Reports";
 import { SettingsPage } from "./pages/Settings/Settings";
+import { AuditLogPage } from "./pages/AuditLog/AuditLog";
 
 function App() {
   return (
     <BrowserRouter>
-      <AuthProvider>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
+      <LanguageProvider>
+        <AuthProvider>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
 
-          <Route
-            element={
-              <ProtectedRoute>
-                <DashboardLayout />
-              </ProtectedRoute>
-            }
-          >
-            <Route path="/dashboard" element={<DashboardRouter />} />
-            <Route path="/leave" element={<LeaveRequestsPage />} />
-            <Route path="/complaints" element={<ComplaintsPage />} />
             <Route
-              path="/inventory"
               element={
-                <ProtectedRoute roles={["duty_officer", "inventory_officer"]}>
-                  <InventoryPage />
+                <ProtectedRoute>
+                  <DashboardLayout />
                 </ProtectedRoute>
               }
-            />
-            <Route
-              path="/duty-roster"
-              element={
-                <ProtectedRoute roles={["duty_officer", "oic"]}>
-                  <DutyRosterPage />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/personnel"
-              element={
-                <ProtectedRoute roles={["admin"]}>
-                  <PersonnelPage />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/reports"
-              element={
-                <ProtectedRoute roles={["oic"]}>
-                  <ReportsPage />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/settings"
-              element={
-                <ProtectedRoute roles={["oic"]}>
-                  <SettingsPage />
-                </ProtectedRoute>
-              }
-            />
-          </Route>
+            >
+              <Route path="/dashboard" element={<DashboardRouter />} />
+              <Route path="/leave" element={<LeaveRequestsPage />} />
+              <Route path="/complaints" element={<ComplaintsPage />} />
+              <Route
+                path="/inventory"
+                element={
+                  <ProtectedRoute roles={["duty_officer", "inventory_officer"]}>
+                    <InventoryPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/duty-roster"
+                element={
+                  <ProtectedRoute roles={["duty_officer", "oic"]}>
+                    <DutyRosterPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/personnel"
+                element={
+                  <ProtectedRoute roles={["admin"]}>
+                    <PersonnelPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/reports"
+                element={
+                  <ProtectedRoute roles={["oic"]}>
+                    <ReportsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/settings"
+                element={
+                  <ProtectedRoute roles={["oic", "admin"]}>
+                    <SettingsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/audit-log"
+                element={
+                  <ProtectedRoute roles={["admin"]}>
+                    <AuditLogPage />
+                  </ProtectedRoute>
+                }
+              />
+            </Route>
 
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        </Routes>
-      </AuthProvider>
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          </Routes>
+        </AuthProvider>
+      </LanguageProvider>
     </BrowserRouter>
   );
 }

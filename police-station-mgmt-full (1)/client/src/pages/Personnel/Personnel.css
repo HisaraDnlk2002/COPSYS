@@ -1,7 +1,9 @@
 .personnel-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-sm);
   margin-bottom: var(--space-md);
 }
 
@@ -34,6 +36,12 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0 var(--space-lg);
+}
+
+@media (max-width: 600px) {
+  .personnel-form-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .password-hint {

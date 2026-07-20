@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../../auth/useAuth";
+import { useLanguage } from "../../i18n/useLanguage";
 import { Button, InputField, Card, Badge, Loader, Modal } from "../../components";
 import {
   getRosterWeeks,
@@ -23,6 +24,7 @@ function shortDay(day) {
 
 export function DutyRosterPage() {
   const { user } = useAuth();
+  const { t } = useLanguage();
   const isDutyOfficer = user?.role === "duty_officer";
   const isOic = user?.role === "oic";
 
@@ -139,7 +141,7 @@ export function DutyRosterPage() {
     }
   }
 
-  if (loading) return <Loader label="Loading duty roster…" />;
+  if (loading) return <Loader label={t("dutyRoster.loading")} />;
 
   const selectedWeek = weeks.find((w) => w.id === selectedWeekId);
   const detailLoading = Boolean(selectedWeekId) && weekDetail?.week?.id !== selectedWeekId;
@@ -149,13 +151,21 @@ export function DutyRosterPage() {
     shiftsByOfficerAndDay[key] = s;
   });
 
+  // Same "fall back to raw value" rule Badge.jsx uses for status words
+  // that aren't (yet) in the dictionary.
+  function statusLabel(status) {
+    const key = `status.${(status || "").toLowerCase()}`;
+    const translated = t(key);
+    return translated === key ? status : translated;
+  }
+
   return (
     <div>
       <div className="roster-header">
-        <h1>Duty Roster {isOic ? "Management" : "Dashboard"}</h1>
+        <h1>{t("dutyRoster.title")} {isOic ? t("dutyRoster.management") : t("dutyRoster.dashboard")}</h1>
         {isDutyOfficer && (
           <Button variant="primary" onClick={() => setShowGenForm((v) => !v)}>
-            {showGenForm ? "Cancel" : "New Roster Week"}
+            {showGenForm ? t("dutyRoster.cancel") : t("dutyRoster.newRosterWeek")}
           </Button>
         )}
       </div>
@@ -163,19 +173,19 @@ export function DutyRosterPage() {
       {showGenForm && (
         <Card variant="panel" className="roster-tool-grid" style={{ marginBottom: 24 }}>
           <form onSubmit={handleCreateWeek} className="roster-tool-grid" style={{ width: "100%" }}>
-            <InputField label="Week Starting" type="date" required value={genForm.weekStarting}
+            <InputField label={t("dutyRoster.weekStarting")} type="date" required value={genForm.weekStarting}
               onChange={(e) => setGenForm((f) => ({ ...f, weekStarting: e.target.value }))} />
-            <InputField label="Department/Unit" value={genForm.department}
+            <InputField label={t("dutyRoster.departmentUnit")} value={genForm.department}
               onChange={(e) => setGenForm((f) => ({ ...f, department: e.target.value }))} />
-            <InputField label="Required Staffing" value={genForm.requiredStaffing}
-              onChange={(e) => setGenForm((f) => ({ ...f, requiredStaffing: e.target.value }))} placeholder="e.g. 5" />
-            <Button variant="primary" type="submit">Create Week</Button>
+            <InputField label={t("dutyRoster.requiredStaffing")} value={genForm.requiredStaffing}
+              onChange={(e) => setGenForm((f) => ({ ...f, requiredStaffing: e.target.value }))} placeholder={t("dutyRoster.staffingPlaceholder")} />
+            <Button variant="primary" type="submit">{t("dutyRoster.createWeek")}</Button>
           </form>
         </Card>
       )}
 
       <div className="roster-weeks-list">
-        {weeks.length === 0 && <p style={{ color: "var(--color-text-muted)" }}>No roster weeks yet.</p>}
+        {weeks.length === 0 && <p style={{ color: "var(--color-text-muted)" }}>{t("dutyRoster.noRosterWeeks")}</p>}
         {weeks.map((week) => (
           <div
             key={week.id}
@@ -183,7 +193,7 @@ export function DutyRosterPage() {
             onClick={() => setSelectedWeekId(week.id)}
           >
             <span>
-              Week of {week.weekStarting} — {week.department}
+              {t("dutyRoster.weekOf")} {week.weekStarting} — {week.department}
             </span>
             <Badge status={week.status === "sent_back" ? "rejected" : week.status === "submitted" ? "pending" : week.status} />
           </div>
@@ -194,25 +204,25 @@ export function DutyRosterPage() {
         <Card variant="panel">
           {unfilledDays.length > 0 && (
             <div className="unfilled-warning">
-              Could not fully staff: {unfilledDays.map((d) => `${d.day} (short ${d.shortfall})`).join(", ")}.
-              Review and adjust manually before submitting.
+              {t("dutyRoster.couldNotFullyStaff")} {unfilledDays.map((d) => `${d.day} (${t("dutyRoster.short")} ${d.shortfall})`).join(", ")}.
+              {" "}{t("dutyRoster.reviewAdjust")}
             </div>
           )}
 
           {selectedWeek.status === "sent_back" && selectedWeek.sendBackReason && (
             <div className="unfilled-warning">
-              Sent back by OIC: {selectedWeek.sendBackReason}
+              {t("dutyRoster.sentBackByOic")} {selectedWeek.sendBackReason}
             </div>
           )}
 
           {detailLoading ? (
-            <Loader label="Loading week grid…" />
+            <Loader label={t("dutyRoster.loadingWeekGrid")} />
           ) : (
             <div style={{ overflowX: "auto" }}>
               <table className="roster-grid-table">
                 <thead>
                   <tr>
-                    <th>Officer</th>
+                    <th>{t("dutyRoster.officer")}</th>
                     {DAYS_OF_WEEK.map((day) => (
                       <th key={day}>{shortDay(day)}</th>
                     ))}
@@ -229,7 +239,7 @@ export function DutyRosterPage() {
                           <td key={day}>
                             <span
                               className={`roster-cell ${code}`}
-                              title={shift ? `${shift.shiftStart}-${shift.shiftEnd} ${shift.department}` : "Off"}
+                              title={shift ? `${shift.shiftStart}-${shift.shiftEnd} ${shift.department}` : t("dutyRoster.off")}
                               onClick={() => shift && isDutyOfficer && openSuggestions(officer, shift.date)}
                             >
                               {code === "empty" ? "" : "P"}
@@ -247,29 +257,29 @@ export function DutyRosterPage() {
           <div className="roster-footer-stats">
             <div className="roster-footer-stat">
               <div className="value">{selectedWeek.scheduledUnits}/{dummyRosterOfficers.length}</div>
-              <div className="label">Scheduled Units</div>
+              <div className="label">{t("dutyRoster.scheduledUnits")}</div>
             </div>
             <div className="roster-footer-stat">
               <div className="value">{selectedWeek.offDuty}</div>
-              <div className="label">Off Duty</div>
+              <div className="label">{t("dutyRoster.offDuty")}</div>
             </div>
             <div className="roster-footer-stat">
               <div className="value">{selectedWeek.leaveCoverage}</div>
-              <div className="label">Leave Coverage</div>
+              <div className="label">{t("dutyRoster.leaveCoverage")}</div>
             </div>
             <div className="roster-footer-stat">
-              <div className="value" style={{ textTransform: "capitalize" }}>{selectedWeek.status}</div>
-              <div className="label">Status</div>
+              <div className="value">{statusLabel(selectedWeek.status)}</div>
+              <div className="label">{t("dutyRoster.status")}</div>
             </div>
           </div>
 
           {isDutyOfficer && selectedWeek.status === "draft" && (
             <div className="roster-actions-row">
               <Button variant="outline" onClick={handleGenerate} disabled={generating}>
-                {generating ? "Generating…" : "Generate Roster"}
+                {generating ? t("dutyRoster.generating") : t("dutyRoster.generateRoster")}
               </Button>
               <Button variant="primary" onClick={handleSubmitWeek}>
-                Submit to OIC
+                {t("dutyRoster.submitToOic")}
               </Button>
             </div>
           )}
@@ -277,10 +287,10 @@ export function DutyRosterPage() {
           {isOic && selectedWeek.status === "submitted" && (
             <div className="roster-actions-row">
               <Button variant="ghost" onClick={() => setShowSendBackModal(true)}>
-                Send Back to Revise
+                {t("dutyRoster.sendBackToRevise")}
               </Button>
               <Button variant="primary" onClick={handleApproveWeek}>
-                Approve
+                {t("dutyRoster.approve")}
               </Button>
             </div>
           )}
@@ -290,29 +300,29 @@ export function DutyRosterPage() {
       <Modal
         open={showSendBackModal}
         onClose={() => setShowSendBackModal(false)}
-        title="Send roster back to revise"
+        title={t("dutyRoster.sendBackModalTitle")}
         footer={
           <Button variant="primary" onClick={handleSendBack}>
-            Send Back
+            {t("dutyRoster.sendBack")}
           </Button>
         }
       >
         <InputField
-          label="Reason"
+          label={t("dutyRoster.reason")}
           type="textarea"
           value={sendBackReason}
           onChange={(e) => setSendBackReason(e.target.value)}
-          placeholder="e.g. Missing Friday night coverage"
+          placeholder={t("dutyRoster.reasonPlaceholder")}
         />
       </Modal>
 
       <Modal
         open={Boolean(suggestModal)}
         onClose={() => setSuggestModal(null)}
-        title={suggestModal ? `Replace ${suggestModal.officerName}` : ""}
+        title={suggestModal ? `${t("dutyRoster.replace")} ${suggestModal.officerName}` : ""}
       >
         {suggestLoading ? (
-          <Loader label="Finding replacements…" />
+          <Loader label={t("dutyRoster.findingReplacements")} />
         ) : (
           <div className="suggestion-list">
             {suggestions.map((s, i) => (
@@ -322,11 +332,11 @@ export function DutyRosterPage() {
                   <div className="reason">{s.reasonLabel}</div>
                 </div>
                 <Button variant="outline" onClick={() => setSuggestModal(null)}>
-                  Assign
+                  {t("dutyRoster.assign")}
                 </Button>
               </div>
             ))}
-            {suggestions.length === 0 && <p>No replacement candidates found.</p>}
+            {suggestions.length === 0 && <p>{t("dutyRoster.noReplacementCandidates")}</p>}
           </div>
         )}
       </Modal>

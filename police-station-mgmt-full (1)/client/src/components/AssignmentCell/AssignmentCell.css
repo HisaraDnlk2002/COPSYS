@@ -1,0 +1,25 @@
+.assignment-cell {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+.assign-select {
+  font-size: var(--font-size-sm);
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+}
+
+.assign-btn {
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 4px 12px;
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  background: var(--color-primary);
+  color: white;
+}
+
+.assign-btn:hover:not(:disabled) { background: var(--color-primary-hover); }
+.assign-btn:disabled { opacity: 0.5; cursor: not-allowed; }

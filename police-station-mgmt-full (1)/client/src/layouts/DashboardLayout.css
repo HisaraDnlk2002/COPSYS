@@ -31,6 +31,40 @@
   color: var(--color-accent);
 }
 
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+}
+
+.language-toggle {
+  display: flex;
+  gap: 4px;
+  background: var(--color-surface-muted);
+  border-radius: var(--radius-md);
+  padding: 3px;
+}
+
+.language-btn {
+  border: none;
+  background: transparent;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--color-text-muted);
+}
+
+.language-btn.active {
+  background: var(--color-primary);
+  color: white;
+}
+
+.language-btn:not(.active):hover {
+  background: var(--color-border);
+}
+
 .topbar-user {
   display: flex;
   align-items: center;
@@ -109,6 +143,7 @@
 
 .main-content {
   flex: 1;
+  min-width: 0; /* let a flex child actually shrink instead of forcing horizontal overflow */
   display: flex;
   flex-direction: column;
 }
@@ -121,4 +156,75 @@
   padding: 48px;
   text-align: center;
   color: var(--color-text-faint);
+}
+
+.menu-toggle {
+  display: none;
+  background: none;
+  border: none;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 6px;
+  color: var(--color-text);
+}
+
+.sidebar-backdrop {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .menu-toggle {
+    display: inline-flex;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 200;
+    width: 248px;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    box-shadow: 2px 0 16px rgba(0, 0, 0, 0.15);
+  }
+
+  .sidebar.open {
+    transform: translateX(0);
+  }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 150;
+  }
+}
+
+@media (max-width: 480px) {
+  .topbar {
+    padding: 10px var(--space-md);
+  }
+
+  .topbar-brand {
+    display: none;
+  }
+
+  .topbar-right {
+    gap: var(--space-sm);
+  }
+
+  .topbar-user .role {
+    display: none;
+  }
+
+  .language-btn {
+    padding: 5px 8px;
+    font-size: 12px;
+  }
+
+  .page-body {
+    padding: var(--space-md);
+  }
 }

@@ -1,12 +1,14 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth";
+import { useLanguage } from "../../i18n/useLanguage";
 import policeLogo from "../../assets/Sri_Lanka_Police_logo.svg.png";
 import "./Login.css";
 
 export function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const { t } = useLanguage();
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -31,15 +33,15 @@ export function LoginPage() {
     <div className="login-page">
       <form className="login-card" onSubmit={handleSubmit}>
         <img src={policeLogo} alt="Sri Lanka Police" className="login-logo" />
-        <h1 className="login-title">SRI LANKA POLICE</h1>
-        <p className="login-subtitle">Airport Station Management System</p>
+        <h1 className="login-title">{t("login.title")}</h1>
+        <p className="login-subtitle">{t("login.subtitle")}</p>
 
         <div className="login-field">
-          <label htmlFor="username">Rank & Number</label>
+          <label htmlFor="username">{t("login.rankNumber")}</label>
           <input
             id="username"
             type="text"
-            placeholder="e.g. 77412"
+            placeholder={t("login.rankNumberPlaceholder")}
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             autoComplete="username"
@@ -48,11 +50,11 @@ export function LoginPage() {
         </div>
 
         <div className="login-field">
-          <label htmlFor="password">Password</label>
+          <label htmlFor="password">{t("login.password")}</label>
           <input
             id="password"
             type="password"
-            placeholder="Password"
+            placeholder={t("login.password")}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="current-password"
@@ -63,7 +65,7 @@ export function LoginPage() {
         {error && <p className="login-error">{error}</p>}
 
         <button className="login-button" type="submit" disabled={submitting}>
-          {submitting ? "Logging in…" : "Login"}
+          {submitting ? t("login.loggingIn") : t("login.loginButton")}
         </button>
       </form>
     </div>

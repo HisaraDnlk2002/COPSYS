@@ -1,7 +1,6 @@
 import "./InputField.css";
 
-// type: "text" | "password" | "select" | "date" | "textarea"
-// For "select", pass options: [{ value, label }]
+
 export function InputField({
   label,
   type = "text",
@@ -16,6 +15,7 @@ export function InputField({
   id,
   min,
   max,
+  readOnly = false,
 }) {
   const inputId = id || label?.toLowerCase().replace(/\s+/g, "-");
 
@@ -54,6 +54,7 @@ export function InputField({
           placeholder={placeholder}
           rows={rows}
           required={required}
+          readOnly={readOnly}
         />
       ) : (
         <input
@@ -66,6 +67,7 @@ export function InputField({
           required={required}
           min={min}
           max={max}
+          readOnly={readOnly}
         />
       )}
 
