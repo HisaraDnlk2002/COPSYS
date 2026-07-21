@@ -156,4 +156,20 @@ async function getMyBalance(req, res) {
   }
 }
 
-module.exports = { listMine, listAll, create, approve, reject, getMyBalance };
+// GET /api/leave-balances/:officerId — admin/oic, powers the "View" detail
+// modal on the leave registry so the reviewer can see how many days that
+// specific officer has left, not just their own.
+async function getBalanceForOfficer(req, res) {
+  try {
+    const balance = await LeaveBalance.findOne({ officerId: req.params.officerId });
+    if (!balance) {
+      return res.status(404).json({ error: "No leave balance found" });
+    }
+    return res.json(balance.toJSON());
+  } catch (err) {
+    console.error("getBalanceForOfficer error:", err);
+    return res.status(500).json({ error: "Could not load leave balance" });
+  }
+}
+
+module.exports = { listMine, listAll, create, approve, reject, getMyBalance, getBalanceForOfficer };

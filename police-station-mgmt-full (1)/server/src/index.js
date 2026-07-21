@@ -23,6 +23,7 @@ const reportsRoutes = require("./routes/reportsRoutes");
 const settingsRoutes = require("./routes/settingsRoutes");
 const auditLogRoutes = require("./routes/auditLogRoutes");
 const officerRoutes = require("./routes/officerRoutes");
+const dashboardRoutes = require("./routes/dashboardRoutes");
 
 const app = express();
 
@@ -48,6 +49,7 @@ app.use("/api/reports", reportsRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/audit-logs", auditLogRoutes);
 app.use("/api/officers", officerRoutes);
+app.use("/api/dashboard", dashboardRoutes);
 
 app.use("/api", (req, res) => {
   res.status(404).json({ error: "Not found" });

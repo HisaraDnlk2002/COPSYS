@@ -14,6 +14,7 @@ async function generateRefId() {
 // officer list by raw id string, so it needs to stay a plain id. The
 // registry table just needs a name to display, so we attach that
 // separately as `assignedOfficerName` instead of replacing the id field.
+// `registeredByName` (who filed the complaint) is resolved the same way.
 async function list(req, res) {
   try {
     const filter = { stationId: req.user.stationId };
@@ -22,7 +23,13 @@ async function list(req, res) {
     }
     const complaints = await Complaint.find(filter).sort({ createdAt: -1 });
 
-    const officerIds = [...new Set(complaints.map((c) => c.assignedOfficerId?.toString()).filter(Boolean))];
+    const officerIds = [
+      ...new Set(
+        complaints
+          .flatMap((c) => [c.assignedOfficerId?.toString(), c.registeredBy?.toString()])
+          .filter(Boolean)
+      ),
+    ];
     const officers = await User.find({ _id: { $in: officerIds } }).select("fullName");
     const officerNameById = new Map(officers.map((o) => [o._id.toString(), o.fullName]));
 
@@ -31,6 +38,9 @@ async function list(req, res) {
         const json = c.toJSON();
         json.assignedOfficerName = json.assignedOfficerId
           ? officerNameById.get(json.assignedOfficerId.toString()) || ""
+          : "";
+        json.registeredByName = json.registeredBy
+          ? officerNameById.get(json.registeredBy.toString()) || ""
           : "";
         return json;
       })
