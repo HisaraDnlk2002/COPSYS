@@ -22,6 +22,16 @@ const COMPLAINT_BOOK_OPTIONS = [
   { value: "GCR", label: "GCR — General Complaint Register" },
 ];
 
+// Sri Lankan NIC: either 9 digits + a trailing V/X (old format) or 12
+// digits (new format). Strips anything else, and only keeps a V/X if
+// it's literally the last character typed so far.
+function sanitizeNic(value) {
+  const upper = value.toUpperCase();
+  const endsWithLetter = /[VX]$/.test(upper);
+  const digitsOnly = upper.replace(/[^0-9]/g, "");
+  return endsWithLetter ? digitsOnly.slice(0, 9) + upper.slice(-1) : digitsOnly.slice(0, 12);
+}
+
 const EMPTY_FORM = {
   complaintBook: "",
   title: "",
@@ -278,8 +288,9 @@ export function ComplaintsPage() {
             <h3 className="section-label">{t("complaints.complaintDetails")}</h3>
             <div className="complaint-form-grid">
               <InputField label={t("complaints.fullName")} required value={form.fullName} onChange={(e) => updateField("fullName", e.target.value)} />
-              <InputField label={t("complaints.contactNumber")} value={form.contactNumber} onChange={(e) => updateField("contactNumber", e.target.value)} />
-              <InputField label={t("complaints.nicNumber")} value={form.nic} onChange={(e) => updateField("nic", e.target.value)}
+              <InputField label={t("complaints.contactNumber")} value={form.contactNumber}
+                onChange={(e) => updateField("contactNumber", e.target.value.replace(/\D/g, "").slice(0, 10))} />
+              <InputField label={t("complaints.nicNumber")} value={form.nic} onChange={(e) => updateField("nic", sanitizeNic(e.target.value))}
                 helperText={t("complaints.nicOrPassportHelper")} />
               <InputField label={t("complaints.passportId")} value={form.passportId} onChange={(e) => updateField("passportId", e.target.value)}
                 helperText={t("complaints.nicOrPassportHelper")} />
@@ -385,6 +396,7 @@ export function ComplaintsPage() {
                   readOnly
                   value={formatDateAndTime(viewing.dateOfIncident, viewing.incidentTime)}
                 />
+                <InputField label={t("complaints.filedBy")} readOnly value={viewing.registeredByName || "—"} />
                 <div className="field-full">
                   <InputField label={t("complaints.detailedDescription")} type="textarea" readOnly value={viewing.description || "—"} />
                 </div>

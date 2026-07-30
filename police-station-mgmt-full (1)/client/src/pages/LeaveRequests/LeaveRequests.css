@@ -97,8 +97,15 @@
   border-color: var(--color-danger);
 }
 
+.leave-action-btn.view {
+  background: var(--color-surface-muted);
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
 .leave-action-btn.approve:hover { opacity: 0.85; }
 .leave-action-btn.deny:hover { background: var(--color-border); }
+.leave-action-btn.view:hover { background: var(--color-border); }
 
 .leave-sort-bar {
   display: flex;

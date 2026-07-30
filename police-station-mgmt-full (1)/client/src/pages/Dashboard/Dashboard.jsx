@@ -33,23 +33,29 @@ export function DashboardPage() {
     let cancelled = false;
 
     async function load() {
-      try {
-        const [summaryRes, balanceRes, scheduleRes, complaintsRes] = await Promise.all([
-          getDashboardSummary(),
-          getMyLeaveBalance(),
-          getMySchedule(),
-          getMyAssignedComplaints(),
-        ]);
-        if (cancelled) return;
-        setSummary(summaryRes);
-        setLeaveBalance(balanceRes);
-        setSchedule(scheduleRes);
-        setAssignedComplaints(complaintsRes);
-      } catch (err) {
-        console.error("Failed to load dashboard:", err);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      // allSettled, not all — one endpoint failing (e.g. no duty schedule
+      // set up yet) shouldn't blank out the other three stat cards too.
+      const [summaryRes, balanceRes, scheduleRes, complaintsRes] = await Promise.allSettled([
+        getDashboardSummary(),
+        getMyLeaveBalance(),
+        getMySchedule(),
+        getMyAssignedComplaints(),
+      ]);
+      if (cancelled) return;
+
+      if (summaryRes.status === "fulfilled") setSummary(summaryRes.value);
+      else console.error("Failed to load dashboard summary:", summaryRes.reason);
+
+      if (balanceRes.status === "fulfilled") setLeaveBalance(balanceRes.value);
+      else console.error("Failed to load leave balance:", balanceRes.reason);
+
+      if (scheduleRes.status === "fulfilled") setSchedule(scheduleRes.value);
+      else console.error("Failed to load duty schedule:", scheduleRes.reason);
+
+      if (complaintsRes.status === "fulfilled") setAssignedComplaints(complaintsRes.value);
+      else console.error("Failed to load assigned complaints:", complaintsRes.reason);
+
+      setLoading(false);
     }
 
     load();

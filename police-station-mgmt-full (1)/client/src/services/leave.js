@@ -29,6 +29,15 @@ export async function getMyLeaveBalance() {
   return api.get("/leave-balances/me");
 }
 
+// Used by the OIC/admin "View" detail modal on the leave registry, to show
+// a specific officer's remaining balance rather than the viewer's own.
+export async function getLeaveBalanceForOfficer(officerId) {
+  if (USE_DUMMY_DATA) {
+    return Promise.resolve(dummyLeaveBalances[officerId] || { annual: 0, sick: 0, casual: 0 });
+  }
+  return api.get(`/leave-balances/${officerId}`);
+}
+
 export async function applyForLeave(payload) {
   if (USE_DUMMY_DATA) {
     const uid = currentUserId();

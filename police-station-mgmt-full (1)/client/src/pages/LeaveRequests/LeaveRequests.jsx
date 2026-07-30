@@ -5,11 +5,13 @@ import {
   getMyLeaveRequests,
   getAllLeaveRequests,
   getMyLeaveBalance,
+  getLeaveBalanceForOfficer,
   applyForLeave,
   approveLeaveRequest,
   rejectLeaveRequest,
 } from "../../services/leave";
 import { searchOfficers } from "../../services/officers";
+import { listUsers } from "../../services/users";
 import { useAuth } from "../../auth/useAuth";
 import { useLanguage } from "../../i18n/useLanguage";
 import { formatDate } from "../../utils/formatDate";
@@ -80,6 +82,11 @@ export function LeaveRequestsPage() {
   const [rejectRemarks, setRejectRemarks] = useState("");
   const [rejectSubmitting, setRejectSubmitting] = useState(false);
 
+  const [officers, setOfficers] = useState([]); // used to look up the department shown in the "View" modal
+  const [viewing, setViewing] = useState(null); // leave request shown in the View Details modal
+  const [viewBalance, setViewBalance] = useState(null);
+  const [viewBalanceLoading, setViewBalanceLoading] = useState(false);
+
   const [form, setForm] = useState({
     leaveType: "",
     startDate: "",
@@ -124,6 +131,29 @@ export function LeaveRequestsPage() {
       cancelled = true;
     };
   }, [isOic]);
+
+  useEffect(() => {
+    if (!isOic) return;
+    let cancelled = false;
+    listUsers()
+      .then((res) => {
+        if (!cancelled) setOfficers(res);
+      })
+      .catch((err) => console.error("Failed to load officers:", err));
+    return () => {
+      cancelled = true;
+    };
+  }, [isOic]);
+
+  function openViewModal(row) {
+    setViewing(row);
+    setViewBalance(null);
+    setViewBalanceLoading(true);
+    getLeaveBalanceForOfficer(row.officerId)
+      .then((res) => setViewBalance(res))
+      .catch((err) => console.error("Failed to load officer's leave balance:", err))
+      .finally(() => setViewBalanceLoading(false));
+  }
 
   async function handleApprove(id) {
     try {
@@ -243,13 +273,17 @@ export function LeaveRequestsPage() {
           {
             key: "actions",
             label: t("common.actions"),
-            render: (r) =>
-              r.status === "pending" ? (
-                <div className="inline-actions">
-                  <button className="leave-action-btn approve" onClick={() => handleApprove(r.id)}>{t("leave.approve")}</button>
-                  <button className="leave-action-btn deny" onClick={() => openRejectModal(r.id)}>{t("leave.deny")}</button>
-                </div>
-              ) : null,
+            render: (r) => (
+              <div className="inline-actions">
+                <button className="leave-action-btn view" onClick={() => openViewModal(r)}>{t("common.view")}</button>
+                {r.status === "pending" && (
+                  <>
+                    <button className="leave-action-btn approve" onClick={() => handleApprove(r.id)}>{t("leave.approve")}</button>
+                    <button className="leave-action-btn deny" onClick={() => openRejectModal(r.id)}>{t("leave.deny")}</button>
+                  </>
+                )}
+              </div>
+            ),
           },
         ]
       : []),
@@ -427,6 +461,69 @@ export function LeaveRequestsPage() {
           onChange={(e) => setRejectRemarks(e.target.value)}
           placeholder={t("leave.reasonForRejectionPlaceholder")}
         />
+      </Modal>
+
+      <Modal
+        open={Boolean(viewing)}
+        onClose={() => setViewing(null)}
+        title={t("leave.viewDetailsTitle")}
+      >
+        {viewing && (
+          <div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16, marginBottom: 16 }}>
+              <div>
+                <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("leave.colOfficer")}</p>
+                <p>{viewing.officerName}</p>
+              </div>
+              <div>
+                <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("leave.department")}</p>
+                <p>{officers.find((o) => o.id === viewing.officerId)?.department || "—"}</p>
+              </div>
+              <div>
+                <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("leave.colLeaveType")}</p>
+                <p style={{ textTransform: "capitalize" }}>{viewing.leaveType}</p>
+              </div>
+              <div>
+                <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("leave.colDuration")}</p>
+                <p>{formatDate(viewing.startDate)} - {formatDate(viewing.endDate)} ({viewing.days} {t("dashboard.days")})</p>
+              </div>
+              <div>
+                <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("common.status")}</p>
+                <Badge status={viewing.status} />
+              </div>
+            </div>
+
+            <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("leave.justificationReason")}</p>
+            <p style={{ marginBottom: 16 }}>{viewing.justification || t("leave.noJustificationProvided")}</p>
+
+            {viewing.remarks && (
+              <>
+                <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("leave.colRemarks")}</p>
+                <p style={{ marginBottom: 16 }}>{viewing.remarks}</p>
+              </>
+            )}
+
+            <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("leave.leaveBalance")}</p>
+            {viewBalanceLoading ? (
+              <p style={{ color: "var(--color-text-muted)" }}>{t("leave.loadingBalance")}</p>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
+                <div>
+                  <p style={{ fontSize: 12, color: "var(--color-text-muted)" }}>{t("leave.annualLeaves")}</p>
+                  <p>{viewBalance?.annual ?? 0} {t("dashboard.days")}</p>
+                </div>
+                <div>
+                  <p style={{ fontSize: 12, color: "var(--color-text-muted)" }}>{t("leave.sickLeaves")}</p>
+                  <p>{viewBalance?.sick ?? 0} {t("dashboard.days")}</p>
+                </div>
+                <div>
+                  <p style={{ fontSize: 12, color: "var(--color-text-muted)" }}>{t("leave.casualLeaves")}</p>
+                  <p>{viewBalance?.casual ?? 0} {t("dashboard.days")}</p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </Modal>
     </div>
   );

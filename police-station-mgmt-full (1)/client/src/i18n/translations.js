@@ -184,6 +184,12 @@ export const translations = {
       rejectRequest: "Reject Request",
       reasonForRejection: "Reason for rejection",
       reasonForRejectionPlaceholder: "Explain why this leave request is being rejected",
+      viewDetailsTitle: "Leave Request Details",
+      department: "Department",
+      justificationReason: "Justification / Reason",
+      noJustificationProvided: "No justification provided.",
+      leaveBalance: "Leave Balance",
+      loadingBalance: "Loading balance…",
     },
 
     complaints: {
@@ -260,6 +266,7 @@ export const translations = {
       occupation: "Occupation",
       status: "Status",
       saving: "Saving…",
+      filedBy: "Filed By",
     },
 
     personnel: {
@@ -694,6 +701,12 @@ export const translations = {
       rejectRequest: "ඉල්ලීම ප්‍රතික්ෂේප කරන්න",
       reasonForRejection: "ප්‍රතික්ෂේප කිරීමට හේතුව",
       reasonForRejectionPlaceholder: "මෙම නිවාඩු ඉල්ලීම ප්‍රතික්ෂේප කරන්නේ ඇයිදැයි පැහැදිලි කරන්න",
+      viewDetailsTitle: "නිවාඩු ඉල්ලීමේ විස්තර",
+      department: "අංශය",
+      justificationReason: "හේතුව / හේතුව",
+      noJustificationProvided: "හේතුවක් සපයා නැත.",
+      leaveBalance: "නිවාඩු ශේෂය",
+      loadingBalance: "ශේෂය පූරණය වෙමින්...",
     },
 
     complaints: {
@@ -770,6 +783,7 @@ export const translations = {
       occupation: "වෘත්තිය",
       status: "තත්ත්වය",
       saving: "සුරකිමින්...",
+      filedBy: "ලියාපදිංචි කළේ",
     },
 
     personnel: {
