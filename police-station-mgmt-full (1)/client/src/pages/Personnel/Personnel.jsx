@@ -12,13 +12,7 @@ import {
 import "./Personnel.css";
 
 // Katunayake Airport Police Station's five branches.
-const DEPARTMENT_OPTIONS = [
-  { value: "Administration Branch (පාලන අංශය)", label: "Administration Branch (පාලන අංශය)" },
-  { value: "Complaint Branch / Minor Complaints (පැමිණිලි අංශය)", label: "Complaint Branch / Minor Complaints (පැමිණිලි අංශය)" },
-  { value: "Traffic Branch (ගමනාගමන අංශය)", label: "Traffic Branch (ගමනාගමන අංශය)" },
-  { value: "Children & Women Bureau (ළමා හා කාන්තා කාර්යාංශය)", label: "Children & Women Bureau (ළමා හා කාන්තා කාර්යාංශය)" },
-  { value: "General Duty Branch (සාමාන්‍ය රාජකාරි අංශය)", label: "General Duty Branch (සාමාන්‍ය රාජකාරි අංශය)" },
-];
+import { BRANCHES as DEPARTMENT_OPTIONS } from "../../config/branches";  // mirrored from server/src/config/branches.js
 
 // Letters (any script) plus combining marks — needed so Sinhala vowel
 // signs (e.g. the ු in "චතුර") aren't stripped, since those are Unicode

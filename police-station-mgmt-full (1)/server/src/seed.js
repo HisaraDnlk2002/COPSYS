@@ -13,20 +13,28 @@ require("dotenv").config();
 // system-wide, so this forces Node's own resolver to use it directly.
 require("dns").setServers(["8.8.8.8", "8.8.4.4"]);
 
+lName: "PC Nishadi", rankAndNumber: "65521", department: "Crime", role: "officer", password: "officer123", phoneNumber: "0775678901", address: "Police Headquarters, Colombo" },
 const bcrypt = require("bcryptjs");
 const mongoose = require("mongoose");
 const { connectDB } = require("./config/db");
 const User = require("./models/User");
 const LeaveBalance = require("./models/LeaveBalance");
 const SystemSettings = require("./models/SystemSettings");
+const { BRANCHES } = require("./config/branches");
+
+const ADMIN_BRANCH = BRANCHES.find((b) => b.value.startsWith("Administration"))?.value;
+const TRAFFIC_BRANCH = BRANCHES.find((b) => b.value.startsWith("Traffic"))?.value;
+const GENERAL_POOL = BRANCHES.find((b) => b.isGeneralPool)?.value;
 
 // One account per role so every screen/permission is testable right away.
+// Departments MUST match one of the values in config/branches.js, or the
+// duty allocation engine won't recognize them as eligible for any branch.
 const STARTER_ACCOUNTS = [
-  { fullName: "Sgt. Bandara", rankAndNumber: "77412", department: "Administration", role: "admin", password: "admin123", phoneNumber: "0771234567", address: "Police Headquarters, Colombo" },
-  { fullName: "Insp. Wijesinghe", rankAndNumber: "88214", department: "Command", role: "oic", password: "oic123", phoneNumber: "0772345678", address: "Police Headquarters, Colombo" },
-  { fullName: "PC Perera", rankAndNumber: "91022", department: "Traffic Control", role: "duty_officer", password: "duty123", phoneNumber: "0773456789", address: "Police Headquarters, Colombo" },
-  { fullName: "WPC Silva", rankAndNumber: "73310", department: "Stores", role: "inventory_officer", password: "inv123", phoneNumber: "0774567890", address: "Police Headquarters, Colombo" },
-  { fullName: "PC Nishadi", rankAndNumber: "65521", department: "Crime", role: "officer", password: "officer123", phoneNumber: "0775678901", address: "Police Headquarters, Colombo" },
+  { fullName: "Sgt. Bandara", rankAndNumber: "77412", department: ADMIN_BRANCH, role: "admin", password: "admin123", phoneNumber: "0771234567", address: "Police Headquarters, Colombo" },
+  { fullName: "Insp. Wijesinghe", rankAndNumber: "88214", department: ADMIN_BRANCH, role: "oic", password: "oic123", phoneNumber: "0772345678", address: "Police Headquarters, Colombo" },
+  { fullName: "PC Perera", rankAndNumber: "91022", department: TRAFFIC_BRANCH, role: "duty_officer", password: "duty123", phoneNumber: "0773456789", address: "Police Headquarters, Colombo" },
+  { fullName: "WPC Silva", rankAndNumber: "73310", department: GENERAL_POOL, role: "inventory_officer", password: "inv123", phoneNumber: "0774567890", address: "Police Headquarters, Colombo" },
+  { fullName: "PC Nishadi", rankAndNumber: "65521", department: TRAFFIC_BRANCH, role: "officer", password: "officer123", phoneNumber: "0775678901", address: "Police Headquarters, Colombo" },
 ];
 async function seed() {
   await connectDB();

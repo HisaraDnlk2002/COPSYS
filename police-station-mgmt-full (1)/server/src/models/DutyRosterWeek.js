@@ -1,14 +1,27 @@
 const mongoose = require("mongoose");
 
+const branchRequirementSchema = new mongoose.Schema(
+  {
+    branch: { type: String, required: true },
+    dayRequired: { type: Number, default: 0 },
+    nightRequired: { type: Number, default: 0 },
+  },
+  { _id: false }
+);
+
 const dutyRosterWeekSchema = new mongoose.Schema(
   {
     weekStarting: { type: Date, required: true }, // Monday of the week
-    department: { type: String, required: true },
-    shiftPattern: { type: String, default: "" }, // "Optimal" / "Reserve" etc.
+
+    // One week spans every branch being planned together (spec §8) —
+    // replaces the old single `department`/`requiredStaffing` fields.
+    requirements: { type: [branchRequirementSchema], default: [] },
+
+    shiftPattern: { type: String, default: "" },
 
     status: {
       type: String,
-      enum: ["draft", "submitted", "approved", "sent_back"],
+      enum: ["draft", "submitted", "approved", "sent_back", "published"],
       default: "draft",
     },
 
@@ -22,9 +35,17 @@ const dutyRosterWeekSchema = new mongoose.Schema(
     reviewedAt: { type: Date, default: null },
     sendBackReason: { type: String, default: "" },
 
+    publishedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    publishedAt: { type: Date, default: null },
     stationId: { type: String, default: "default-station" },
   },
   { timestamps: true }
 );
+
+dutyRosterWeekSchema.methods.toJSON = function () {
+  const obj = this.toObject();
+  obj.id = obj._id.toString();
+  return obj;
+};
 
 module.exports = mongoose.model("DutyRosterWeek", dutyRosterWeekSchema);

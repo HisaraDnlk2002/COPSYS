@@ -4,7 +4,14 @@
 // without a database, and so the controller stays a thin wrapper that
 // just fetches inputs, calls this, and saves outputs.
 
+const { isGeneralPoolBranch } = require("../config/branches");
+const { SHIFTS } = require("../config/shifts");
+
 const DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+function isoDate(date) {
+  return new Date(date).toISOString().slice(0, 10);
+}
 
 // Rule: an officer with an approved leave request overlapping a given
 // date is unavailable that day.
@@ -66,27 +73,36 @@ function roundRobinByRank(officers) {
 }
 
 /**
- * Generates a draft week of duty assignments.
+ * Generates a draft week of duty assignments for ONE branch's ONE shift
+ * (day or night). Called once per (branch, shift) pair by the controller
+ * to cover the whole week's plan.
+ *
+ * Rule (spec §6/§9/§10): permanent officers of the target branch are
+ * used first. Any remaining shortfall is filled from the General Pool
+ * branch, round-robinned by rank. Officers who belong to neither the
+ * target branch nor the General Pool are not touched.
  *
  * @param {Object} params
  * @param {Date|string} params.weekStarting - Monday of the target week
- * @param {string} params.department
- * @param {number} params.requiredStaffing - officers needed per day
- * @param {Array} params.officers - candidate officers [{ id, fullName, rankAndNumber, department }]
+ * @param {string} params.department - target branch for this roster
+ * @param {"day"|"night"} params.shiftType
+ * @param {number} params.requiredStaffing - officers needed per day for this shift
+ * @param {Array} params.officers - ALL candidate officers station-wide [{ id, fullName, rankAndNumber, department }]
  * @param {Array} params.approvedLeaveRequests - [{ officerId, startDate, endDate }]
- * @param {string} [params.shiftStart="08:00"]
- * @param {string} [params.shiftEnd="16:00"]
+ * @param {Map<string, Set<string>>} [params.excludeByDate] - dateISO -> officerIds already
+ *   committed elsewhere this week (another branch, or the other shift on the same day)
  * @returns {{ assignments: Array, unfilledDays: Array, excludedOfficerIds: Array }}
  */
 function generateWeeklyRoster({
   weekStarting,
   department,
+  shiftType = "day",
   requiredStaffing,
   officers,
   approvedLeaveRequests,
-  shiftStart = "08:00",
-  shiftEnd = "16:00",
+  excludeByDate = new Map(),
 }) {
+  const { start: shiftStart, end: shiftEnd } = SHIFTS[shiftType] || SHIFTS.day;
   const tracker = buildConsecutiveDayTracker();
   const assignments = [];
   const unfilledDays = [];
@@ -94,45 +110,81 @@ function generateWeeklyRoster({
 
   const startDate = new Date(weekStarting);
 
+  // Rule: eligible pool for this branch's roster is its own permanent
+  // officers plus the General Pool branch — nobody else.
+  const permanentOfficers = officers.filter((o) => o.department === department);
+  const generalPoolOfficers = officers.filter((o) => isGeneralPoolBranch(o.department));
+
   for (let dayIndex = 0; dayIndex < 7; dayIndex++) {
     const date = new Date(startDate);
     date.setDate(date.getDate() + dayIndex);
     const dayName = DAYS_OF_WEEK[dayIndex];
+    const dateKey = isoDate(date);
+    const takenToday = excludeByDate.get(dateKey) || new Set();
 
-    // Rule: leave officers are excluded outright for that day
-    const availableToday = officers.filter((officer) => {
-      const onLeave = isOnLeave(officer, date, approvedLeaveRequests);
-      if (onLeave) excludedOfficerIdsSet.add(officer.id);
-      return !onLeave && tracker.canAssign(officer.id);
-    });
+    // Rule: leave officers, and officers already committed to another
+    // branch/shift that same date, are excluded outright.
+    const filterAvailable = (list) =>
+      list.filter((officer) => {
+        if (takenToday.has(officer.id)) return false;
+        const onLeave = isOnLeave(officer, date, approvedLeaveRequests);
+        if (onLeave) excludedOfficerIdsSet.add(officer.id);
+        return !onLeave && tracker.canAssign(officer.id);
+      });
 
-    // Rule: balance rank composition via round-robin ordering, then
-    // simply take the first N needed for today's requirement
-    const ordered = roundRobinByRank(availableToday);
-    const chosenToday = ordered.slice(0, requiredStaffing);
+    const availablePermanent = filterAvailable(permanentOfficers);
+    const availableGeneralPool = filterAvailable(generalPoolOfficers);
+
+    // Rule: fill from permanent branch officers first, balancing rank
+    // via round-robin, then draw only the shortfall from the General Pool
+    const orderedPermanent = roundRobinByRank(availablePermanent);
+    const chosenPermanent = orderedPermanent.slice(0, requiredStaffing);
+
+    const shortfall = requiredStaffing - chosenPermanent.length;
+    const orderedGeneralPool = roundRobinByRank(availableGeneralPool);
+    const chosenGeneralPool = shortfall > 0 ? orderedGeneralPool.slice(0, shortfall) : [];
+
+    const chosenToday = [...chosenPermanent, ...chosenGeneralPool];
 
     if (chosenToday.length < requiredStaffing) {
-      unfilledDays.push({ day: dayName, date, shortfall: requiredStaffing - chosenToday.length });
+      unfilledDays.push({ day: dayName, date, shiftType, shortfall: requiredStaffing - chosenToday.length });
     }
 
     const assignedIds = new Set(chosenToday.map((o) => o.id));
-    for (const officer of officers) {
+    for (const officer of [...permanentOfficers, ...generalPoolOfficers]) {
       if (assignedIds.has(officer.id)) {
         tracker.recordAssigned(officer.id);
-      } else {
+        takenToday.add(officer.id);
+      } else if (!takenToday.has(officer.id)) {
         tracker.recordDayOff(officer.id);
       }
     }
+    excludeByDate.set(dateKey, takenToday);
 
-    for (const officer of chosenToday) {
+    for (const officer of chosenPermanent) {
       assignments.push({
         officerId: officer.id,
         date,
         day: dayName,
+        shiftType,
         shiftStart,
         shiftEnd,
         department,
+        assignmentType: "PERMANENT",
         status: "pending", // Duty Officer reviews before submitting
+      });
+    }
+    for (const officer of chosenGeneralPool) {
+      assignments.push({
+        officerId: officer.id,
+        date,
+        day: dayName,
+        shiftType,
+        shiftStart,
+        shiftEnd,
+        department,
+        assignmentType: "GENERAL_POOL",
+        status: "pending",
       });
     }
   }
@@ -151,7 +203,10 @@ function generateWeeklyRoster({
  * Ranking, in order:
  *   1. Same rank + same department + available + not already working that day
  *   2. Same department, any rank, available
- *   3. Anyone available station-wide (flagged "overtime required" if
+ *   3. General Pool officers, available, not already working that day
+ *      (spec §19 — the pool is the intended first fallback, ahead of
+ *      pulling someone from an unrelated branch)
+ *   4. Anyone available station-wide (flagged "overtime required" if
  *      they're already assigned a different shift that same day)
  *
  * @param {Object} params
@@ -189,7 +244,14 @@ function suggestReplacements({
       !alreadyWorkingTodayIds.has(String(o.id)) &&
       !tier1.includes(o)
   );
-  const tier3 = candidates.filter((o) => !tier1.includes(o) && !tier2.includes(o));
+  const tier3 = candidates.filter(
+    (o) =>
+      isGeneralPoolBranch(o.department) &&
+      !alreadyWorkingTodayIds.has(String(o.id)) &&
+      !tier1.includes(o) &&
+      !tier2.includes(o)
+  );
+  const tier4 = candidates.filter((o) => !tier1.includes(o) && !tier2.includes(o) && !tier3.includes(o));
 
   const suggestions = [];
 
@@ -202,6 +264,10 @@ function suggestReplacements({
     suggestions.push({ officer, reasonCode: "same_division_available", reasonLabel: "Available, Same Division" });
   }
   for (const officer of tier3) {
+    if (suggestions.length >= maxSuggestions) break;
+    suggestions.push({ officer, reasonCode: "general_pool_available", reasonLabel: "Available, General Pool" });
+  }
+  for (const officer of tier4) {
     if (suggestions.length >= maxSuggestions) break;
     const alreadyOnShift = alreadyWorkingTodayIds.has(String(officer.id));
     suggestions.push({
