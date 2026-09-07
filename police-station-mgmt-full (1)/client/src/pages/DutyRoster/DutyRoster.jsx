@@ -20,6 +20,7 @@ import { listUsers } from "../../services/users";
 import { getAllLeaveRequests } from "../../services/leave";
 import { isGeneralPoolBranch } from "../../config/branches";
 import { CreateRosterWizard } from "./CreateRosterWizard";
+import { DailyDutyUpdate } from "./DailyDutyUpdate";
 import "./DutyRoster.css";
 
 const DEFAULT_SHIFT_START = "08:00";
@@ -53,6 +54,7 @@ export function DutyRosterPage() {
   const isDutyOfficer = user?.role === "duty_officer";
   const isOic = user?.role === "oic";
 
+  const [activeTab, setActiveTab] = useState("weekly"); // "weekly" | "daily"
   const [loading, setLoading] = useState(true);
   const [weeks, setWeeks] = useState([]);
   const [selectedWeekId, setSelectedWeekId] = useState(null);
@@ -228,7 +230,9 @@ export function DutyRosterPage() {
   const activeShifts = (weekDetail?.shifts || []).filter((s) => s.status !== "removed");
   const shiftsByOfficerAndDay = {};
   activeShifts.forEach((s) => {
-    const officerKey = typeof s.officerId === "object" ? s.officerId.id : s.officerId;
+    // Populated officerId sub-documents don't get the custom toJSON()
+    // that adds `.id` — only top-level User docs do. Fall back to _id.
+    const officerKey = typeof s.officerId === "object" ? (s.officerId.id || s.officerId._id) : s.officerId;
     const dayKey = s.day || DAYS_OF_WEEK[new Date(s.date).getDay() === 0 ? 6 : new Date(s.date).getDay() - 1];
     shiftsByOfficerAndDay[`${officerKey}-${dayKey}`] = s;
   });
@@ -266,13 +270,37 @@ export function DutyRosterPage() {
     <div>
       <div className="roster-header">
         <h1>{t("dutyRoster.title")} {isOic ? t("dutyRoster.management") : t("dutyRoster.dashboard")}</h1>
-        {isDutyOfficer && (
+        {activeTab === "weekly" && isDutyOfficer && (
           <Button variant="primary" onClick={() => setShowWizard((v) => !v)}>
             {showWizard ? t("dutyRoster.cancel") : t("dutyRoster.newRosterWeek")}
           </Button>
         )}
       </div>
 
+      <div style={{ display: "flex", gap: 8, marginBottom: 24, borderBottom: "1px solid var(--color-border, #e5e7eb)" }}>
+        {["weekly", "daily"].map((tabKey) => (
+          <button
+            key={tabKey}
+            onClick={() => setActiveTab(tabKey)}
+            style={{
+              background: "none",
+              border: "none",
+              padding: "10px 16px",
+              cursor: "pointer",
+              fontWeight: activeTab === tabKey ? 600 : 400,
+              borderBottom: activeTab === tabKey ? "2px solid var(--color-primary, #1d4ed8)" : "2px solid transparent",
+              color: activeTab === tabKey ? "var(--color-primary, #1d4ed8)" : "inherit",
+            }}
+          >
+            {tabKey === "weekly" ? t("dutyRoster.tabWeekly") : t("dutyRoster.tabDaily")}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "daily" && <DailyDutyUpdate />}
+
+      {activeTab === "weekly" && (
+        <>
       {showWizard && (
         <CreateRosterWizard
           onCancel={() => setShowWizard(false)}
@@ -386,7 +414,7 @@ export function DutyRosterPage() {
 
             <div className="roster-footer-stats">
               <div className="roster-footer-stat">
-                <div className="value">{activeShifts.length ? new Set(activeShifts.map((s) => (typeof s.officerId === "object" ? s.officerId.id : s.officerId))).size : 0}/{rosterOfficers.length}</div>
+                <div className="value">{activeShifts.length ? new Set(activeShifts.map((s) => (typeof s.officerId === "object" ? (s.officerId.id || s.officerId._id) : s.officerId))).size : 0}/{rosterOfficers.length}</div>
                 <div className="label">{t("dutyRoster.scheduledUnits")}</div>
               </div>
               <div className="roster-footer-stat">
@@ -476,6 +504,8 @@ export function DutyRosterPage() {
           placeholder={t("dutyRoster.reasonPlaceholder")}
         />
       </Modal>
+        </>
+      )}
     </div>
   );
 }

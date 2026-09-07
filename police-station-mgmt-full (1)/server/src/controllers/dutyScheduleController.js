@@ -496,6 +496,103 @@ async function getTodaysDuty(req, res) {
   }
 }
 
+// GET /api/duty-schedule/briefing?date=YYYY-MM-DD — duty_officer, oic.
+// Powers the "Today's Briefing" home screen: station-wide headcounts,
+// per-branch capacity, and a recent-activity feed. All read-only
+// aggregation over data that already exists elsewhere — no new state.
+async function getBriefing(req, res) {
+  try {
+    const dateParam = req.query.date ? new Date(req.query.date) : new Date();
+    const dayStart = new Date(dateParam);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+
+    const [totalOfficers, publishedWeeks] = await Promise.all([
+      User.countDocuments({ stationId: req.user.stationId, status: "active" }),
+      DutyRosterWeek.find({ stationId: req.user.stationId, status: "published" }),
+    ]);
+
+    // Only weeks whose 7-day span actually covers "today" matter here.
+    const coveringWeeks = publishedWeeks.filter((w) => {
+      const start = new Date(w.weekStarting);
+      const end = new Date(start);
+      end.setDate(end.getDate() + 7);
+      return dayStart >= start && dayStart < end;
+    });
+    const coveringWeekIds = coveringWeeks.map((w) => w._id);
+
+    const todaysShifts = await DutySchedule.find({
+      stationId: req.user.stationId,
+      weekId: { $in: coveringWeekIds },
+      date: { $gte: dayStart, $lt: dayEnd },
+      status: { $ne: "removed" },
+    });
+
+    const presentOfficerIds = new Set();
+    const absentEntries = [];
+    for (const s of todaysShifts) {
+      if (s.status === "absent") absentEntries.push(s);
+      else presentOfficerIds.add(s.officerId.toString());
+    }
+
+    // An absence only counts as an unresolved "shortage" if nobody's
+    // been assigned to cover it yet.
+    const absentEntryIds = absentEntries.map((s) => s._id);
+    const changesForAbsences = await DailyDutyChange.find({
+      scheduleEntryId: { $in: absentEntryIds },
+    });
+    const coveredScheduleEntryIds = new Set(
+      changesForAbsences.filter((c) => c.replacementOfficerId).map((c) => c.scheduleEntryId.toString())
+    );
+    const shortageCount = absentEntries.filter((s) => !coveredScheduleEntryIds.has(s._id.toString())).length;
+
+    // Branch capacity: required (from this week's plan) vs actually
+    // covered today (non-absent).
+    const requiredByBranch = new Map();
+    for (const w of coveringWeeks) {
+      for (const r of w.requirements) {
+        const total = (r.dayRequired || 0) + (r.nightRequired || 0);
+        requiredByBranch.set(r.branch, (requiredByBranch.get(r.branch) || 0) + total);
+      }
+    }
+    const assignedByBranch = new Map();
+    for (const s of todaysShifts) {
+      if (s.status === "absent") continue;
+      assignedByBranch.set(s.department, (assignedByBranch.get(s.department) || 0) + 1);
+    }
+    const branchOverview = Array.from(requiredByBranch.entries()).map(([branch, required]) => {
+      const assigned = assignedByBranch.get(branch) || 0;
+      return {
+        branch,
+        required,
+        assigned,
+        capacityPct: required > 0 ? Math.round((assigned / required) * 100) : 100,
+      };
+    });
+
+    // Recent activity: latest daily changes station-wide, any date, so
+    // the feed isn't empty on a quiet day.
+    const recentAlerts = await DailyDutyChange.find({ stationId: req.user.stationId })
+      .populate("officerId", "fullName")
+      .populate("replacementOfficerId", "fullName")
+      .sort({ createdAt: -1 })
+      .limit(5);
+
+    return res.json({
+      totalOfficers,
+      present: presentOfficerIds.size,
+      absent: absentEntries.length,
+      shortage: shortageCount,
+      branchOverview,
+      recentAlerts: recentAlerts.map((c) => c.toJSON()),
+    });
+  } catch (err) {
+    console.error("getBriefing error:", err);
+    return res.status(500).json({ error: "Could not load briefing" });
+  }
+}
+
 // GET /api/duty-schedule/daily-changes — duty_officer, oic
 async function listDailyChanges(req, res) {
   try {
@@ -645,4 +742,5 @@ module.exports = {
   publishWeek,
   deleteWeek,
   getTodaysDuty,
+  getBriefing,
 };

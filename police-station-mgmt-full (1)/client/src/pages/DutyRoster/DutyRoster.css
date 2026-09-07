@@ -83,6 +83,7 @@
 }
 
 .roster-cell.p { background: var(--color-success-bg); color: var(--color-success); }
+.roster-cell.pool { background: var(--color-info-bg); color: var(--color-info); }
 .roster-cell.l { background: var(--color-warning-bg); color: var(--color-warning); }
 .roster-cell.t { background: var(--color-info-bg); color: var(--color-info); }
 .roster-cell.empty { background: transparent; color: var(--color-text-faint); cursor: default; }

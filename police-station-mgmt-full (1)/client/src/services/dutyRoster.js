@@ -198,4 +198,18 @@ export async function getTodaysDuty(date) {
   }
   return api.get(`/duty-schedule/today${date ? `?date=${date}` : ""}`);
 }
+
+export async function getBriefing(date) {
+  if (USE_DUMMY_DATA) {
+    return Promise.resolve({
+      totalOfficers: 0,
+      present: 0,
+      absent: 0,
+      shortage: 0,
+      branchOverview: [],
+      recentAlerts: [],
+    });
+  }
+  return api.get(`/duty-schedule/briefing${date ? `?date=${date}` : ""}`);
+}
 export { DAYS_OF_WEEK };

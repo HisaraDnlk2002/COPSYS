@@ -20,6 +20,7 @@ const {
   publishWeek,
   deleteWeek,
   getTodaysDuty,
+  getBriefing,
 } = require("../controllers/dutyScheduleController");
 
 const router = express.Router();
@@ -39,9 +40,11 @@ router.patch("/weeks/:weekId/approve", requireRole("oic"), approveWeek);
 router.patch("/weeks/:weekId/send-back", requireRole("oic"), sendBackWeek);
 router.patch("/weeks/:weekId/publish", requireRole("duty_officer"), publishWeek);
 router.delete("/weeks/:weekId", requireRole("duty_officer"), deleteWeek);
+
 router.get("/replacement-suggestions", requireRole("duty_officer"), getReplacementSuggestions);
 
 router.get("/today", requireRole("duty_officer", "oic"), getTodaysDuty);
+router.get("/briefing", requireRole("duty_officer", "oic"), getBriefing);
 router.get("/daily-changes", requireRole("duty_officer", "oic"), listDailyChanges);
 router.post("/daily-changes", requireRole("duty_officer"), createDailyChange);
 
