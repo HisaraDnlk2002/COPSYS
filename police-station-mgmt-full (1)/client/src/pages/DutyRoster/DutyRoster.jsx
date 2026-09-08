@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth";
 import { useLanguage } from "../../i18n/useLanguage";
 import { Button, InputField, Card, Badge, Loader, Modal } from "../../components";
@@ -52,10 +53,11 @@ function overlapsWeek(leave, weekStarting) {
 export function DutyRosterPage() {
   const { user } = useAuth();
   const { t } = useLanguage();
+  const location = useLocation();
   const isDutyOfficer = user?.role === "duty_officer";
   const isOic = user?.role === "oic";
 
-  const [activeTab, setActiveTab] = useState("weekly"); // "weekly" | "daily"
+  const [activeTab, setActiveTab] = useState(location.state?.tab === "daily" ? "daily" : "weekly");
   const [loading, setLoading] = useState(true);
   const [weeks, setWeeks] = useState([]);
   const [selectedWeekId, setSelectedWeekId] = useState(null);
@@ -63,7 +65,7 @@ export function DutyRosterPage() {
   const [officers, setOfficers] = useState([]);
   const [leaveRequests, setLeaveRequests] = useState([]);
 
-  const [showWizard, setShowWizard] = useState(false);
+  const [showWizard, setShowWizard] = useState(Boolean(location.state?.openWizard));
   const [editingWeek, setEditingWeek] = useState(null); // week object when re-opening the wizard for an existing draft
   const [generating, setGenerating] = useState(false);
   const [unfilledDays, setUnfilledDays] = useState([]);

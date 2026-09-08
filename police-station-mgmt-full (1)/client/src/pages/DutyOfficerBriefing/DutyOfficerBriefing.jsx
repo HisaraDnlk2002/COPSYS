@@ -65,11 +65,11 @@ export function DutyOfficerBriefingPage() {
             {t("briefing.subtitle")} {todayLabel}
           </p>
         </div>
-        <div className="dashboard-header-actions">
-          <Button variant="primary" onClick={() => navigate("/duty-roster")}>
+                <div className="dashboard-header-actions">
+          <Button variant="primary" onClick={() => navigate("/duty-roster", { state: { openWizard: true } })}>
             {t("briefing.createNewRoster")}
           </Button>
-          <Button variant="outline" onClick={() => navigate("/duty-roster")}>
+          <Button variant="outline" onClick={() => navigate("/duty-roster", { state: { tab: "daily" } })}>
             {t("briefing.updateDailyAttendance")}
           </Button>
           <Button variant="outline" onClick={() => navigate("/leave")}>
