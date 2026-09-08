@@ -4,6 +4,7 @@ import {
   createRosterWeek,
   updateWeekRequirements,
   getStaffingOverview,
+  getRosterWeek,
   generateRoster,
 } from "../../services/dutyRoster";
 import { BRANCHES } from "../../config/branches";
@@ -11,10 +12,20 @@ import { useLanguage } from "../../i18n/useLanguage";
 
 const PLANNABLE_BRANCHES = BRANCHES.filter((b) => !b.isGeneralPool);
 
-function emptyRequirements() {
-  return PLANNABLE_BRANCHES.map((b) => ({ branch: b.value, dayRequired: 0, nightRequired: 0 }));
+// Merges a week's already-saved requirements into the full branch list,
+// so every branch shows a row (0s where nothing's been set yet) whether
+// we're starting fresh or re-opening an existing draft.
+function buildRequirements(existingWeek) {
+  const saved = existingWeek?.requirements || [];
+  return PLANNABLE_BRANCHES.map((b) => {
+    const match = saved.find((r) => r.branch === b.value);
+    return {
+      branch: b.value,
+      dayRequired: match?.dayRequired || 0,
+      nightRequired: match?.nightRequired || 0,
+    };
+  });
 }
-
 function shortBranchLabel(value) {
   // "Traffic Branch (ගමනාගමන අංශය)" -> "Traffic Branch"
   return value.split(" (")[0];
@@ -26,15 +37,15 @@ const STEPS = [
   { n: 3, label: "Review & Finish" },
 ];
 
-export function CreateRosterWizard({ onCancel, onComplete }) {
+export function CreateRosterWizard({ onCancel, onComplete, existingWeek }) {
   const { t } = useLanguage();
 
-  const [step, setStep] = useState(1);
-  const [weekId, setWeekId] = useState(null);
+  const [step, setStep] = useState(existingWeek ? 2 : 1);
+  const [weekId, setWeekId] = useState(existingWeek?.id || null);
   const [weekStarting, setWeekStarting] = useState("");
   const [creatingWeek, setCreatingWeek] = useState(false);
 
-  const [requirements, setRequirements] = useState(emptyRequirements());
+  const [requirements, setRequirements] = useState(() => buildRequirements(existingWeek));
   const [savingRequirements, setSavingRequirements] = useState(false);
   const [overview, setOverview] = useState(null);
   const [loadingOverview, setLoadingOverview] = useState(false);
@@ -43,6 +54,28 @@ export function CreateRosterWizard({ onCancel, onComplete }) {
   const [allocatedKeys, setAllocatedKeys] = useState(new Set());
   const [warnings, setWarnings] = useState([]); // unfilledDays across all runs this session
   const [error, setError] = useState("");
+
+  // Re-opening an existing draft: load what's already generated so the
+  // staffing table and "Allocated" badges reflect reality immediately,
+  // instead of looking blank until Save & Preview is clicked.
+  useEffect(() => {
+    if (!existingWeek) return;
+    setLoadingOverview(true);
+    getRosterWeek(existingWeek.id)
+      .then((res) => {
+        const keys = new Set();
+        (res.shifts || []).forEach((s) => {
+          if (s.status === "removed") return;
+          keys.add(`${s.department}::${s.shiftType}`);
+        });
+        setAllocatedKeys(keys);
+        return getStaffingOverview(existingWeek.id);
+      })
+      .then((overviewRes) => setOverview(overviewRes))
+      .catch((err) => console.error("Could not load existing week for editing:", err))
+      .finally(() => setLoadingOverview(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [existingWeek?.id]);
 
   function updateRequirement(branch, field, value) {
     setRequirements((prev) =>
@@ -134,7 +167,7 @@ export function CreateRosterWizard({ onCancel, onComplete }) {
     <Card variant="panel" style={{ marginBottom: 24 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <div>
-          <h2 style={{ margin: 0 }}>{t("dutyRoster.wizard.title")}</h2>
+                 <h2 style={{ margin: 0 }}>{existingWeek ? t("dutyRoster.wizard.editTitle") : t("dutyRoster.wizard.title")}</h2>
           <p style={{ color: "var(--color-text-muted)", margin: "4px 0 0" }}>
             {t("dutyRoster.wizard.step")} {step} {t("dutyRoster.wizard.of")} 3: {STEPS[step - 1].label}
           </p>
@@ -263,18 +296,21 @@ export function CreateRosterWizard({ onCancel, onComplete }) {
                             <td style={{ color: shiftRow.shortage > 0 ? "var(--color-danger, #dc2626)" : "inherit" }}>
                               {shiftRow.shortage}
                             </td>
-                            <td>
-                              {isDone ? (
-                                <Badge status="approved" label={t("dutyRoster.wizard.allocated")} />
-                              ) : (
+                                                      <td>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                {isDone && <Badge status="approved" label={t("dutyRoster.wizard.allocated")} />}
                                 <Button
                                   variant="outline"
                                   onClick={() => runSmartAllocation(row.branch, shiftType)}
                                   disabled={isAllocating}
                                 >
-                                  {isAllocating ? t("dutyRoster.wizard.allocating") : t("dutyRoster.wizard.smartAllocation")}
+                                  {isAllocating
+                                    ? t("dutyRoster.wizard.allocating")
+                                    : isDone
+                                    ? t("dutyRoster.wizard.reallocate")
+                                    : t("dutyRoster.wizard.smartAllocation")}
                                 </Button>
-                              )}
+                              </div>
                             </td>
                           </tr>
                         );

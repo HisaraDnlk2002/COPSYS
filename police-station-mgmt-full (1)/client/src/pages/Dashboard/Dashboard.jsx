@@ -70,8 +70,12 @@ export function DashboardPage() {
     ? leaveBalance.annual + leaveBalance.sick + leaveBalance.casual
     : 0;
 
-  const scheduleColumns = [
-    { key: "day", label: t("dashboard.colDay") },
+    const scheduleColumns = [
+    {
+      key: "day",
+      label: t("dashboard.colDay"),
+      render: (row) => new Date(row.date).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }),
+    },
     {
       key: "shift",
       label: t("dashboard.colShiftTiming"),

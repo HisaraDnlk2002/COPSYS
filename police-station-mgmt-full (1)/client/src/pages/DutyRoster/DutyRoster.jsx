@@ -21,6 +21,7 @@ import { getAllLeaveRequests } from "../../services/leave";
 import { isGeneralPoolBranch } from "../../config/branches";
 import { CreateRosterWizard } from "./CreateRosterWizard";
 import { DailyDutyUpdate } from "./DailyDutyUpdate";
+import { WeeklyGrid } from "./WeeklyGrid";
 import "./DutyRoster.css";
 
 const DEFAULT_SHIFT_START = "08:00";
@@ -63,6 +64,7 @@ export function DutyRosterPage() {
   const [leaveRequests, setLeaveRequests] = useState([]);
 
   const [showWizard, setShowWizard] = useState(false);
+  const [editingWeek, setEditingWeek] = useState(null); // week object when re-opening the wizard for an existing draft
   const [generating, setGenerating] = useState(false);
   const [unfilledDays, setUnfilledDays] = useState([]);
 
@@ -171,55 +173,9 @@ export function DutyRosterPage() {
       console.error("Could not publish week:", err);
     }
   }
-
   // Manual grid editing: only while the Duty Officer can still change
   // things (draft, or sent back for revision).
   const isEditableStatus = ["draft", "sent_back"].includes(weekDetail?.week?.status);
-
-  async function handleCellClick(officer, dayIndex, existingShift) {
-    if (!isDutyOfficer || !isEditableStatus || !weekDetail?.week) return;
-
-    if (existingShift) {
-      // Toggle off — manual correction, not a "replacement" (that's the
-      // Daily tab's job for actual absences on a specific day).
-      try {
-        await updateDutyShift(existingShift.id, { status: "removed" });
-        refreshSelectedWeek();
-      } catch (err) {
-        console.error("Could not remove assignment:", err);
-      }
-      return;
-    }
-
-    // A permanent officer works their own branch. A General Pool officer
-    // only has an unambiguous target branch to manually assign into when
-    // this week is planning exactly one branch — otherwise, use the
-    // wizard's Smart Allocation instead, which knows which branch needs them.
-    const targetBranch = plannedBranches.includes(officer.department)
-      ? officer.department
-      : plannedBranches.length === 1
-      ? plannedBranches[0]
-      : null;
-
-    if (!targetBranch) {
-      console.warn("Can't infer a target branch for this General Pool officer in a multi-branch week — use Smart Allocation in the wizard instead.");
-      return;
-    }
-
-    try {
-      await createDutyShift({
-        weekId: weekDetail.week.id,
-        officerId: officer.id,
-        date: dateForDayIndex(weekDetail.week.weekStarting, dayIndex),
-        shiftStart: DEFAULT_SHIFT_START,
-        shiftEnd: DEFAULT_SHIFT_END,
-        department: targetBranch,
-      });
-      refreshSelectedWeek();
-    } catch (err) {
-      console.error("Could not add assignment:", err);
-    }
-  }
 
   if (loading) return <Loader label={t("dutyRoster.loading")} />;
 
@@ -228,33 +184,6 @@ export function DutyRosterPage() {
 
   // Only removed/cancelled cells are hidden — everything else counts.
   const activeShifts = (weekDetail?.shifts || []).filter((s) => s.status !== "removed");
-  const shiftsByOfficerAndDay = {};
-  activeShifts.forEach((s) => {
-    // Populated officerId sub-documents don't get the custom toJSON()
-    // that adds `.id` — only top-level User docs do. Fall back to _id.
-    const officerKey = typeof s.officerId === "object" ? (s.officerId.id || s.officerId._id) : s.officerId;
-    const dayKey = s.day || DAYS_OF_WEEK[new Date(s.date).getDay() === 0 ? 6 : new Date(s.date).getDay() - 1];
-    shiftsByOfficerAndDay[`${officerKey}-${dayKey}`] = s;
-  });
-
-  // A week now spans every branch in its requirements list (post-wizard
-  // model), not one branch. Eligible rows: permanent officers of ANY
-  // planned branch, plus the General Pool (spec §4/§6).
-  const plannedBranches = selectedWeek?.requirements?.map((r) => r.branch) || [];
-
-  const rosterOfficers = selectedWeek
-    ? officers
-        .filter(
-          (o) =>
-            o.status === "active" &&
-            (plannedBranches.includes(o.department) || isGeneralPoolBranch(o.department))
-        )
-        .sort((a, b) => {
-          const aGeneral = isGeneralPoolBranch(a.department) ? 1 : 0;
-          const bGeneral = isGeneralPoolBranch(b.department) ? 1 : 0;
-          return aGeneral - bGeneral || a.fullName.localeCompare(b.fullName);
-        })
-    : [];
 
   const officersOnLeaveThisWeek = selectedWeek
     ? leaveRequests.filter((l) => overlapsWeek(l, selectedWeek.weekStarting))
@@ -270,8 +199,14 @@ export function DutyRosterPage() {
     <div>
       <div className="roster-header">
         <h1>{t("dutyRoster.title")} {isOic ? t("dutyRoster.management") : t("dutyRoster.dashboard")}</h1>
-        {activeTab === "weekly" && isDutyOfficer && (
-          <Button variant="primary" onClick={() => setShowWizard((v) => !v)}>
+                {activeTab === "weekly" && isDutyOfficer && (
+          <Button
+            variant="primary"
+            onClick={() => {
+              setEditingWeek(null);
+              setShowWizard((v) => !v);
+            }}
+          >
             {showWizard ? t("dutyRoster.cancel") : t("dutyRoster.newRosterWeek")}
           </Button>
         )}
@@ -301,17 +236,23 @@ export function DutyRosterPage() {
 
       {activeTab === "weekly" && (
         <>
-      {showWizard && (
+          {showWizard && (
         <CreateRosterWizard
-          onCancel={() => setShowWizard(false)}
+          existingWeek={editingWeek}
+          onCancel={() => {
+            setShowWizard(false);
+            setEditingWeek(null);
+          }}
           onComplete={(newWeekId) => {
             setShowWizard(false);
+            setEditingWeek(null);
             getRosterWeeks()
               .then((res) => {
                 setWeeks(res);
                 setSelectedWeekId(newWeekId);
               })
               .catch((err) => console.error("Could not refresh weeks after wizard:", err));
+            refreshSelectedWeek();
           }}
         />
       )}
@@ -360,61 +301,22 @@ export function DutyRosterPage() {
                 {t("dutyRoster.editHint")}
               </p>
             )}
-
             {detailLoading ? (
               <Loader label={t("dutyRoster.loadingWeekGrid")} />
-            ) : rosterOfficers.length === 0 ? (
-              <p style={{ color: "var(--color-text-muted)" }}>{t("dutyRoster.noEligibleOfficers")}</p>
             ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table className="roster-grid-table">
-                  <thead>
-                    <tr>
-                      <th>{t("dutyRoster.officer")}</th>
-                      {DAYS_OF_WEEK.map((day) => (
-                        <th key={day}>{shortDay(day)}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rosterOfficers.map((officer) => (
-                      <tr key={officer.id}>
-                        <td>
-                          {officer.fullName}
-                          {isGeneralPoolBranch(officer.department) && (
-                            <Badge status="general_pool" label={t("dutyRoster.generalPool")} />
-                          )}
-                        </td>
-                        {DAYS_OF_WEEK.map((day, dayIndex) => {
-                          const shift = shiftsByOfficerAndDay[`${officer.id}-${day}`];
-                          const code = shift ? (shift.assignmentType === "GENERAL_POOL" ? "pool" : "p") : "empty";
-                          const clickable = isDutyOfficer && isEditableStatus;
-                          return (
-                            <td key={day}>
-                              <span
-                                className={`roster-cell ${code}${clickable ? " clickable" : ""}`}
-                                title={
-                                  shift
-                                    ? `${shift.shiftStart}-${shift.shiftEnd} ${shift.department}${shift.assignmentType === "GENERAL_POOL" ? ` (${t("dutyRoster.generalPool")})` : ""}`
-                                    : t("dutyRoster.off")
-                                }
-                                onClick={() => handleCellClick(officer, dayIndex, shift)}
-                              >
-                                {code === "empty" ? "" : "P"}
-                              </span>
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <WeeklyGrid
+                week={selectedWeek}
+                shifts={activeShifts}
+                officers={officers}
+                leaveRequests={leaveRequests}
+                editable={isDutyOfficer && isEditableStatus}
+                onChanged={refreshSelectedWeek}
+              />
             )}
 
             <div className="roster-footer-stats">
-              <div className="roster-footer-stat">
-                <div className="value">{activeShifts.length ? new Set(activeShifts.map((s) => (typeof s.officerId === "object" ? (s.officerId.id || s.officerId._id) : s.officerId))).size : 0}/{rosterOfficers.length}</div>
+                            <div className="roster-footer-stat">
+                <div className="value">{activeShifts.length ? new Set(activeShifts.map((s) => (typeof s.officerId === "object" ? (s.officerId.id || s.officerId._id) : s.officerId))).size : 0}</div>
                 <div className="label">{t("dutyRoster.scheduledUnits")}</div>
               </div>
               <div className="roster-footer-stat">
@@ -427,8 +329,17 @@ export function DutyRosterPage() {
               </div>
             </div>
 
-            {isDutyOfficer && selectedWeek.status === "draft" && (
+                    {isDutyOfficer && selectedWeek.status === "draft" && (
               <div className="roster-actions-row">
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setEditingWeek(selectedWeek);
+                    setShowWizard(true);
+                  }}
+                >
+                  {t("dutyRoster.editRequirements")}
+                </Button>
                 <Button variant="outline" onClick={handleGenerate} disabled={generating}>
                   {generating ? t("dutyRoster.generating") : t("dutyRoster.generateRoster")}
                 </Button>
@@ -440,6 +351,15 @@ export function DutyRosterPage() {
 
             {isDutyOfficer && selectedWeek.status === "sent_back" && (
               <div className="roster-actions-row">
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setEditingWeek(selectedWeek);
+                    setShowWizard(true);
+                  }}
+                >
+                  {t("dutyRoster.editRequirements")}
+                </Button>
                 <Button variant="primary" onClick={handleSubmitWeek}>
                   {t("dutyRoster.submitToOic")}
                 </Button>
