@@ -5,7 +5,6 @@ import {
 } from "recharts";
 import { Button, Card, StatCard, Table, Loader, InputField, Badge } from "../../components";
 import { useLanguage } from "../../i18n/useLanguage";
-
 import {
   getReportsSummary,
   getCrimeDistribution,
@@ -17,6 +16,9 @@ import {
   deleteReport,
 } from "../../services/reports";
 import "./Reports.css";
+
+const PAGE_SIZE = 10;
+const REAL_TYPES = ["duty", "leave", "inventory", "crime"];
 
 // yyyy-mm-dd for date inputs / API payloads
 function toDateInput(date) {
@@ -94,7 +96,18 @@ export function ReportsPage() {
   const [summary, setSummary] = useState(null);
   const [crimeData, setCrimeData] = useState([]);
   const [forceData, setForceData] = useState([]);
+
+  // Per-category report counts shown on the hub cards. Fetched once
+  // (cheap: limit=1 requests, we only need each category's `total`) —
+  // independent from the paginated ledger below, which only ever holds
+  // one page's worth of rows and can't be used to derive these counts.
+  const [categoryCounts, setCategoryCounts] = useState({});
+
+  // The paginated ledger — either "all categories" (hub) or scoped to
+  // one type (workbench), depending on `view`.
   const [activityLog, setActivityLog] = useState([]);
+  const [activityMeta, setActivityMeta] = useState({ page: 1, totalPages: 1, total: 0 });
+  const [activityLoading, setActivityLoading] = useState(false);
 
   // The active view comes from the URL (/reports vs /reports/:type) so the
   // workbench is bookmarkable and survives a refresh — not local state.
@@ -104,7 +117,6 @@ export function ReportsPage() {
   const [formError, setFormError] = useState("");
   const [generating, setGenerating] = useState(false);
   const [rowActionId, setRowActionId] = useState(null);
-  const [actionError, setActionError] = useState("");
 
   const REPORT_CATEGORIES = useMemo(
     () => [
@@ -123,31 +135,58 @@ export function ReportsPage() {
     [t]
   );
 
-  function loadActivityLog() {
-    return getActivityLog().then(setActivityLog);
+  // Loads one page of the ledger, scoped to `type` when given. Used for
+  // the initial load, page-change clicks, and refreshing after
+  // generate/archive/delete.
+  async function loadActivityLog(page = 1, type) {
+    setActivityLoading(true);
+    try {
+      const res = await getActivityLog({ page, limit: PAGE_SIZE, type });
+      setActivityLog(res.data);
+      setActivityMeta({ page: res.page, totalPages: res.totalPages, total: res.total });
+    } finally {
+      setActivityLoading(false);
+    }
+  }
+
+  function loadCategoryCounts() {
+    Promise.all(REAL_TYPES.map((type) => getActivityLog({ page: 1, limit: 1, type })))
+      .then((results) => {
+        const counts = {};
+        REAL_TYPES.forEach((type, i) => {
+          counts[type] = results[i].total;
+        });
+        setCategoryCounts(counts);
+      })
+      .catch((err) => console.error("Failed to load report counts:", err));
   }
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([getReportsSummary(), getCrimeDistribution(), getForceStrength(), getActivityLog()])
-      .then(([summaryRes, crimeRes, forceRes, activityRes]) => {
+    Promise.all([getReportsSummary(), getCrimeDistribution(), getForceStrength()])
+      .then(([summaryRes, crimeRes, forceRes]) => {
         if (cancelled) return;
         setSummary(summaryRes);
         setCrimeData(crimeRes);
         setForceData(forceRes);
-        setActivityLog(activityRes);
       })
       .catch((err) => console.error("Failed to load reports:", err))
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
-    return () => {
-      cancelled = true;
-    };
+    loadCategoryCounts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-    const activeCategory = REPORT_CATEGORIES.find((c) => c.type === view);
+  const activeCategory = REPORT_CATEGORIES.find((c) => c.type === view);
 
+  // Covers the browser back/forward buttons too, not just clicks — any
+  // time the URL's :type changes, the form resets and the ledger reloads
+  // at page 1, scoped to the new category (or unscoped for the hub).
+  // Also bounces back to the hub if the URL names an unknown or disabled
+  // category (e.g. someone bookmarks /reports/ammunition). Runs above
+  // the loading early-return below so hook order stays stable across
+  // renders (Rules of Hooks).
   useEffect(() => {
     if (urlType && (!activeCategory || activeCategory.disabled)) {
       navigate("/reports", { replace: true });
@@ -156,6 +195,7 @@ export function ReportsPage() {
     setFormError("");
     setPreset("custom");
     setFilters({ format: "pdf", ...defaultRange() });
+    loadActivityLog(1, urlType || undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlType]);
 
@@ -179,22 +219,18 @@ export function ReportsPage() {
     setFormError("");
   }
 
-    async function handleGenerate() {
+  async function handleGenerate() {
     if (!filters.dateFrom || !filters.dateTo) {
       setFormError(t("reports.dateRangeRequired"));
-      return;
-    }
-    // yyyy-mm-dd strings compare correctly lexicographically — no need
-    // to parse into Date objects for this check.
-    if (filters.dateFrom > filters.dateTo) {
-      setFormError(t("reports.dateRangeInvalid"));
       return;
     }
     setFormError("");
     setGenerating(true);
     try {
       await generateReport({ type: activeCategory.type, title: activeCategory.title, ...filters });
-      await loadActivityLog();
+      // The new report is newest-first, so it lands on page 1.
+      await loadActivityLog(1, activeCategory.type);
+      loadCategoryCounts();
     } catch (err) {
       setFormError(err.message || t("reports.generateFailed"));
     } finally {
@@ -202,40 +238,52 @@ export function ReportsPage() {
     }
   }
 
-    async function handleDownload(row) {
+  async function handleDownload(row) {
     setRowActionId(row.id);
-    setActionError("");
     try {
       await downloadReport(row.id, row.reportTitle || row.title);
     } catch (err) {
-      setActionError(err.message || t("reports.downloadFailed"));
+      window.alert(err.message || t("reports.downloadFailed"));
     } finally {
       setRowActionId(null);
     }
   }
 
-    async function handleArchive(row) {
+  // Reloads the current page after archive/delete; if that removes the
+  // last row on a page beyond page 1, steps back a page so you don't end
+  // up staring at an empty page.
+  async function refreshAfterRowChange() {
+    const scopedType = view === "hub" ? undefined : activeCategory.type;
+    const res = await getActivityLog({ page: activityMeta.page, limit: PAGE_SIZE, type: scopedType });
+    if (res.data.length === 0 && activityMeta.page > 1) {
+      await loadActivityLog(activityMeta.page - 1, scopedType);
+    } else {
+      setActivityLog(res.data);
+      setActivityMeta({ page: res.page, totalPages: res.totalPages, total: res.total });
+    }
+  }
+
+  async function handleArchive(row) {
     setRowActionId(row.id);
-    setActionError("");
     try {
       await archiveReport(row.id);
       await refreshAfterRowChange();
     } catch (err) {
-      setActionError(err.message || t("reports.archiveFailed"));
+      window.alert(err.message || t("reports.archiveFailed"));
     } finally {
       setRowActionId(null);
     }
   }
-    async function handleDelete(row) {
+
+  async function handleDelete(row) {
     if (!window.confirm(t("reports.confirmDelete"))) return;
     setRowActionId(row.id);
-    setActionError("");
     try {
       await deleteReport(row.id);
       await refreshAfterRowChange();
       loadCategoryCounts();
     } catch (err) {
-      setActionError(err.message || t("reports.deleteFailed"));
+      window.alert(err.message || t("reports.deleteFailed"));
     } finally {
       setRowActionId(null);
     }
@@ -271,12 +319,35 @@ export function ReportsPage() {
     ];
   }
 
-  if (view !== "hub" && activeCategory) {
-    const categoryLog = activityLog.filter((row) => row.type === activeCategory.type);
+  function PaginationBar({ scopedType }) {
+    if (activityMeta.totalPages <= 1) return null;
+    return (
+      <div className="reports-pagination">
+        <Button
+          variant="outline"
+          disabled={activityLoading || activityMeta.page <= 1}
+          onClick={() => loadActivityLog(activityMeta.page - 1, scopedType)}
+        >
+          {t("reports.prevPage")}
+        </Button>
+        <span className="reports-pagination-label">
+          {t("reports.pageOf").replace("{page}", activityMeta.page).replace("{total}", activityMeta.totalPages)}
+        </span>
+        <Button
+          variant="outline"
+          disabled={activityLoading || activityMeta.page >= activityMeta.totalPages}
+          onClick={() => loadActivityLog(activityMeta.page + 1, scopedType)}
+        >
+          {t("reports.nextPage")}
+        </Button>
+      </div>
+    );
+  }
 
+  if (view !== "hub" && activeCategory) {
     return (
       <div className="reports-page">
-                <button type="button" className="reports-back-link" onClick={() => navigate("/reports")}>
+        <button type="button" className="reports-back-link" onClick={() => navigate("/reports")}>
           ← {t("reports.backToHub")}
         </button>
 
@@ -344,20 +415,15 @@ export function ReportsPage() {
           </div>
         </Card>
 
-                <Card variant="panel">
+        <Card variant="panel">
           <h4 style={{ marginBottom: 4 }}>{t("reports.categoryLedger")}</h4>
           <p style={{ fontSize: 13, color: "var(--color-text-muted)", marginBottom: 16 }}>
             {t("reports.categoryLedgerSubtitle")}
           </p>
-          {actionError && (
-            <div className="reports-alert">
-              <span>{actionError}</span>
-              <button type="button" onClick={() => setActionError("")}>×</button>
-            </div>
-          )}
           <div className="reports-table-wrapper">
-            <Table columns={actionColumns()} data={categoryLog} emptyMessage={t("reports.noReportsGenerated")} />
+            <Table columns={actionColumns()} data={activityLog} emptyMessage={t("reports.noReportsGenerated")} />
           </div>
+          <PaginationBar scopedType={activeCategory.type} />
         </Card>
       </div>
     );
@@ -417,7 +483,7 @@ export function ReportsPage() {
 
       <div className="reports-category-grid">
         {REPORT_CATEGORIES.map((cat) => {
-          const count = activityLog.filter((row) => row.type === cat.type).length;
+          const count = categoryCounts[cat.type] ?? 0;
           return (
             <div
               key={cat.type}
@@ -446,20 +512,15 @@ export function ReportsPage() {
         })}
       </div>
 
-            <Card variant="panel">
+      <Card variant="panel">
         <h4 style={{ marginBottom: 4 }}>{t("reports.recentActivityLogs")}</h4>
         <p style={{ fontSize: 13, color: "var(--color-text-muted)", marginBottom: 16 }}>
           {t("reports.pdfCsvReadyText")}
         </p>
-        {actionError && (
-          <div className="reports-alert">
-            <span>{actionError}</span>
-            <button type="button" onClick={() => setActionError("")}>×</button>
-          </div>
-        )}
         <div className="reports-table-wrapper">
           <Table columns={actionColumns([{ key: "type", label: t("reports.colType") }])} data={activityLog} emptyMessage={t("reports.noReportsGenerated")} />
         </div>
+        <PaginationBar scopedType={undefined} />
       </Card>
     </div>
   );
