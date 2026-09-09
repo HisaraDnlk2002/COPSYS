@@ -1,8 +1,11 @@
 const LeaveRequest = require("../models/LeaveRequest");
 const DutySchedule = require("../models/DutySchedule");
 const InventoryTransaction = require("../models/InventoryTransaction");
+const Inventory = require("../models/Inventory");
 const Complaint = require("../models/Complaint");
 const User = require("../models/User");
+const ReportExport = require("../models/ReportExport");
+const { buildCsv, buildPdf } = require("../utils/reportFileBuilder");
 
 // GET /api/reports/summary — oic only
 // Matches the 3 top stat cards on page 16: Duty Summary %, Leave
@@ -86,20 +89,311 @@ async function getForceStrength(req, res) {
   }
 }
 
-// GET /api/reports/activity-log — oic only
+// GET /api/reports/activity-log?page=1&limit=10&type=duty — oic only
 // "Recent Activity Logs" table on page 16: generated reports ready for
-// download. This is a placeholder list for now — actual PDF/CSV
-// generation is flagged as a TODO (see ARCHITECTURE.md open items).
+// download, backed by the ReportExport collection (see generateReport).
+// `type` is optional — the hub view omits it (shows everything), the
+// per-category workbench passes it so paging stays scoped to that
+// category instead of paging through a mixed list.
 async function getActivityLog(req, res) {
   try {
-    // TODO: replace with a real ReportExport collection once file
-    // generation is implemented. Returning an empty list rather than
-    // fake data so the frontend's empty state is exercised honestly.
-    return res.json([]);
+    const stationId = req.user.stationId;
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 100);
+
+    const filter = { stationId };
+    if (req.query.type && ReportExport.REPORT_TYPES.includes(req.query.type)) {
+      filter.type = req.query.type;
+    }
+
+    const [logs, total] = await Promise.all([
+      ReportExport.find(filter)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit),
+      ReportExport.countDocuments(filter),
+    ]);
+
+    return res.json({
+      data: logs.map((l) => l.toJSON()),
+      total,
+      page,
+      limit,
+      totalPages: Math.max(Math.ceil(total / limit), 1),
+    });
   } catch (err) {
     console.error("getActivityLog error:", err);
     return res.status(500).json({ error: "Could not load activity log" });
   }
 }
 
-module.exports = { getSummary, getCrimeDistribution, getForceStrength, getActivityLog };
+// Human-readable title shown in the sidebar / used as the default report
+// title. Kept separate from the enum value so the DB stores a stable key
+// while the UI can still show a friendly label.
+const REPORT_TYPE_LABELS = {
+  duty: "Duty Compliance",
+  leave: "Leave Summary",
+  inventory: "Inventory Audit",
+  crime: "Criminal Investigation",
+};
+
+// Builds the {columns, rows} table for a given report type + date range.
+// Every report type funnels through here so generateReport (persists the
+// log entry) and downloadReport (regenerates the file on demand) always
+// produce identical data for the same params.
+async function gatherReportData(type, stationId, dateFrom, dateTo) {
+  if (type === "duty") {
+    const rows = await DutySchedule.find({
+      stationId,
+      date: { $gte: dateFrom, $lte: dateTo },
+    })
+      .populate("officerId", "fullName rankAndNumber")
+      .sort({ date: 1 })
+      .lean();
+
+    return {
+      columns: [
+        { key: "date", label: "Date" },
+        { key: "officer", label: "Officer" },
+        { key: "shift", label: "Shift" },
+        { key: "department", label: "Department" },
+        { key: "status", label: "Status" },
+      ],
+      rows: rows.map((r) => ({
+        date: r.date?.toISOString().slice(0, 10),
+        officer: r.officerId?.fullName || r.officerId?.rankAndNumber || "—",
+        shift: `${r.shiftStart} - ${r.shiftEnd}`,
+        department: r.department || "—",
+        status: r.status || "—",
+      })),
+    };
+  }
+
+  if (type === "leave") {
+    const rows = await LeaveRequest.find({
+      stationId,
+      startDate: { $lte: dateTo },
+      endDate: { $gte: dateFrom },
+    })
+      .sort({ startDate: 1 })
+      .lean();
+
+    return {
+      columns: [
+        { key: "refId", label: "Ref ID" },
+        { key: "officer", label: "Officer" },
+        { key: "leaveType", label: "Type" },
+        { key: "startDate", label: "Start" },
+        { key: "endDate", label: "End" },
+        { key: "days", label: "Days" },
+        { key: "status", label: "Status" },
+      ],
+      rows: rows.map((r) => ({
+        refId: r.refId,
+        officer: r.officerName,
+        leaveType: r.leaveType,
+        startDate: r.startDate?.toISOString().slice(0, 10),
+        endDate: r.endDate?.toISOString().slice(0, 10),
+        days: r.days,
+        status: r.status,
+      })),
+    };
+  }
+
+  if (type === "inventory") {
+    const rows = await InventoryTransaction.find({
+      stationId,
+      dateTime: { $gte: dateFrom, $lte: dateTo },
+    })
+      .populate("officerId", "fullName rankAndNumber")
+      .sort({ dateTime: 1 })
+      .lean();
+
+    // InventoryTransaction.itemId points at the Inventory collection, but
+    // (see Inventory model vs InventoryTransaction's ref name) it isn't a
+    // populate-safe ref, so items are looked up manually instead.
+    const itemIds = [...new Set(rows.map((r) => String(r.itemId)))];
+    const items = await Inventory.find({ _id: { $in: itemIds } }).lean();
+    const itemNameById = new Map(items.map((i) => [String(i._id), `${i.itemName} (${i.itemId})`]));
+
+    return {
+      columns: [
+        { key: "date", label: "Date" },
+        { key: "item", label: "Item" },
+        { key: "type", label: "Type" },
+        { key: "quantity", label: "Qty" },
+        { key: "officer", label: "Officer" },
+        { key: "condition", label: "Condition" },
+      ],
+      rows: rows.map((r) => ({
+        date: r.dateTime?.toISOString().slice(0, 10),
+        item: itemNameById.get(String(r.itemId)) || String(r.itemId),
+        type: r.type,
+        quantity: r.quantity,
+        officer: r.officerId?.fullName || r.officerId?.rankAndNumber || "—",
+        condition: r.condition || "—",
+      })),
+    };
+  }
+
+  if (type === "crime") {
+    const rows = await Complaint.find({
+      stationId,
+      dateOfIncident: { $gte: dateFrom, $lte: dateTo },
+    })
+      .sort({ dateOfIncident: 1 })
+      .lean();
+
+    return {
+      columns: [
+        { key: "refId", label: "Ref ID" },
+        { key: "category", label: "Category" },
+        { key: "severity", label: "Severity" },
+        { key: "status", label: "Status" },
+        { key: "date", label: "Date" },
+      ],
+      rows: rows.map((r) => ({
+        refId: r.refId,
+        category: r.category,
+        severity: r.severity,
+        status: r.status,
+        date: r.dateOfIncident?.toISOString().slice(0, 10),
+      })),
+    };
+  }
+
+  throw new Error(`Unknown report type: ${type}`);
+}
+
+function parseDateRange(body) {
+  const dateFrom = body.dateFrom ? new Date(body.dateFrom) : null;
+  const dateTo = body.dateTo ? new Date(body.dateTo) : null;
+  if (!dateFrom || !dateTo || Number.isNaN(dateFrom.getTime()) || Number.isNaN(dateTo.getTime())) {
+    return null;
+  }
+  // Include the entire "to" day rather than cutting off at 00:00.
+  dateTo.setHours(23, 59, 59, 999);
+  return { dateFrom, dateTo };
+}
+
+// POST /api/reports/generate — oic only
+// Body: { type, format, dateFrom, dateTo, title? }
+// Runs the query for the requested range up front (so a broken filter
+// fails loudly here, not silently at download time) and logs the export
+// in ReportExport. The file itself isn't stored — downloadReport
+// re-runs the same query from the saved params.
+async function generateReport(req, res) {
+  const { type, format, title } = req.body;
+  const range = parseDateRange(req.body);
+
+  if (!ReportExport.REPORT_TYPES.includes(type)) {
+    return res.status(400).json({ error: "Unknown or unsupported report type" });
+  }
+  if (!ReportExport.REPORT_FORMATS.includes(format)) {
+    return res.status(400).json({ error: "Format must be pdf or csv" });
+  }
+  if (!range) {
+    return res.status(400).json({ error: "A valid dateFrom and dateTo are required" });
+  }
+
+  try {
+    const stationId = req.user.stationId;
+    // Validates the query works before we log it as "Complete".
+    await gatherReportData(type, stationId, range.dateFrom, range.dateTo);
+
+    const requester = await User.findById(req.user.uid);
+
+    const record = await ReportExport.create({
+      title: title?.trim() || REPORT_TYPE_LABELS[type],
+      type,
+      format,
+      dateFrom: range.dateFrom,
+      dateTo: range.dateTo,
+      generatedById: req.user.uid,
+      generatedByName: requester?.fullName || "Unknown",
+      status: "Complete",
+      stationId,
+    });
+
+    return res.status(201).json(record.toJSON());
+  } catch (err) {
+    console.error("generateReport error:", err);
+    return res.status(500).json({ error: "Could not generate report" });
+  }
+}
+
+// GET /api/reports/:id/download — oic only
+// Regenerates the file from the stored params and streams it back.
+async function downloadReport(req, res) {
+  try {
+    const record = await ReportExport.findOne({ _id: req.params.id, stationId: req.user.stationId });
+    if (!record) return res.status(404).json({ error: "Report not found" });
+
+    const { columns, rows } = await gatherReportData(record.type, record.stationId, record.dateFrom, record.dateTo);
+    const safeName = record.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+
+    if (record.format === "csv") {
+      const csv = buildCsv(columns, rows);
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename="${safeName}.csv"`);
+      return res.send(csv);
+    }
+
+    const pdfBuffer = await buildPdf({
+      title: record.title,
+      subtitle: REPORT_TYPE_LABELS[record.type],
+      meta: [
+        ["Date range", `${record.dateFrom.toISOString().slice(0, 10)} to ${record.dateTo.toISOString().slice(0, 10)}`],
+        ["Generated by", record.generatedByName],
+        ["Generated on", record.createdAt.toISOString().slice(0, 10)],
+      ],
+      columns,
+      rows,
+    });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${safeName}.pdf"`);
+    return res.send(pdfBuffer);
+  } catch (err) {
+    console.error("downloadReport error:", err);
+    return res.status(500).json({ error: "Could not generate the report file" });
+  }
+}
+
+// PATCH /api/reports/:id/archive — oic only
+async function archiveReport(req, res) {
+  try {
+    const record = await ReportExport.findOneAndUpdate(
+      { _id: req.params.id, stationId: req.user.stationId },
+      { status: "Archived" },
+      { new: true }
+    );
+    if (!record) return res.status(404).json({ error: "Report not found" });
+    return res.json(record.toJSON());
+  } catch (err) {
+    console.error("archiveReport error:", err);
+    return res.status(500).json({ error: "Could not archive report" });
+  }
+}
+
+// DELETE /api/reports/:id — oic only
+async function deleteReport(req, res) {
+  try {
+    const record = await ReportExport.findOneAndDelete({ _id: req.params.id, stationId: req.user.stationId });
+    if (!record) return res.status(404).json({ error: "Report not found" });
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("deleteReport error:", err);
+    return res.status(500).json({ error: "Could not delete report" });
+  }
+}
+
+module.exports = {
+  getSummary,
+  getCrimeDistribution,
+  getForceStrength,
+  getActivityLog,
+  generateReport,
+  downloadReport,
+  archiveReport,
+  deleteReport,
+};

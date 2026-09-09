@@ -15,6 +15,8 @@ const STATUS_TONE = {
   rejected: "danger",
   failed: "danger",
   closed: "danger",
+   complete: "success",   
+  archived: "neutral",
 };
 
 export function Badge({ status, children, tone }) {

@@ -1,6 +1,10 @@
 const LeaveRequest = require("../models/LeaveRequest");
 const LeaveBalance = require("../models/LeaveBalance");
 const User = require("../models/User");
+const DutySchedule = require("../models/DutySchedule");
+const DutyRosterWeek = require("../models/DutyRosterWeek");
+const DailyDutyChange = require("../models/DailyDutyChange");
+const { suggestReplacements } = require("../services/dutyAllocationEngine");
 
 function daysBetween(start, end) {
   const ms = new Date(end) - new Date(start);
@@ -133,12 +137,149 @@ async function setStatus(req, res, status, remarks) {
         { officerId: leaveRequest.officerId },
         { $inc: { [leaveRequest.leaveType]: -leaveRequest.days } }
       );
+      // Fix any shifts already sitting on a locked (non-draft) roster
+      // during the leave period — this is what actually makes the
+      // nominated Acting Officer mean something (spec §12/§19).
+      await autoSubstituteForApprovedLeave(leaveRequest);
     }
 
     return res.json(leaveRequest.toJSON());
   } catch (err) {
     console.error("setStatus error:", err);
     return res.status(500).json({ error: "Could not update leave request" });
+  }
+}
+
+// Finds this officer's shifts overlapping the leave period, on weeks that
+// are already submitted/approved/published (drafts are left alone — the
+// allocation engine already excludes leave-takers when generating those,
+// and the Duty Officer can still freely edit a draft anyway). For each
+// affected shift: marks it absent, tries the nominated Acting Officer
+// first (if they're actually eligible that day), falls back to the same
+// tiered suggestion logic used elsewhere otherwise, and logs everything
+// as a DailyDutyChange for the audit trail. Never lets a failure here
+// block the leave approval itself — this is a best-effort side effect.
+async function autoSubstituteForApprovedLeave(leaveRequest) {
+  try {
+    const candidateShifts = await DutySchedule.find({
+      officerId: leaveRequest.officerId,
+      date: { $gte: leaveRequest.startDate, $lte: leaveRequest.endDate },
+      status: { $nin: ["removed", "absent"] },
+    });
+    if (candidateShifts.length === 0) return;
+
+    const weekIds = [...new Set(candidateShifts.map((s) => s.weekId.toString()))];
+    const weeks = await DutyRosterWeek.find({ _id: { $in: weekIds } });
+    const lockedWeekIds = new Set(
+      weeks.filter((w) => !["draft", "sent_back"].includes(w.status)).map((w) => w._id.toString())
+    );
+    const affectedShifts = candidateShifts.filter((s) => lockedWeekIds.has(s.weekId.toString()));
+    if (affectedShifts.length === 0) return;
+
+    const officer = await User.findById(leaveRequest.officerId);
+
+    for (const shift of affectedShifts) {
+      shift.status = "absent";
+      await shift.save();
+
+      let replacementOfficerId = null;
+
+      // Tier 0: the officer's own nominated Acting Officer, if eligible
+      // that specific day (active, not themselves on leave, not already
+      // working elsewhere that day).
+      if (leaveRequest.actingOfficerId) {
+        const actingOfficer = await User.findById(leaveRequest.actingOfficerId);
+        if (actingOfficer && actingOfficer.status === "active") {
+          const [onLeaveThatDay, alreadyWorking] = await Promise.all([
+            LeaveRequest.exists({
+              officerId: leaveRequest.actingOfficerId,
+              status: "approved",
+              startDate: { $lte: shift.date },
+              endDate: { $gte: shift.date },
+            }),
+            DutySchedule.exists({
+              officerId: leaveRequest.actingOfficerId,
+              date: shift.date,
+              status: { $ne: "removed" },
+            }),
+          ]);
+          if (!onLeaveThatDay && !alreadyWorking) {
+            replacementOfficerId = leaveRequest.actingOfficerId;
+          }
+        }
+      }
+
+      // Fallback: same rank → same branch → General Pool → anyone,
+      // exactly like the Daily tab's manual replacement flow.
+      if (!replacementOfficerId) {
+        const [allOfficers, todaysAssignments, approvedLeaveRequests] = await Promise.all([
+          User.find({ stationId: shift.stationId, status: "active" }),
+          DutySchedule.find({ stationId: shift.stationId, date: shift.date }),
+          LeaveRequest.find({ stationId: shift.stationId, status: "approved" }),
+        ]);
+
+        const suggestions = suggestReplacements({
+          unavailableOfficer: {
+            id: officer._id.toString(),
+            rankAndNumber: officer.rankAndNumber,
+            department: shift.department,
+          },
+          date: shift.date,
+          allOfficers: allOfficers.map((o) => ({
+            id: o._id.toString(),
+            fullName: o.fullName,
+            rankAndNumber: o.rankAndNumber,
+            department: o.department,
+          })),
+          todaysAssignments: todaysAssignments.map((a) => ({ officerId: a.officerId.toString() })),
+          approvedLeaveRequests: approvedLeaveRequests.map((l) => ({
+            officerId: l.officerId.toString(),
+            startDate: l.startDate,
+            endDate: l.endDate,
+          })),
+          maxSuggestions: 1,
+        });
+
+        if (suggestions[0]) replacementOfficerId = suggestions[0].officer.id;
+      }
+
+      let replacementEntry = null;
+      if (replacementOfficerId) {
+        const replacementOfficer = await User.findById(replacementOfficerId);
+        replacementEntry = await DutySchedule.create({
+          weekId: shift.weekId,
+          officerId: replacementOfficerId,
+          date: shift.date,
+          shiftType: shift.shiftType,
+          shiftStart: shift.shiftStart,
+          shiftEnd: shift.shiftEnd,
+          department: shift.department,
+          assignmentType: replacementOfficer.department === shift.department ? "PERMANENT" : "GENERAL_POOL",
+          status: "pending",
+          stationId: shift.stationId,
+          createdBy: leaveRequest.reviewedBy,
+        });
+      }
+
+      await DailyDutyChange.create({
+        weekId: shift.weekId,
+        scheduleEntryId: shift._id,
+        officerId: shift.officerId,
+        date: shift.date,
+        department: shift.department,
+        reason: `Approved ${leaveRequest.leaveType} leave (${leaveRequest.refId})`,
+        replacementOfficerId: replacementOfficerId || null,
+        replacementScheduleEntryId: replacementEntry?._id || null,
+        notifiedOfficer: false,
+        changedBy: leaveRequest.reviewedBy,
+        stationId: shift.stationId,
+      });
+    }
+  } catch (err) {
+    // Deliberately swallowed — a failure here should never undo an
+    // already-approved leave request. It just means the affected shifts
+    // need manual attention in the Daily tab.
+    console.error("autoSubstituteForApprovedLeave error:", err);
   }
 }
 

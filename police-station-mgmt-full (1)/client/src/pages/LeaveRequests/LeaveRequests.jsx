@@ -82,7 +82,7 @@ export function LeaveRequestsPage() {
   const [rejectRemarks, setRejectRemarks] = useState("");
   const [rejectSubmitting, setRejectSubmitting] = useState(false);
 
-  const [officers, setOfficers] = useState([]); // used to look up the department shown in the "View" modal
+  const [officers, setOfficers] = useState([]); // used to look up the department/acting officer shown in the "View" modal
   const [viewing, setViewing] = useState(null); // leave request shown in the View Details modal
   const [viewBalance, setViewBalance] = useState(null);
   const [viewBalanceLoading, setViewBalanceLoading] = useState(false);
@@ -92,9 +92,8 @@ export function LeaveRequestsPage() {
     startDate: "",
     endDate: "",
     justification: "",
-    emergencyContact: "", // phone number kept for the submission payload
-    emergencyContactOfficer: null, // full { value, label, phone } option for the search field
-    actingOfficer: "",
+    emergencyContact: "", // a personal contact's phone number — not a colleague
+    actingOfficerOption: null, // full { value, label, subtitle } option for the search field
   });
   const [formError, setFormError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -132,7 +131,10 @@ export function LeaveRequestsPage() {
     };
   }, [isOic]);
 
-  useEffect(() => {
+    useEffect(() => {
+    // Only OIC actually sees this data (department + acting-officer name
+    // in the View Details modal) — everyone else's Acting Officer search
+    // goes through searchOfficers() instead, which has no role restriction.
     if (!isOic) return;
     let cancelled = false;
     listUsers()
@@ -190,12 +192,8 @@ export function LeaveRequestsPage() {
     setForm((f) => ({ ...f, [key]: value }));
   }
 
-  function handleEmergencyContactChange(option) {
-    setForm((f) => ({
-      ...f,
-      emergencyContactOfficer: option,
-      emergencyContact: option?.phone || "",
-    }));
+  function handleActingOfficerChange(option) {
+    setForm((f) => ({ ...f, actingOfficerOption: option }));
   }
 
   const days = daysBetween(form.startDate, form.endDate);
@@ -217,6 +215,10 @@ export function LeaveRequestsPage() {
       setFormError(t("leave.errJustification"));
       return;
     }
+    if (!form.actingOfficerOption) {
+      setFormError(t("leave.errActingOfficerRequired"));
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -227,6 +229,7 @@ export function LeaveRequestsPage() {
         days,
         justification: form.justification,
         emergencyContact: form.emergencyContact,
+        actingOfficerId: form.actingOfficerOption.value,
       });
       setForm({
         leaveType: "",
@@ -234,8 +237,7 @@ export function LeaveRequestsPage() {
         endDate: "",
         justification: "",
         emergencyContact: "",
-        emergencyContactOfficer: null,
-        actingOfficer: "",
+        actingOfficerOption: null,
       });
       setView("history");
       await loadData();
@@ -327,13 +329,22 @@ export function LeaveRequestsPage() {
             </div>
 
             <SearchableSelect
-              label={t("leave.emergencyContact")}
+              label={t("leave.actingOfficer")}
               required
-              value={form.emergencyContactOfficer}
-              onChange={handleEmergencyContactChange}
+              value={form.actingOfficerOption}
+              onChange={handleActingOfficerChange}
               searchFn={searchOfficers}
               placeholder={t("leave.searchOfficerPlaceholder")}
-              helperText={t("leave.searchOfficerHelper")}
+              helperText={t("leave.actingOfficerHelper")}
+            />
+
+            <InputField
+              label={t("leave.emergencyContact")}
+              type="tel"
+              required
+              value={form.emergencyContact}
+              onChange={(e) => updateField("emergencyContact", e.target.value)}
+              placeholder={t("leave.emergencyContactPlaceholder")}
             />
 
             <div className="consent-box">
@@ -490,6 +501,10 @@ export function LeaveRequestsPage() {
               <div>
                 <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("common.status")}</p>
                 <Badge status={viewing.status} />
+              </div>
+              <div>
+                <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("leave.actingOfficer")}</p>
+                <p>{officers.find((o) => o.id === viewing.actingOfficerId)?.fullName || "—"}</p>
               </div>
             </div>
 

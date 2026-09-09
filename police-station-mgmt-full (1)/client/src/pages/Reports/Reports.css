@@ -1,47 +1,8 @@
-.reports-layout {
-  display: grid;
-  grid-template-columns: 220px 1fr;
-  gap: var(--space-lg);
-}
+/* Reports module — scoped to .reports-page so this denser, ledger-style
+   look doesn't bleed into the rest of the app's existing UI. */
 
-@media (max-width: 900px) {
-  .reports-layout {
-    grid-template-columns: 1fr;
-  }
-}
-
-.reports-sidebar {
-  background: var(--color-info-bg);
-  border-radius: var(--radius-lg);
-  padding: var(--space-lg);
-}
-
-.reports-sidebar-group {
-  margin-bottom: var(--space-lg);
-}
-
-.reports-sidebar-group h4 {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-muted);
-  text-transform: uppercase;
-  margin-bottom: var(--space-sm);
-}
-
-.reports-sidebar-group ul {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-
-.reports-sidebar-group li {
-  padding: 8px 0;
-  font-size: var(--font-size-sm);
-  color: var(--color-text);
-  cursor: pointer;
-}
-
-.reports-sidebar-group li:hover {
-  color: var(--color-primary);
+.reports-page {
+  --reports-mono: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
 }
 
 .reports-header {
@@ -74,4 +35,238 @@
 .chart-card h4 {
   font-size: var(--font-size-base);
   margin-bottom: var(--space-md);
+}
+
+/* --- Category hub --- */
+
+.reports-categories-heading {
+  margin: var(--space-xl) 0 var(--space-sm);
+}
+
+.reports-categories-heading h3 {
+  font-size: var(--font-size-lg);
+  margin-bottom: 2px;
+}
+
+.reports-categories-heading p {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.reports-category-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-md);
+  margin-bottom: var(--space-xl);
+}
+
+.reports-category-card {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-md);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.reports-category-card:hover:not(.disabled) {
+  border-color: var(--color-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.reports-category-card:focus-visible:not(.disabled) {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.reports-category-card.disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+  background: var(--color-surface-muted);
+}
+
+.reports-category-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.reports-sec-code {
+  font-family: var(--reports-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+}
+
+.reports-badge-count {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  background: var(--color-info-bg);
+  color: var(--color-info);
+  border-radius: 999px;
+  padding: 2px 10px;
+  white-space: nowrap;
+}
+
+.reports-badge-soon {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+  border-radius: 999px;
+  padding: 2px 10px;
+  white-space: nowrap;
+}
+
+.reports-category-card h4 {
+  font-size: var(--font-size-base);
+  margin: 4px 0 0;
+}
+
+.reports-category-card p {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  flex: 1;
+  margin: 0;
+}
+
+.reports-category-action {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-primary);
+  margin-top: 4px;
+}
+
+.reports-category-card.disabled .reports-category-action {
+  color: var(--color-text-faint);
+}
+
+/* --- Workbench (per-category filter + ledger) --- */
+
+.reports-back-link {
+  background: none;
+  border: none;
+  color: var(--color-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  margin-bottom: var(--space-md);
+}
+
+.reports-back-link:hover {
+  text-decoration: underline;
+}
+
+.reports-filter-card h4 {
+  margin-bottom: var(--space-sm);
+}
+
+.reports-preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: var(--space-md);
+}
+
+.reports-preset-btn {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.reports-preset-btn:hover {
+  border-color: var(--color-primary);
+}
+
+.reports-preset-btn.active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+
+.reports-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+
+.reports-filter-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: var(--space-sm);
+}
+
+/* --- Ledger tables (dense, ledger-style) --- */
+
+.reports-table-wrapper .data-table {
+  font-size: 13px;
+}
+
+.reports-table-wrapper .data-table thead th {
+  background: var(--color-surface-muted);
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  color: var(--color-text-muted);
+}
+
+.reports-table-wrapper .data-table tbody tr:hover {
+  background: var(--color-surface-muted);
+}
+
+.mono-code {
+  font-family: var(--reports-mono);
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.reports-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.reports-row-actions .btn {
+  padding: 4px 10px;
+  font-size: var(--font-size-sm);
+}
+.reports-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  font-size: var(--font-size-sm);
+  margin-bottom: var(--space-md);
+}
+
+.reports-alert button {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
 }

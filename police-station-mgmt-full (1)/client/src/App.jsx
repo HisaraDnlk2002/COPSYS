@@ -65,6 +65,22 @@ function App() {
                 }
               />
               <Route
+  path="/reports"
+  element={
+    <ProtectedRoute roles={["oic"]}>
+      <ReportsPage />
+    </ProtectedRoute>
+  }
+/>
+<Route
+  path="/reports/:type"
+  element={
+    <ProtectedRoute roles={["oic"]}>
+      <ReportsPage />
+    </ProtectedRoute>
+  }
+/>
+              <Route
                 path="/settings"
                 element={
                   <ProtectedRoute roles={["oic", "admin"]}>
