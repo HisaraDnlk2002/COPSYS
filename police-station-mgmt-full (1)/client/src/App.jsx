@@ -68,27 +68,19 @@ function App() {
               <Route
                 path="/reports"
                 element={
-                  <ProtectedRoute roles={["oic"]}>
+                  <ProtectedRoute roles={["admin", "oic", "duty_officer", "inventory_officer"]}>
                     <ReportsPage />
                   </ProtectedRoute>
                 }
               />
               <Route
-  path="/reports"
-  element={
-    <ProtectedRoute roles={["oic"]}>
-      <ReportsPage />
-    </ProtectedRoute>
-  }
-/>
-<Route
-  path="/reports/:type"
-  element={
-    <ProtectedRoute roles={["oic"]}>
-      <ReportsPage />
-    </ProtectedRoute>
-  }
-/>
+                path="/reports/:type"
+                element={
+                  <ProtectedRoute roles={["admin", "oic", "duty_officer", "inventory_officer"]}>
+                    <ReportsPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route
                 path="/settings"
                 element={
