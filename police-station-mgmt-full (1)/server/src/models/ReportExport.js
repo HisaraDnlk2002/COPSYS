@@ -7,7 +7,12 @@ const mongoose = require("mongoose");
 // left out of this enum rather than faking data for them. Add a new
 // type here (and a matching branch in reportsController's
 // `gatherReportData`) once a real source exists.
-const REPORT_TYPES = ["duty", "leave", "inventory", "crime"];
+//
+// "inventory" is kept only so pre-existing ReportExport rows (generated
+// before the Weapons/Ammunition split) still validate and can still be
+// downloaded — new reports are always generated as "weapons" instead.
+// See reportsController's CATEGORY_ROLES / REPORT_TYPE_LABELS.
+const REPORT_TYPES = ["duty", "officers", "leave", "crime", "inventory", "weapons", "ammunition", "station"];
 const REPORT_FORMATS = ["pdf", "csv"];
 const REPORT_STATUSES = ["Complete", "Archived", "Failed"];
 
@@ -22,6 +27,13 @@ const reportExportSchema = new mongoose.Schema(
     // (see reportsController's downloadReport).
     dateFrom: { type: Date, required: true },
     dateTo: { type: Date, required: true },
+
+    // The extra picklist/officer filters selected on the workbench (e.g.
+    // { status: "issued", officerId: "…" }) — stored so downloadReport
+    // regenerates the exact same rows the report was generated with,
+    // not just the same date range. Shape varies by `type`; see
+    // gatherReportData for which keys each type reads.
+    filters: { type: mongoose.Schema.Types.Mixed, default: {} },
 
     generatedById: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     // Denormalized so the activity log still reads correctly even if

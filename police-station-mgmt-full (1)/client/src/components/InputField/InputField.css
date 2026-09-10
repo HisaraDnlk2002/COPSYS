@@ -54,3 +54,48 @@ textarea.field-control {
   font-size: var(--font-size-sm);
   color: var(--color-text-muted);
 }
+
+.field-with-voice {
+  position: relative;
+}
+
+.field-with-voice .field-control {
+  padding-right: 42px;
+}
+
+.field-voice-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.field-voice-btn:hover {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+}
+
+.field-voice-btn-active {
+  background: var(--color-danger);
+  color: #fff;
+  animation: field-voice-pulse 1.4s ease-in-out infinite;
+}
+
+.field-voice-btn-active:hover {
+  background: var(--color-danger);
+  color: #fff;
+}
+
+@keyframes field-voice-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(198, 40, 40, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(198, 40, 40, 0); }
+}

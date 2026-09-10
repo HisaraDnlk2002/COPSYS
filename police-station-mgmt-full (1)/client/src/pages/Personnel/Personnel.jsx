@@ -9,6 +9,11 @@ import {
   updateUserStatus,
   resetPassword,
 } from "../../services/users";
+import {
+  listPasswordResetRequests,
+  approvePasswordResetRequest,
+  rejectPasswordResetRequest,
+} from "../../services/passwordResetRequests";
 import "./Personnel.css";
 
 // Katunayake Airport Police Station's five branches.
@@ -22,16 +27,18 @@ function sanitizeName(value) {
   return value.replace(/[^\p{L}\p{M}\s.]/gu, "");
 }
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 const EMPTY_FORM = {
   fullName: "",
   rankAndNumber: "",
   department: "",
   role: "",
   phoneNumber: "",
+  email: "",
   address: "",
   emergencyContactName: "",
   emergencyContactPhone: "",
-  password: "",
 };
 
 // Fields the Edit User modal can change. Rank & Number (login username)
@@ -42,6 +49,7 @@ const EMPTY_EDIT_FORM = {
   department: "",
   role: "",
   phoneNumber: "",
+  email: "",
   address: "",
   emergencyContactName: "",
   emergencyContactPhone: "",
@@ -58,7 +66,7 @@ export function PersonnelPage() {
     { value: "officer", label: t("personnel.roleOfficer") },
   ];
 
-  const [view, setView] = useState("list"); // "list" | "register"
+  const [view, setView] = useState("list"); // "list" | "register" | "resetRequests"
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState(null);
   const [users, setUsers] = useState([]);
@@ -70,7 +78,7 @@ export function PersonnelPage() {
   const [createdAccount, setCreatedAccount] = useState(null); // shows the credentials once, after creation
 
   const [resetModalUser, setResetModalUser] = useState(null);
-  const [newPassword, setNewPassword] = useState("");
+  const [generatedResetPassword, setGeneratedResetPassword] = useState(null);
   const [resetting, setResetting] = useState(false);
 
   const [viewUser, setViewUser] = useState(null); // officer shown in the "View More" modal
@@ -79,6 +87,11 @@ export function PersonnelPage() {
   const [editForm, setEditForm] = useState(EMPTY_EDIT_FORM);
   const [editError, setEditError] = useState("");
   const [editSubmitting, setEditSubmitting] = useState(false);
+
+  // Officers who clicked "Forgot password?" on the login page — see the
+  // "Password Reset Requests" view below.
+  const [resetRequests, setResetRequests] = useState([]);
+  const [requestActionId, setRequestActionId] = useState(null);
 
   function loadData() {
     setLoading(true);
@@ -91,13 +104,20 @@ export function PersonnelPage() {
       .finally(() => setLoading(false));
   }
 
+  function loadResetRequests() {
+    return listPasswordResetRequests()
+      .then(setResetRequests)
+      .catch((err) => console.error("Failed to load password reset requests:", err));
+  }
+
   useEffect(() => {
     let cancelled = false;
-    Promise.all([listUsers(), getPersonnelStats()])
-      .then(([usersRes, statsRes]) => {
+    Promise.all([listUsers(), getPersonnelStats(), listPasswordResetRequests()])
+      .then(([usersRes, statsRes, requestsRes]) => {
         if (cancelled) return;
         setUsers(usersRes);
         setStats(statsRes);
+        setResetRequests(requestsRes);
       })
       .catch((err) => console.error("Failed to load personnel:", err))
       .finally(() => {
@@ -116,13 +136,13 @@ export function PersonnelPage() {
     e.preventDefault();
     setFormError("");
 
-    const required = ["fullName", "rankAndNumber", "department", "role", "phoneNumber", "address", "password"];
+    const required = ["fullName", "rankAndNumber", "department", "role", "phoneNumber", "email", "address"];
     if (required.some((key) => !form[key])) {
       setFormError(t("personnel.errAllFields"));
       return;
     }
-    if (form.password.length < 6) {
-      setFormError(t("personnel.errPasswordLength"));
+    if (!EMAIL_RE.test(form.email)) {
+      setFormError(t("personnel.errEmailInvalid"));
       return;
     }
     if (form.phoneNumber.length !== 10) {
@@ -133,10 +153,9 @@ export function PersonnelPage() {
     setSubmitting(true);
     try {
       const created = await createUser(form);
-      setCreatedAccount({ rankAndNumber: form.rankAndNumber, password: form.password, fullName: form.fullName });
+      setCreatedAccount({ rankAndNumber: form.rankAndNumber, password: created.generatedPassword, fullName: form.fullName });
       setForm(EMPTY_FORM);
       loadData();
-      void created;
     } catch (err) {
       setFormError(err.message || t("personnel.errCreateFailed"));
     } finally {
@@ -150,17 +169,50 @@ export function PersonnelPage() {
     setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, status: nextStatus } : u)));
   }
 
+  function closeResetModal() {
+    setResetModalUser(null);
+    setGeneratedResetPassword(null);
+  }
+
+  // Admin-initiated reset (from the Personnel list) — generates a new
+  // password server-side and shows it once here, same as account
+  // creation. Distinct from the self-service queue below, where the new
+  // password is emailed to the officer and never shown to Admin.
   async function handleResetPassword() {
-    if (!resetModalUser || newPassword.length < 6) return;
+    if (!resetModalUser) return;
     setResetting(true);
     try {
-      await resetPassword(resetModalUser.id, newPassword);
-      setResetModalUser(null);
-      setNewPassword("");
+      const res = await resetPassword(resetModalUser.id);
+      setGeneratedResetPassword(res.generatedPassword);
     } catch (err) {
-      console.error("Reset password failed:", err);
+      window.alert(err.message || "Could not reset password");
     } finally {
       setResetting(false);
+    }
+  }
+
+  async function handleApproveRequest(request) {
+    setRequestActionId(request.id);
+    try {
+      await approvePasswordResetRequest(request.id);
+      await loadResetRequests();
+    } catch (err) {
+      window.alert(err.message || t("personnel.approveFailed"));
+    } finally {
+      setRequestActionId(null);
+    }
+  }
+
+  async function handleRejectRequest(request) {
+    if (!window.confirm(t("personnel.confirmReject"))) return;
+    setRequestActionId(request.id);
+    try {
+      await rejectPasswordResetRequest(request.id);
+      await loadResetRequests();
+    } catch (err) {
+      window.alert(err.message || t("personnel.rejectFailed"));
+    } finally {
+      setRequestActionId(null);
     }
   }
 
@@ -172,6 +224,7 @@ export function PersonnelPage() {
       department: user.department || "",
       role: user.role || "",
       phoneNumber: user.phoneNumber || "",
+      email: user.email || "",
       address: user.address || "",
       emergencyContactName: user.emergencyContactName || "",
       emergencyContactPhone: user.emergencyContactPhone || "",
@@ -191,6 +244,10 @@ export function PersonnelPage() {
     const required = ["fullName", "department", "role", "phoneNumber", "address"];
     if (required.some((key) => !editForm[key])) {
       setEditError(t("personnel.errEditAllFields"));
+      return;
+    }
+    if (editForm.email && !EMAIL_RE.test(editForm.email)) {
+      setEditError(t("personnel.errEmailInvalid"));
       return;
     }
     if (editForm.phoneNumber.length !== 10) {
@@ -221,6 +278,8 @@ export function PersonnelPage() {
     );
   });
 
+  const pendingRequestCount = resetRequests.filter((r) => r.status === "pending").length;
+
   const columns = [
     { key: "fullName", label: t("personnel.colOfficerName") },
     { key: "rankAndNumber", label: t("personnel.colRankNo") },
@@ -240,6 +299,30 @@ export function PersonnelPage() {
           </Button>
         </div>
       ),
+    },
+  ];
+
+  const requestColumns = [
+    { key: "officer", label: t("personnel.colOfficer"), render: (r) => `${r.officerName} (${r.rankAndNumber})` },
+    { key: "requestedAt", label: t("personnel.colRequested"), render: (r) => new Date(r.createdAt).toLocaleString() },
+    { key: "status", label: t("common.status"), render: (r) => <Badge status={r.status} /> },
+    { key: "resolvedBy", label: t("personnel.colResolvedBy"), render: (r) => r.resolvedByName || "—" },
+    {
+      key: "actions",
+      label: t("common.actions"),
+      render: (r) =>
+        r.status === "pending" ? (
+          <div className="personnel-row-actions">
+            <Button variant="primary" onClick={() => handleApproveRequest(r)} disabled={requestActionId === r.id}>
+              {t("personnel.approve")}
+            </Button>
+            <Button variant="danger" onClick={() => handleRejectRequest(r)} disabled={requestActionId === r.id}>
+              {t("personnel.reject")}
+            </Button>
+          </div>
+        ) : (
+          "—"
+        ),
     },
   ];
 
@@ -283,6 +366,9 @@ export function PersonnelPage() {
                 <InputField label={t("personnel.phoneNumber")} required value={form.phoneNumber}
                   onChange={(e) => updateField("phoneNumber", e.target.value.replace(/\D/g, "").slice(0, 10))}
                   placeholder={t("personnel.phonePlaceholder")} />
+                <InputField label={t("personnel.email")} type="email" required value={form.email}
+                  onChange={(e) => updateField("email", e.target.value)}
+                  placeholder={t("personnel.emailPlaceholder")} helperText={t("personnel.emailHelper")} />
                 <InputField label={t("personnel.address")} required value={form.address}
                   onChange={(e) => updateField("address", e.target.value)} />
                 <InputField label={t("personnel.emergencyContactName")} value={form.emergencyContactName}
@@ -292,9 +378,7 @@ export function PersonnelPage() {
                   placeholder={t("personnel.phonePlaceholder")} />
               </div>
 
-              <InputField label={t("personnel.setPassword")} type="password" required value={form.password}
-                onChange={(e) => updateField("password", e.target.value)}
-                helperText={t("personnel.setPasswordHelper")} />
+              <p className="personnel-autogen-note">{t("personnel.passwordAutoGenNote")}</p>
 
               {formError && <p style={{ color: "var(--color-danger)", marginBottom: 16 }}>{formError}</p>}
 
@@ -311,13 +395,38 @@ export function PersonnelPage() {
     );
   }
 
+  if (view === "resetRequests") {
+    return (
+      <div>
+        <button type="button" className="personnel-back-link" onClick={() => setView("list")}>
+          {t("personnel.backToPersonnelList")}
+        </button>
+
+        <div className="personnel-header">
+          <h1>{t("personnel.resetRequestsTitle")}</h1>
+        </div>
+        <p className="personnel-subtitle">{t("personnel.resetRequestsSubtitle")}</p>
+
+        <Card variant="panel">
+          <Table columns={requestColumns} data={resetRequests} emptyMessage={t("personnel.noResetRequests")} />
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div>
       <div className="personnel-header">
         <div>
           <h1>{t("personnel.pageTitle")}</h1>
         </div>
-        <Button variant="primary" onClick={() => setView("register")}>{t("personnel.addNewUser")}</Button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Button variant="outline" onClick={() => setView("resetRequests")}>
+            {t("personnel.resetRequestsButton")}
+            {pendingRequestCount > 0 && <span className="personnel-badge-count">{pendingRequestCount}</span>}
+          </Button>
+          <Button variant="primary" onClick={() => setView("register")}>{t("personnel.addNewUser")}</Button>
+        </div>
       </div>
       <p className="personnel-subtitle">{t("personnel.subtitle")}</p>
 
@@ -342,21 +451,30 @@ export function PersonnelPage() {
 
       <Modal
         open={Boolean(resetModalUser)}
-        onClose={() => setResetModalUser(null)}
+        onClose={closeResetModal}
         title={resetModalUser ? `${t("personnel.resetPasswordFor")} ${resetModalUser.fullName}` : ""}
         footer={
-          <Button variant="primary" onClick={handleResetPassword} disabled={resetting || newPassword.length < 6}>
-            {resetting ? t("personnel.saving") : t("personnel.setNewPassword")}
-          </Button>
+          generatedResetPassword ? (
+            <Button variant="primary" onClick={closeResetModal}>{t("personnel.done")}</Button>
+          ) : (
+            <Button variant="primary" onClick={handleResetPassword} disabled={resetting}>
+              {resetting ? t("personnel.saving") : t("personnel.generateNewPassword")}
+            </Button>
+          )
         }
       >
-        <InputField
-          label={t("personnel.newPassword")}
-          type="password"
-          value={newPassword}
-          onChange={(e) => setNewPassword(e.target.value)}
-          helperText={t("personnel.newPasswordHelper")}
-        />
+        {generatedResetPassword ? (
+          <div>
+            <p style={{ marginBottom: 12 }}>{t("personnel.newPasswordGenerated")}</p>
+            <p>
+              <strong>{t("personnel.username")}</strong> {resetModalUser?.rankAndNumber}
+              <br />
+              <strong>{t("personnel.password")}</strong> {generatedResetPassword}
+            </p>
+          </div>
+        ) : (
+          <p>{t("personnel.resetPasswordConfirm")}</p>
+        )}
       </Modal>
 
       <Modal
@@ -385,6 +503,10 @@ export function PersonnelPage() {
             <div>
               <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("personnel.phoneNumber")}</p>
               <p>{viewUser.phoneNumber || "—"}</p>
+            </div>
+            <div>
+              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("personnel.email")}</p>
+              <p>{viewUser.email || "—"}</p>
             </div>
             <div>
               <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("personnel.address")}</p>
@@ -448,6 +570,14 @@ export function PersonnelPage() {
               required
               value={editForm.phoneNumber}
               onChange={(e) => updateEditField("phoneNumber", e.target.value.replace(/\D/g, "").slice(0, 10))}
+            />
+            <InputField
+              label={t("personnel.email")}
+              type="email"
+              value={editForm.email}
+              onChange={(e) => updateEditField("email", e.target.value)}
+              placeholder={t("personnel.emailPlaceholder")}
+              helperText={t("personnel.emailHelper")}
             />
             <InputField
               label={t("personnel.address")}

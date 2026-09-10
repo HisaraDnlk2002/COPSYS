@@ -52,8 +52,19 @@ export async function getActivityLog(params = {}) {
   return api.get(`/reports/activity-log${qs ? `?${qs}` : ""}`);
 }
 
+// POST /api/reports/preview — runs the same query as generateReport but
+// doesn't persist a log entry. Lets the workbench show what a report will
+// contain (summary + a capped table) before the officer commits to it.
+// payload: { type, dateFrom, dateTo, filters? }
+export async function previewReport(payload) {
+  if (USE_DUMMY_DATA) {
+    return Promise.resolve({ columns: [], rows: [], total: 0, truncated: false, summary: {} });
+  }
+  return api.post("/reports/preview", payload);
+}
+
 // POST /api/reports/generate — creates a new report export record.
-// payload: { type, format, dateFrom, dateTo, title? }
+// payload: { type, format, dateFrom, dateTo, title?, filters? }
 export async function generateReport(payload) {
   if (USE_DUMMY_DATA) {
     const newLog = {

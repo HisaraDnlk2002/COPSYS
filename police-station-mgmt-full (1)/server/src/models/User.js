@@ -14,6 +14,14 @@ const userSchema = new mongoose.Schema(
 
     role: { type: String, enum: ROLES, required: true },
 
+    // Not required at the schema level — accounts created before this
+    // field existed have none yet — but the "Register new Personnel"
+    // form requires it going forward, since it's the only place a
+    // password-reset email can be delivered (see
+    // passwordResetRequestsController.js). Admin can backfill it later
+    // via "Edit User" for accounts that predate it.
+    email: { type: String, default: "", trim: true, lowercase: true },
+
     phoneNumber: { type: String, required: true, trim: true },
 
     address: { type: String, required: true, trim: true },

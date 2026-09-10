@@ -1,9 +1,13 @@
 const Complaint = require("../models/Complaint");
 const User = require("../models/User");
 
-async function generateRefId() {
-  const count = await Complaint.countDocuments();
-  return `CMP-${String(count + 1).padStart(3, "0")}`;
+// Ref IDs follow the physical Complaint Book they're logged under — each
+// book (IB, CR, TR, ...) keeps its own running sequence, e.g. the 7th
+// entry under the Information Book is "IB 0007", independent of how many
+// Crime Register entries exist. Matches how the paper registers are kept.
+async function generateRefId(complaintBook) {
+  const count = await Complaint.countDocuments({ complaintBook });
+  return `${complaintBook} ${String(count + 1).padStart(4, "0")}`;
 }
 
 // GET /api/complaints — registry view: oic, duty_officer, officer, admin (own station)
@@ -114,7 +118,7 @@ async function create(req, res) {
 
   try {
     const complaint = await Complaint.create({
-      refId: await generateRefId(),
+      refId: await generateRefId(complaintBook),
       complaintBook,
       title,
       complaintSource,

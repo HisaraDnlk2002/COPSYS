@@ -26,7 +26,7 @@ not "above" OIC, just a different concern.
 | Inventory module | No | No | View only | Full access (issue/return/add) | No |
 | My Weapons (own firearm custody, read-only) | No | No | Yes | Yes | Yes |
 | Create/edit weekly duty roster | No | Yes (generate, approve, send-back) | Yes (manual entry / primary author) | No | No |
-| Reports & Analytics | No | Yes | No | No | No |
+| Reports & Analytics | All categories | All categories + station Overview | Duty reports only | Weapons + Ammunition reports only | No |
 | System Settings / RBAC | No | Yes | No | No | No |
 
 This matrix is the source of truth - every route guard and UI nav item
@@ -230,8 +230,21 @@ User
   rankAndNumber: string         // also login username
   department: string
   role: "admin" | "oic" | "duty_officer" | "inventory_officer" | "officer"
+  email: string                 // added for password-reset delivery; optional at the
+                                 // schema level (accounts created before this field
+                                 // existed have none), required on the "Register new
+                                 // Personnel" form going forward
   status: "active" | "disabled" | "pending"
   passwordHash: string
+  stationId: string
+
+PasswordResetRequest             // one row per "Forgot password?" click on Login
+  officerId: ref User
+  officerName, rankAndNumber: string   // denormalized for the Admin queue
+  status: "pending" | "fulfilled" | "rejected"
+  resolvedBy: ref User | null
+  resolvedByName: string
+  resolvedAt: date | null
   stationId: string
 
 LeaveBalance
@@ -417,8 +430,21 @@ POST   /api/auth/login                          public
 
 GET    /api/users/me                            any
 GET    /api/users                                admin
-POST   /api/users                                admin   (Register new Personnel)
+POST   /api/users                                admin   (Register new Personnel — password is generated
+                                                            server-side, returned once as `generatedPassword`;
+                                                            never typed by Admin)
+PATCH  /api/users/:id                            admin   (Edit User — name/department/role/phone/email/address)
 PATCH  /api/users/:id/status                     admin
+PATCH  /api/users/:id/password                   admin   (Reset Password button — generates + returns a new
+                                                            password once, same as creation)
+
+POST   /api/password-reset-requests             public  (Login page's "Forgot password?" — always responds
+                                                            the same way whether or not the account exists)
+GET    /api/password-reset-requests              admin   (queue on the Personnel page)
+PATCH  /api/password-reset-requests/:id/approve  admin   (generates a new password and emails it to the
+                                                            officer via Gmail SMTP — see server/src/utils/mailer.js;
+                                                            Admin never sees the password itself)
+PATCH  /api/password-reset-requests/:id/reject   admin
 
 GET    /api/leave-requests/mine                  any
 GET    /api/leave-requests                       oic     (approval queue - inline actions on OIC dashboard too)
@@ -450,10 +476,29 @@ POST   /api/inventory/:id/issue                   duty_officer, inventory_office
 POST   /api/inventory/:id/return                  duty_officer, inventory_officer
 GET    /api/inventory/transactions                duty_officer, inventory_officer  (Issue/Return/Damaged log tabs)
 
-GET    /api/reports/summary                      oic    (Duty Compliance %, Leave Statistics, Inventory Movements)
-GET    /api/reports/crime-distribution            oic    (bar chart data)
-GET    /api/reports/force-strength                oic    (line chart data, last 7 days)
-GET    /api/reports/activity-log                  oic    (placeholder - returns empty list, see open items)
+GET    /api/reports/summary                      admin, oic   (Duty Compliance %, Leave Statistics, Inventory Movements — station Overview only)
+GET    /api/reports/crime-distribution            admin, oic   (bar chart data — station Overview only)
+GET    /api/reports/force-strength                admin, oic   (line chart data, last 7 days — station Overview only)
+GET    /api/reports/activity-log                  admin, oic, duty_officer, inventory_officer  (per-category report history; role scopes which `type` values are visible)
+POST   /api/reports/preview                      admin, oic, duty_officer, inventory_officer  (runs the same query as generate, without logging it — powers the workbench's preview panel)
+POST   /api/reports/generate                     admin, oic, duty_officer, inventory_officer  (logs a ReportExport row; role gates which `type` — see Section 1)
+GET    /api/reports/:id/download                 admin, oic, duty_officer, inventory_officer  (regenerates the file from the stored date range + filters)
+PATCH  /api/reports/:id/archive                  admin, oic, duty_officer, inventory_officer
+DELETE /api/reports/:id                          admin, oic, duty_officer, inventory_officer
+
+Report categories: **Duty** (duty_officer + admin/oic), **Officers**,
+**Leave**, **Complaints**, **Station** (admin/oic only), **Weapons** +
+**Ammunition** (inventory_officer + admin/oic). "Weapons"/"Ammunition"
+replaced the original single "Inventory" report category — old
+ReportExport rows logged before the split keep type `"inventory"` and
+stay downloadable, but new reports are always generated as `"weapons"`.
+Each category accepts its own whitelisted extra filters (e.g. Duty:
+officer/shift/department; Complaints: category/status/priority/assigned
+officer) on top of the date range — see `FILTER_KEYS_BY_TYPE` in
+reportsController.js. The workbench flow is Period + Filters -> Preview
+(no log entry yet) -> Download PDF/CSV (logs a ReportExport row and
+streams the file); PDFs carry a station letterhead, the filters that were
+applied, and a Prepared/Checked/Approved-By signature block.
 
 GET    /api/settings                             oic
 PATCH  /api/settings                             oic    (toggle SMS/Email, RBAC matrix, alert threshold)
@@ -487,7 +532,9 @@ non-management roles, to `officerId == uid` where relevant.
     /PersonnelManagement  - Admin only
     /DutyRoster           - roster generation tool + grid + approve/send-back (OIC, Duty Officer)
     /Inventory            - dashboard + Weapon Details/Issue/Return/Damaged tabs + 3 modals
-    /Reports              - OIC only, stat cards + 2 charts + activity log table
+    /Reports              - sidebar of report categories (role-scoped) + period/filter
+                            workbench + preview panel + per-category report history;
+                            admin/oic also get the station Overview (stat cards + 2 charts)
     /Settings             - OIC only, RBAC matrix + notification toggles
   /config
     navConfig.js          - nav items per role

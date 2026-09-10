@@ -14,7 +14,7 @@ const complainantSchema = new mongoose.Schema(
 
 const complaintSchema = new mongoose.Schema(
   {
-    refId: { type: String, required: true, unique: true }, // e.g. "CMP-001"
+    refId: { type: String, required: true, unique: true }, // e.g. "IB 0001" — book code + running sequence within that book
 
     // Which physical/official register this complaint is logged under —
     // see the "Complaint Book" field on the registration form.
