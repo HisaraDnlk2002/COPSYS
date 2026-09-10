@@ -25,6 +25,15 @@ import "./Inventory.css";
 // affect anything server-side.
 const INSPECTION_DUE_SOON_DAYS = 14;
 
+// dateTime/generatedAt/etc. come back from the API as full ISO strings
+// ("2026-09-10T14:32:46.000Z") — this renders that as "10/09/2026 14:32"
+// (military clock, see formatDate.js) rather than the raw ISO string
+// with its seconds/milliseconds/Z suffix.
+function formatDateTime(value) {
+  if (!value) return "—";
+  return `${formatDate(value)} ${value.slice(11, 16)}`;
+}
+
 // Same lookup as the shared officer search, but labeled by Rank &
 // Number instead of phone number — that's the officer's actual ID
 // elsewhere in this app (login username, Personnel table), so it's the
@@ -636,7 +645,7 @@ export function InventoryPage() {
     { key: "itemId", label: t("inventory.colItemId"), render: (row) => row.itemId?.itemId || row.itemId?.itemName || "—" },
     { key: "officerId", label: t("inventory.colOfficerName"), render: (row) => row.officerId?.fullName || row.officerId?.rankAndNumber || "—" },
     { key: "dutyType", label: t("inventory.colDutyType") },
-    { key: "dateTime", label: t("inventory.colDateTime") },
+    { key: "dateTime", label: t("inventory.colDateTime"), render: (row) => formatDateTime(row.dateTime) },
     { key: "confirmationStatus", label: t("inventory.colConfirmation"), render: renderConfirmation },
     { key: "processedBy", label: t("inventory.colProcessedBy"), render: (row) => row.processedBy?.fullName || row.processedBy?.rankAndNumber || "—" },
   ];
@@ -649,7 +658,7 @@ export function InventoryPage() {
     { key: "itemId", label: t("inventory.colItemId"), render: (row) => row.itemId?.itemId || row.itemId?.itemName || "—" },
     { key: "officerId", label: t("inventory.colOfficerName"), render: (row) => row.officerId?.fullName || row.officerId?.rankAndNumber || "—" },
     { key: "dutyType", label: t("inventory.colDutyType") },
-    { key: "dateTime", label: t("inventory.colDateTime") },
+    { key: "dateTime", label: t("inventory.colDateTime"), render: (row) => formatDateTime(row.dateTime) },
     { key: "condition", label: t("inventory.colCondition"), render: (row) => (row.condition ? <Badge status={row.condition} /> : "—") },
     { key: "ammoUsed", label: t("inventory.ammoUsed"), render: renderAmmoUsed },
     { key: "remarks", label: t("inventory.colRemarks"), render: (row) => row.remarks || "—" },
@@ -663,7 +672,7 @@ export function InventoryPage() {
     damaged: { labelKey: "typeDamaged", tone: "danger" },
   };
   const ledgerTxColumns = [
-    { key: "dateTime", label: t("inventory.colDateTime") },
+    { key: "dateTime", label: t("inventory.colDateTime"), render: (row) => formatDateTime(row.dateTime) },
     { key: "itemId", label: t("inventory.colItemId"), render: (row) => row.itemId?.itemId || row.itemId?.itemName || "—" },
     {
       key: "type",
@@ -767,11 +776,6 @@ export function InventoryPage() {
   // MAINTENANCE_STATUS_TONE/handleMaintenanceSave, just for Alerts.
   const ALERT_NEXT_STATUS = { new: "acknowledged", acknowledged: "action_taken", action_taken: "resolved" };
   const ALERT_ACTION_LABEL_KEY = { acknowledged: "acknowledgeAlert", action_taken: "markActionTaken", resolved: "resolveAlert" };
-
-  function formatDateTime(value) {
-    if (!value) return "—";
-    return `${formatDate(value)} ${value.slice(11, 16)}`;
-  }
 
   const alertColumns = [
     { key: "refId", label: t("inventory.colAlertId") },
