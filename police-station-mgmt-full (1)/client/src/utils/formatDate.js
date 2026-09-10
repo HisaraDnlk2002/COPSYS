@@ -14,26 +14,24 @@ export function formatDate(value) {
   return `${day}/${month}/${year}`;
 }
 
-// Converts a 24-hour "HH:mm" string (what a native <input type="time">
-// stores) into 12-hour "h:mm AM/PM" for display.
-function to12Hour(time24) {
+// Normalizes a 24-hour time string (what a native <input type="time">
+// already stores, and what the backend already sends) to zero-padded
+// "HH:mm" for military-clock display — no AM/PM conversion, station
+// operations run on 24-hour time throughout.
+function toMilitary(time24) {
   const match = /^(\d{1,2}):(\d{2})$/.exec(time24);
   if (!match) return time24;
 
-  let hours = parseInt(match[1], 10);
-  const minutes = match[2];
-  const period = hours >= 12 ? "PM" : "AM";
-  hours = hours % 12 || 12;
-
-  return `${hours}:${minutes} ${period}`;
+  const hours = match[1].padStart(2, "0");
+  return `${hours}:${match[2]}`;
 }
 
 // Combines a date value with a separate 24-hour "HH:mm" time string (e.g.
 // an incident's date-of picker plus its own time-of field) into one
-// "DD/MM/YYYY h:mm AM/PM" display. Falls back to just the date when no
-// time was recorded.
+// "DD/MM/YYYY HH:mm" display. Falls back to just the date when no time
+// was recorded.
 export function formatDateAndTime(dateValue, timeValue) {
   const datePart = formatDate(dateValue);
   if (!timeValue) return datePart;
-  return `${datePart} ${to12Hour(timeValue)}`;
+  return `${datePart} ${toMilitary(timeValue)}`;
 }

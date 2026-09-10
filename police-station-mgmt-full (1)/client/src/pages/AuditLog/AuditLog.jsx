@@ -10,7 +10,7 @@ function formatTimestamp(value) {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
   const date = d.toLocaleDateString("en-GB");
-  const time = d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+  const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
   return `${date}, ${time}`;
 }
 
