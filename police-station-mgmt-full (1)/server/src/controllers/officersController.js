@@ -14,9 +14,9 @@ async function search(req, res) {
     const officers = await User.find({
       stationId: req.user.stationId,
       status: "active",
-      fullName: { $regex: q, $options: "i" },
+      $or: [{ fullName: { $regex: q, $options: "i" } }, { rankAndNumber: { $regex: q, $options: "i" } }],
     })
-      .select("fullName phoneNumber role department")
+      .select("fullName rankAndNumber phoneNumber role department")
       .limit(15);
 
     return res.json(officers.map((o) => o.toJSON()));

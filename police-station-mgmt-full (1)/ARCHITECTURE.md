@@ -24,6 +24,7 @@ not "above" OIC, just a different concern.
 | View/manage all complaints (registry + log) | No | Yes | Yes (own station) | No | No |
 | Personnel & User Management | Yes | No | No | No | No |
 | Inventory module | No | No | View only | Full access (issue/return/add) | No |
+| My Weapons (own firearm custody, read-only) | No | No | Yes | Yes | Yes |
 | Create/edit weekly duty roster | No | Yes (generate, approve, send-back) | Yes (manual entry / primary author) | No | No |
 | Reports & Analytics | No | Yes | No | No | No |
 | System Settings / RBAC | No | Yes | No | No | No |
@@ -42,13 +43,147 @@ maps back to a row here. When you add a feature, add a row first.
 - **OIC absorbed System Settings/RBAC** (Figma page 15) and Reports &
   Analytics (Figma page 16) - these weren't in our original plan, added
   per this spec.
+- **My Weapons** is a narrower, separate permission from the "Inventory
+  module" row above it - not a loosening of it. It's a read-only view,
+  scoped server-side to the logged-in user's own uid, of only their own
+  currently-assigned firearm(s) and their own custody history (backed by
+  `GET /api/inventory/my-weapons`, gated by nothing but a valid token -
+  see inventoryRoutes.js). It does not grant any visibility into the
+  station-wide ledger, other officers' custody, or any write access
+  (issue/return/add still require the Inventory Officer role, unchanged).
+  Admin and OIC are excluded since neither is an operational/patrol role
+  that would carry a duty weapon.
+- **Two-party weapon transaction confirmation (issue AND return).** Both
+  `POST /inventory/:id/issue` and `POST /inventory/:id/return` create
+  their transaction with `confirmationStatus: "pending"` - neither is
+  "secured" until the officer *named on the transaction* confirms it
+  themselves, via `PATCH /inventory/transactions/:id/confirm`
+  (`confirmTransaction` in inventoryController.js, surfaced on the My
+  Weapons page). That route enforces `req.user.uid === transaction
+  .officerId` server-side - there is no Inventory Officer action,
+  button, or endpoint anywhere that can set `confirmationStatus` to
+  `"secured"` directly. This is deliberate: whoever processed a
+  transaction can't also be the one who attests the officer's side of it
+  happened. The Inventory Officer's own views (Issue/Return/Damaged
+  tabs, Audit Ledger tab) only ever display this status (Pending /
+  Secured), never control it.
+  - **Issue:** the item's stock/status updates *immediately* at
+    `issue()` time (it's physically out of the armory the moment it's
+    handed over) - confirming only records the officer's acknowledgment
+    of receipt. Deliberately NOT deferred to confirmation, unlike
+    return below: deferring it would let two still-unconfirmed issues
+    overcommit the same stock.
+  - **Return / damaged:** the opposite. `returnItem()` does NOT touch
+    the item at all - it only records what the Inventory Officer
+    observed (condition, an optional ammo-issued/ammo-returned count
+    reconciled into `ammoUsed`). The actual stock update (quantity
+    restored, status -> available/damaged, `assignedTo` cleared) only
+    happens inside `confirmTransaction` once the officer confirms they
+    physically handed it back. This IS safe to defer (unlike issue)
+    since nothing can be over-allocated by *not* freeing stock a moment
+    sooner - the item just correctly stays "issued" to that officer
+    until they confirm otherwise.
+- **Maintenance module.** Own model/controller/routes
+  (`/api/maintenance`), gated exactly like the rest of the Inventory
+  module (view: duty_officer + inventory_officer; write: inventory_officer
+  only) - not a separate permissions-matrix row, it's the Inventory
+  module's Maintenance tab. Two rules enforced server-side, not just in
+  the UI:
+  - **A weapon under maintenance cannot be issued.** `issue()` rejects
+    with 400 if `Inventory.status === "damaged"`.
+  - **MAINTENANCE -> AVAILABLE only on a passed final inspection.**
+    `Maintenance.update()`'s pending -> in_progress -> completed
+    transitions are enforced in order (can't skip or go backwards); the
+    completed transition requires `finalCondition` and
+    `finalInspectionPassed` in the payload, and only sets
+    `Inventory.status = "available"` when `finalInspectionPassed` is
+    true. A completed record with a failed inspection leaves the item
+    exactly as "damaged" as before - a fresh maintenance record is
+    needed to try again.
+  - **Auto-connected to Return.** `confirmTransaction` creates a
+    Maintenance record automatically whenever a `type: "damaged"`
+    return is confirmed (`reportedBy` = the Inventory Officer who
+    processed the return, `sourceTransactionId` links back to it) -
+    nothing manually opens a maintenance case from a damaged return.
+- **Inspection module.** Own model/controller/routes
+  (`/api/inspections`), gated identically to Maintenance - the
+  Inventory module's Inspections tab, not a separate permissions row.
+  The point: catch a weapon that's simply due a periodic check even
+  though it's never been reported damaged by Issue/Return.
+  - `Inventory.nextInspectionDate` (and `lastInspectionDate`) drive the
+    Due/Overdue alerts - set on every new item at creation time
+    (`INSPECTION_INTERVAL_DAYS`, currently 90, out from `create()`) so
+    nothing added to the ledger sits outside the schedule from day one,
+    and reset on every "passed" inspection.
+  - **A failed inspection cannot leave the weapon available** - same
+    rule and same mechanism as a damaged return: sets
+    `Inventory.status = "damaged"` (blocked from `issue()`, same as
+    above) and auto-creates a Maintenance record
+    (`sourceInspectionId` links back), clearing
+    `nextInspectionDate` until that maintenance record's own final
+    inspection passes and reschedules it. **Inspection Failed ->
+    Maintenance -> Final Inspection -> Available** is the same pipe as
+    **Damaged Return -> Maintenance -> Final Inspection -> Available**;
+    Inspection and Return are just the two different front doors into it.
+  - Only items with `status` not `"issued"` or `"missing"` are
+    inspectable (an item that's out with an officer, or unlocatable,
+    can't be physically inspected at the armory) - enforced
+    client-side (the Due list is filtered), not by the API, since
+    there's nothing unsafe about the endpoint accepting an itemId for
+    an issued item if someone did call it directly.
+- **Alerts module.** Own model/controller/routes (`/api/alerts`),
+  gated like Maintenance/Inspections for the station-wide feed
+  (`GET /`), but `GET /mine` and `PATCH /:id` sit above that gate -
+  reachable by every role, since the "relevant officer" an alert is
+  about could be any of them (see My Weapons' alerts note below).
+  Fully automatic - there is no create-alert endpoint or UI control
+  anywhere; every alert is a side effect of something else happening.
+  Dropped "Unauthorized weapon issue" from the reference spec's 13
+  alert types - nothing in the system can actually trigger it (every
+  issue already requires the Inventory Officer, and issuing a
+  damaged/missing/under-maintenance item is already hard-blocked at
+  the API, not something to alert on after the fact).
+  - **Generation.** `generateAlert()` (server/src/utils/alerts.js) is
+    called directly from the action that triggers each type - `issue()`
+    -> weapon_issued, `returnItem()` -> return_awaiting_confirmation,
+    `confirmTransaction()` -> weapon_returned / weapon_damage /
+    ammo_discrepancy (when `ammoUsed > 0`) / maintenance_pending (on a
+    damaged confirm), `reportMissing()` -> weapon_missing,
+    `maintenanceController.update()` -> maintenance_completed,
+    `inspectionsController.create()` -> inspection_completed always,
+    plus inspection_failed + maintenance_pending on a failed result.
+    Two types (`return_overdue`, `inspection_due`) aren't tied to a
+    single action - they're conditions that become true purely with
+    the passage of time - so `alertsController.list()` runs a scan for
+    them on every fetch instead, gated by `overdueAlertGenerated` /
+    `dueAlertGenerated` flags on the underlying documents so it never
+    creates a duplicate for the same condition.
+  - **Recipient.** `recipientId` is set to the specific officer an
+    alert is personally about (issue/return/damage/ammo/overdue - all
+    tied to a transaction with an officer on it) and left `null` for
+    alerts that are purely armory-side bookkeeping (missing,
+    inspection due/completed/failed, maintenance pending/completed) -
+    those only ever show on the Inventory Officer's dashboard, never
+    on any individual officer's own notifications.
+  - **Lifecycle.** `NEW -> ACKNOWLEDGED -> ACTION_TAKEN -> RESOLVED`,
+    one step at a time, enforced in `updateStatus()` - can't skip a
+    step or go backwards, same pattern as Maintenance's status
+    lifecycle. Callable by the Inventory Officer (any station alert)
+    or the alert's own `recipientId` (their own only) - both
+    surfaces (Inventory.jsx's Alerts tab, My Weapons' My Alerts
+    section) call the same endpoint.
+  - **In-app only.** No push/email/SMS delivery - Settings' Email
+    Dispatch toggle remains exactly as decorative as it was before
+    this module (stored, never enforced). An alert exists the moment
+    it's generated; officers see it next time they load the relevant
+    page.
 
 **Left nav per role:**
 - **Admin:** Dashboard, Personnel & User Management
 - **OIC:** Dashboard, Leave Management, Duty Roster, Complaint Registry, Complaint Log, Reports, Settings
-- **Duty Officer:** Dashboard, Duty Roster, Inventory, Leave Requests, Complaints & Logs (workflows 3 and 4 both say "Duty Officer" but show slightly different sidebars - treat as one role with the combined nav)
-- **Inventory Officer:** Dashboard, Inventory, Leave Requests
-- **Officer:** Dashboard, Leave Requests, Complaints Registry
+- **Duty Officer:** Dashboard, Duty Roster, Inventory, My Weapons, Leave Requests, Complaints & Logs (workflows 3 and 4 both say "Duty Officer" but show slightly different sidebars - treat as one role with the combined nav)
+- **Inventory Officer:** Dashboard, Inventory, My Weapons, Leave Requests
+- **Officer:** Dashboard, My Weapons, Leave Requests, Complaints Registry
 
 ---
 
@@ -70,6 +205,20 @@ Matches the actual stat cards / tables seen in each workflow screenshot.
 - Stat cards: Total Officers, Pending Leaves, Active Complaints, Today's Duties (each with a small icon)
 - "Personnel Leave Requests" table: Officer/Rank, Dates, Type, Actions (approve / reject / view) - inline actions, not a separate page navigation
 - "Incident & Complaint Monitor" table: Complaint ID / Nature / Status (badge: Unassigned / In-Progress / Resolved / Critical) / Assignment, with an "Assign" button per row and an "X Unassigned" counter badge top-right of the panel
+
+**My Weapons** (Officer, Duty Officer, Inventory Officer - not a Figma workflow, added later):
+- Stat cards: Weapons In My Custody (count), Awaiting Confirmation (count), Open Alerts (count), Last Activity (most recent transaction date)
+- "Action Required: Confirm Transaction" panel - only rendered when the user has pending transactions; one row per issue OR return/damaged naming them with `confirmationStatus: "pending"`, each with a Confirm Receipt / Confirm Return button (copy varies by type) that opens a modal (item/quantity/condition/ammo-if-return details for review, optional remarks) calling `PATCH /inventory/transactions/:id/confirm`. See the confirmation-workflow note in Section 1 - this is the only place that endpoint is ever called from.
+- "Weapons In My Custody" table: Item ID / Item Name / Quantity / Condition - only firearms currently assigned to the logged-in user (`Inventory.assignedTo === me && status === "issued"`) - a weapon with a pending (unconfirmed) return still shows here, since the officer remains formally accountable until they confirm it
+- "My Custody History" table: Date & Time / Item ID / Type (Issued/Returned/Reported Damaged badge) / Quantity / Condition / Confirmation (Pending/Secured badge, all types) / Processed By / Remarks - the user's own last 20 firearm transactions, oldest ambiguity resolved by `dateTime` descending
+- "My Alerts" table: Priority / Alert / Item ID / Generated / Status, with an Acknowledge/Mark Action Taken/Resolve button per row (copy depends on current status) - every alert with `recipientId === me`, from `GET /alerts/mine`. See the Alerts module note in Section 1.
+- Read-only otherwise: no issue/return/add actions here, those stay on the Inventory module
+
+**Inventory - Alerts tab** (Duty Officer view-only, Inventory Officer full - added later, not a Figma workflow):
+- Filter bar: search, date range, Priority (All/Critical/Warning/Info), Status (All/New/Acknowledged/Action Taken/Resolved)
+- Small counts: Critical (open only) / Open (any non-resolved)
+- Table: Alert ID / Priority (badge) / Alert (title, full message on hover) / Item ID / Generated / Recipient / Status (badge) / an Acknowledge-or-next-step button, shown only to the Inventory Officer or the alert's own recipient
+- Station-wide - every alert regardless of recipient, from `GET /alerts`, which also runs the return_overdue/inspection_due time-based scan (see Section 1) before returning
 
 ---
 
@@ -143,24 +292,110 @@ DutyRosterWeek                    // the week-level record — separate from ind
   sendBackReason: string
   stationId: string
 
-InventoryItem
+Inventory                           // NOTE: the model file/collection is actually named
+                                     // "Inventory", not "InventoryItem" below - there's an
+                                     // unused, near-identical InventoryItem model left over
+                                     // in the codebase; don't add to it, it's dead.
   itemId: string                  // "WP-8821" style
   itemName: string
   category: "Firearms" | "Electronics" | etc
   quantity: number
-  status: "available" | "issued" | "damaged"
+  status: "available" | "issued" | "damaged" | "missing"   // "missing" only via
+                                    // POST /inventory/:id/report-missing, blocked from
+                                    // issue() same as "damaged" - no automatic path back,
+                                    // has to be manually cleared once located
+  assignedTo: ref User | null      // whoever the item was most recently issued to; cleared
+                                    // only once a return is *confirmed* (see
+                                    // confirmTransaction in Section 1) - check
+                                    // status === "issued" alongside this too, since a
+                                    // pending (unconfirmed) return leaves both as they were
+  lastInspectionDate: date | null
+  nextInspectionDate: date | null   // drives the Due/Overdue alerts - see Section 1
+  dueAlertGenerated: boolean        // dedupes the inspection_due alert scan; reset to false
+                                    // every time nextInspectionDate is (re)scheduled
   stationId: string
   lastUpdatedBy: ref User
 
 InventoryTransaction                // covers Issue / Return / Damaged logs (workflow 3, page 8-9)
-  itemId: ref InventoryItem
+  itemId: ref Inventory            // was mistakenly "ref InventoryItem" - silently broke
+                                    // every .populate("itemId"), fixed
   officerId: ref User              // who it was issued to / returned by
+  processedBy: ref User | null     // which Inventory Officer carried out the transaction
   type: "issue" | "return" | "damaged"
   dutyType: string                  // "Patrol", "Traffic" - shown in the issue/return log tables
   quantity: number
   dateTime: date
   condition: string | null          // "Good" / "Faulty" - only on return
   remarks: string | null
+  ammoIssued: number | null         // return/damaged only, entered by the Inventory Officer at return time
+  ammoReturned: number | null       // return/damaged only, entered alongside ammoIssued
+  ammoUsed: number | null           // derived: ammoIssued - ammoReturned, stored so it doesn't need recomputing
+  confirmationStatus: "pending" | "secured" | null   // set for every type; see Section 1
+  confirmedAt: date | null                            // set by confirmTransaction(), never by the Inventory Officer
+  confirmationRemarks: string | null                  // optional, set by the confirming officer
+  expectedReturnDate: date | null   // issue only, optional - Inventory Officer sets a deadline;
+                                    // only issues with one set can ever go on to trigger a
+                                    // return_overdue alert
+  overdueAlertGenerated: boolean    // dedupes the return_overdue alert scan
+  stationId: string
+
+Maintenance                         // repair/inspection records, one per weapon sent out - see Section 1
+  refId: string                    // "MR-0001" style, human-facing
+  itemId: ref Inventory
+  issueDescription: string
+  reportedBy: ref User | null
+  reportedDate: date
+  maintenanceType: "Repair" | "Inspection" | "Cleaning" | "Part Replacement" | "Overhaul" | "Other"
+  assignedTechnician: string        // free text, not a ref - often an external gunsmith, not a station account
+  startDate: date | null            // set on pending -> in_progress
+  completionDate: date | null       // set on in_progress -> completed
+  partsCost: string                 // free text - no currency/accounting system elsewhere to key off
+  remarks: string
+  finalCondition: string | null     // only set on completion
+  finalInspectionPassed: boolean | null   // only set on completion; gates Inventory.status -> "available"
+  status: "pending" | "in_progress" | "completed"
+  sourceTransactionId: ref InventoryTransaction | null   // set when auto-created from a damaged return
+  sourceInspectionId: ref Inspection | null              // set when auto-created from a failed inspection
+  stationId: string
+
+Inspection                          // periodic physical checks, independent of Issue/Return/Maintenance - see Section 1
+  refId: string                    // "INS-0001" style, human-facing
+  itemId: ref Inventory
+  inspectedBy: ref User
+  inspectionDate: date
+  inspectionType: "Scheduled" | "Random" | "Post-Maintenance" | "Other"
+  condition: string                 // overall condition rating at time of inspection
+  findings: string                  // physical/safety/cleanliness/function observations
+  damageIssues: string               // specific damage or issues found, if any
+  accessoriesChecked: string        // notes on parts/accessories inspected
+  remarks: string
+  result: "passed" | "failed"
+  nextInspectionDate: date | null   // only set when result === "passed"; mirrors Inventory.nextInspectionDate
+  resultingMaintenanceId: ref Maintenance | null   // set when a failed result auto-creates a Maintenance record
+  stationId: string
+
+Alert                                // every weapon-related notification - see Section 1
+  refId: string                    // "ALT-0001" style, human-facing
+  alertType: "weapon_missing" | "ammo_discrepancy" | "inspection_failed" | "weapon_damage"
+           | "return_overdue" | "inspection_due" | "maintenance_pending" | "return_awaiting_confirmation"
+           | "weapon_issued" | "weapon_returned" | "maintenance_completed" | "inspection_completed"
+  priority: "critical" | "warning" | "info"        // derived 1:1 from alertType, see ALERT_PRIORITY in utils/alerts.js
+  title: string
+  message: string
+  itemId: ref Inventory | null
+  transactionId: ref InventoryTransaction | null
+  maintenanceId: ref Maintenance | null
+  inspectionId: ref Inspection | null              // at most one of these four is set, matching the alertType
+  recipientId: ref User | null     // the officer this is personally about; null = armory-side only
+  generatedAt: date
+  status: "new" | "acknowledged" | "action_taken" | "resolved"
+  acknowledgedBy: ref User | null
+  acknowledgedAt: date | null
+  actionTakenBy: ref User | null
+  actionTakenAt: date | null
+  resolvedBy: ref User | null
+  resolvedAt: date | null
+  remarks: string
   stationId: string
 
 SystemSettings                      // single doc per station, page 15

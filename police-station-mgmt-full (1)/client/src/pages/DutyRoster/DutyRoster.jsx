@@ -6,39 +6,19 @@ import { Button, InputField, Card, Badge, Loader, Modal } from "../../components
 import {
   getRosterWeeks,
   getRosterWeek,
-  createRosterWeek,
   deleteRosterWeek,
   generateRoster,
   submitRosterWeek,
   approveRosterWeek,
   sendBackRosterWeek,
   publishRosterWeek,
-  createDutyShift,
-  updateDutyShift,
-  DAYS_OF_WEEK,
 } from "../../services/dutyRoster";
 import { listUsers } from "../../services/users";
 import { getAllLeaveRequests } from "../../services/leave";
-import { isGeneralPoolBranch } from "../../config/branches";
 import { CreateRosterWizard } from "./CreateRosterWizard";
 import { DailyDutyUpdate } from "./DailyDutyUpdate";
 import { WeeklyGrid } from "./WeeklyGrid";
 import "./DutyRoster.css";
-
-const DEFAULT_SHIFT_START = "08:00";
-const DEFAULT_SHIFT_END = "20:00";
-
-function shortDay(day) {
-  return day.slice(0, 3);
-}
-
-// Monday-of-week string + day index -> ISO date string, so manual
-// assignment cells know which actual date they're writing to.
-function dateForDayIndex(weekStarting, dayIndex) {
-  const d = new Date(weekStarting);
-  d.setDate(d.getDate() + dayIndex);
-  return d.toISOString().slice(0, 10);
-}
 
 function overlapsWeek(leave, weekStarting) {
   const weekStart = new Date(weekStarting).setHours(0, 0, 0, 0);

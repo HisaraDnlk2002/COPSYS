@@ -19,6 +19,13 @@ function capacityTone(pct) {
   return "#dc2626";
 }
 
+function overlapsToday(leave) {
+  const today = new Date().setHours(0, 0, 0, 0);
+  const start = new Date(leave.startDate).setHours(0, 0, 0, 0);
+  const end = new Date(leave.endDate).setHours(0, 0, 0, 0);
+  return today >= start && today <= end;
+}
+
 export function DutyOfficerBriefingPage() {
   const { t } = useLanguage();
   const navigate = useNavigate();
@@ -44,13 +51,6 @@ export function DutyOfficerBriefingPage() {
       cancelled = true;
     };
   }, []);
-
-  function overlapsToday(leave) {
-    const today = new Date().setHours(0, 0, 0, 0);
-    const start = new Date(leave.startDate).setHours(0, 0, 0, 0);
-    const end = new Date(leave.endDate).setHours(0, 0, 0, 0);
-    return today >= start && today <= end;
-  }
 
   if (loading) return <Loader label={t("briefing.loading")} />;
 

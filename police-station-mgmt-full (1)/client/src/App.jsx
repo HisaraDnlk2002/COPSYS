@@ -8,6 +8,7 @@ import { DashboardRouter } from "./pages/Dashboard/DashboardRouter";
 import { LeaveRequestsPage } from "./pages/LeaveRequests/LeaveRequests";
 import { ComplaintsPage } from "./pages/Complaints/Complaints";
 import { InventoryPage } from "./pages/Inventory/Inventory";
+import { WeaponManagementPage } from "./pages/WeaponManagement/WeaponManagement";
 import { DutyRosterPage } from "./pages/DutyRoster/DutyRoster";
 import { PersonnelPage } from "./pages/Personnel/Personnel";
 import { ReportsPage } from "./pages/Reports/Reports";
@@ -37,6 +38,14 @@ function App() {
                 element={
                   <ProtectedRoute roles={["duty_officer", "inventory_officer"]}>
                     <InventoryPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/weapon-management"
+                element={
+                  <ProtectedRoute roles={["officer", "duty_officer", "inventory_officer"]}>
+                    <WeaponManagementPage />
                   </ProtectedRoute>
                 }
               />

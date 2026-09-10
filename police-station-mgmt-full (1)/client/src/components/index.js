@@ -6,4 +6,5 @@ export { Badge } from "./Badge/Badge";
 export { Modal } from "./Modal/Modal";
 export { Loader } from "./Loader/Loader";
 export { AssignmentCell } from "./AssignmentCell/AssignmentCell";
+export { NotificationBell } from "./NotificationBell/NotificationBell";
 export * from "./SearchableSelect/SearchableSelect";

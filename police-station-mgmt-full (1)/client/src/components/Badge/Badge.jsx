@@ -15,11 +15,28 @@ const STATUS_TONE = {
   rejected: "danger",
   failed: "danger",
   closed: "danger",
-   complete: "success",   
+   complete: "success",
   archived: "neutral",
+
+  // Inventory item/transaction vocabulary (Inventory + Weapon Management)
+  available: "success",
+  issued: "info",
+  good: "success",
+  damaged: "danger",
+  faulty: "danger",
+  missing: "danger",
+
+  // Alerts module
+  new: "danger",
+  acknowledged: "warning",
+  action_taken: "info",
+  resolved: "success",
+  critical: "danger",
+  warning: "warning",
+  info: "info",
 };
 
-export function Badge({ status, children, tone }) {
+export function Badge({ status, children, tone, title }) {
   const { t } = useLanguage();
   const key = (status || "").toLowerCase();
   const resolvedTone = tone || STATUS_TONE[key] || "neutral";
@@ -28,5 +45,5 @@ export function Badge({ status, children, tone }) {
   const translationKey = `status.${key}`;
   const translated = t(translationKey);
   const label = children || (translated === translationKey ? status : translated);
-  return <span className={`badge badge-${resolvedTone}`}>{label}</span>;
+  return <span className={`badge badge-${resolvedTone}`} title={title}>{label}</span>;
 }
