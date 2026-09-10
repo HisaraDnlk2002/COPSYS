@@ -32,6 +32,10 @@ export function SearchableSelect({
   const inputId = id || label?.toLowerCase().replace(/\s+/g, "-");
 
   useEffect(() => {
+    // Keeps the visible input text in sync with an externally-controlled
+    // `value` (e.g. the parent clearing or programmatically setting the
+    // selection) — a legitimate prop -> local-state sync, not a smell.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setQuery(value?.label || "");
   }, [value]);
 

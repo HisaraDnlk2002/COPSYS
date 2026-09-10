@@ -60,6 +60,9 @@ export function CreateRosterWizard({ onCancel, onComplete, existingWeek }) {
   // instead of looking blank until Save & Preview is clicked.
   useEffect(() => {
     if (!existingWeek) return;
+    // Flips the loading flag before the fetch below resolves — a
+    // legitimate "prop appeared, start loading" sync, not a smell.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoadingOverview(true);
     getRosterWeek(existingWeek.id)
       .then((res) => {

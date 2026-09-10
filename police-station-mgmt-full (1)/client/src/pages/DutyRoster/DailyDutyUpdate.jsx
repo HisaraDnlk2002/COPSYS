@@ -50,6 +50,10 @@ export function DailyDutyUpdate() {
   }
 
   useEffect(() => {
+    // Reloads whenever the selected date changes — load() sets
+    // loading/error state synchronously before its fetch resolves,
+    // which is the legitimate "prop changed, start loading" pattern.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date]);

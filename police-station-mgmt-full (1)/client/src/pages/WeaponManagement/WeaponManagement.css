@@ -1,0 +1,51 @@
+.weapon-mgmt-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-xs);
+}
+
+.weapon-mgmt-subtitle {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-lg);
+}
+
+.weapon-mgmt-section {
+  margin-bottom: var(--space-lg);
+}
+
+.weapon-mgmt-section-subtitle {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  margin: 0 0 var(--space-md);
+}
+
+.section-label {
+  font-size: var(--font-size-base);
+  font-weight: 700;
+  margin: 0 0 var(--space-md);
+}
+
+.weapon-mgmt-pending {
+  border-left: 4px solid var(--color-warning);
+  background: var(--color-warning-bg);
+}
+
+.weapon-mgmt-confirm-details {
+  background: var(--color-surface-muted);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  margin-bottom: var(--space-md);
+  font-size: var(--font-size-sm);
+}
+
+.weapon-mgmt-confirm-details p {
+  margin: 0 0 6px;
+}
+
+.weapon-mgmt-confirm-details p:last-child {
+  margin-bottom: 0;
+}

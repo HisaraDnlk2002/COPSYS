@@ -192,6 +192,10 @@ export function ReportsPage() {
       navigate("/reports", { replace: true });
       return;
     }
+    // Resets the workbench's form state whenever the URL's :type changes
+    // (including to/from the hub) — covers browser back/forward too, not
+    // just clicks, which a plain click handler wouldn't.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setFormError("");
     setPreset("custom");
     setFilters({ format: "pdf", ...defaultRange() });
@@ -267,7 +271,7 @@ export function ReportsPage() {
     setRowActionId(row.id);
     try {
       await archiveReport(row.id);
-      await refreshAfterRowChange();
+      await loadActivityLog();
     } catch (err) {
       window.alert(err.message || t("reports.archiveFailed"));
     } finally {
@@ -280,8 +284,11 @@ export function ReportsPage() {
     setRowActionId(row.id);
     try {
       await deleteReport(row.id);
-      await refreshAfterRowChange();
-      loadCategoryCounts();
+      // Category badge counts on the hub are derived straight from
+      // activityLog (see REPORT_CATEGORIES.map below), so reloading it
+      // here updates both the table and the counts — no separate
+      // counts fetch needed.
+      await loadActivityLog();
     } catch (err) {
       window.alert(err.message || t("reports.deleteFailed"));
     } finally {
