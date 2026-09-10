@@ -32,3 +32,20 @@
 .section-label:first-child {
   margin-top: 0;
 }
+
+.complaints-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-sm) var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+
+.complaints-filter-search {
+  flex: 1;
+  min-width: 220px;
+}
+
+.complaints-filter-bar .field {
+  min-width: 160px;
+}

@@ -97,6 +97,9 @@ export function ComplaintsPage() {
     { value: "closed", label: t("complaints.statusClosed") },
   ];
 
+  const BOOK_FILTER_OPTIONS = [{ value: "all", label: t("complaints.allBooks") }, ...COMPLAINT_BOOK_OPTIONS];
+  const STATUS_FILTER_OPTIONS = [{ value: "all", label: t("complaints.allStatuses") }, ...STATUS_OPTIONS];
+
   const [view, setView] = useState("list"); // "list" | "register"
   const [loading, setLoading] = useState(true);
   const [complaints, setComplaints] = useState([]);
@@ -105,6 +108,10 @@ export function ComplaintsPage() {
   const [formError, setFormError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [search, setSearch] = useState("");
+  const [bookFilter, setBookFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [viewing, setViewing] = useState(null);
   const [statusSaving, setStatusSaving] = useState(false);
 
@@ -208,7 +215,26 @@ export function ComplaintsPage() {
     setComplaints((prev) => prev.map((c) => (c.id === complaintId ? { ...c, ...updated } : c)));
   }
 
+  const filtersActive = bookFilter !== "all" || statusFilter !== "all" || dateFrom || dateTo;
+
+  function clearFilters() {
+    setBookFilter("all");
+    setStatusFilter("all");
+    setDateFrom("");
+    setDateTo("");
+  }
+
   const filteredComplaints = complaints.filter((row) => {
+    if (bookFilter !== "all" && row.complaintBook !== bookFilter) return false;
+    if (statusFilter !== "all" && row.status !== statusFilter) return false;
+
+    // dateOfIncident comes back as an ISO string; compare on the date-only
+    // slice so the filter's <input type="date"> boundaries (yyyy-mm-dd)
+    // line up regardless of the time-of-day portion.
+    const incidentDate = row.dateOfIncident?.slice(0, 10);
+    if (dateFrom && (!incidentDate || incidentDate < dateFrom)) return false;
+    if (dateTo && (!incidentDate || incidentDate > dateTo)) return false;
+
     if (!search.trim()) return true;
     const q = search.trim().toLowerCase();
     return (
@@ -317,7 +343,8 @@ export function ComplaintsPage() {
               </div>
               <div className="field-full">
                 <InputField label={t("complaints.detailedDescription")} type="textarea" required value={form.description}
-                  onChange={(e) => updateField("description", e.target.value)} placeholder={t("complaints.descriptionPlaceholder")} />
+                  onChange={(e) => updateField("description", e.target.value)} placeholder={t("complaints.descriptionPlaceholder")}
+                  voiceInput />
               </div>
             </div>
 
@@ -348,13 +375,46 @@ export function ComplaintsPage() {
         )}
       </div>
 
-      <div style={{ marginBottom: 16, maxWidth: 360 }}>
+      <div className="complaints-filter-bar">
+        <div className="complaints-filter-search">
+          <InputField
+            label={t("complaints.searchComplaints")}
+            placeholder={t("complaints.searchComplaintsPlaceholder")}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
         <InputField
-          label={t("complaints.searchComplaints")}
-          placeholder={t("complaints.searchComplaintsPlaceholder")}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          label={t("complaints.filterBook")}
+          type="select"
+          value={bookFilter}
+          onChange={(e) => setBookFilter(e.target.value)}
+          options={BOOK_FILTER_OPTIONS}
         />
+        <InputField
+          label={t("common.status")}
+          type="select"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          options={STATUS_FILTER_OPTIONS}
+        />
+        <InputField
+          label={t("complaints.dateFrom")}
+          type="date"
+          value={dateFrom}
+          onChange={(e) => setDateFrom(e.target.value)}
+        />
+        <InputField
+          label={t("complaints.dateTo")}
+          type="date"
+          value={dateTo}
+          onChange={(e) => setDateTo(e.target.value)}
+        />
+        {filtersActive && (
+          <Button variant="ghost" type="button" onClick={clearFilters}>
+            {t("complaints.clearFilters")}
+          </Button>
+        )}
       </div>
 
       <Card variant="panel">

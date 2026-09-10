@@ -137,16 +137,43 @@ const REPORT_TYPE_LABELS = {
   crime: "Criminal Investigation",
 };
 
+// Ceiling on how many rows a single report is allowed to pull into memory.
+// Generous enough that normal usage (even a full year for one station)
+// stays well under it, but it keeps worst-case request time and memory use
+// predictable. Adjust here if it turns out to be too tight or too loose.
+const MAX_REPORT_ROWS = 5000;
+
+class ReportRowLimitError extends Error {
+  constructor(count) {
+    super(
+      `This range has ${count} matching records, which is over the ${MAX_REPORT_ROWS} row limit. Please narrow the date range and try again.`
+    );
+    this.name = "ReportRowLimitError";
+    this.count = count;
+  }
+}
+
+// Cheap count-only check run before a report type pulls its matching rows
+// into memory. Without this, an open-ended date range (e.g. "since 2015")
+// on a mature station could mean loading tens of thousands of documents —
+// and then PDF-rendering them — in a single request, hanging or crashing
+// the server. countDocuments() answers "how many would this match?"
+// without fetching them, so the guard itself stays fast even when the
+// range is huge.
+async function guardRowCount(Model, filter) {
+  const count = await Model.countDocuments(filter);
+  if (count > MAX_REPORT_ROWS) throw new ReportRowLimitError(count);
+}
+
 // Builds the {columns, rows} table for a given report type + date range.
 // Every report type funnels through here so generateReport (persists the
 // log entry) and downloadReport (regenerates the file on demand) always
 // produce identical data for the same params.
 async function gatherReportData(type, stationId, dateFrom, dateTo) {
   if (type === "duty") {
-    const rows = await DutySchedule.find({
-      stationId,
-      date: { $gte: dateFrom, $lte: dateTo },
-    })
+    const filter = { stationId, date: { $gte: dateFrom, $lte: dateTo } };
+    await guardRowCount(DutySchedule, filter);
+    const rows = await DutySchedule.find(filter)
       .populate("officerId", "fullName rankAndNumber")
       .sort({ date: 1 })
       .lean();
@@ -170,11 +197,9 @@ async function gatherReportData(type, stationId, dateFrom, dateTo) {
   }
 
   if (type === "leave") {
-    const rows = await LeaveRequest.find({
-      stationId,
-      startDate: { $lte: dateTo },
-      endDate: { $gte: dateFrom },
-    })
+    const filter = { stationId, startDate: { $lte: dateTo }, endDate: { $gte: dateFrom } };
+    await guardRowCount(LeaveRequest, filter);
+    const rows = await LeaveRequest.find(filter)
       .sort({ startDate: 1 })
       .lean();
 
@@ -201,10 +226,9 @@ async function gatherReportData(type, stationId, dateFrom, dateTo) {
   }
 
   if (type === "inventory") {
-    const rows = await InventoryTransaction.find({
-      stationId,
-      dateTime: { $gte: dateFrom, $lte: dateTo },
-    })
+    const filter = { stationId, dateTime: { $gte: dateFrom, $lte: dateTo } };
+    await guardRowCount(InventoryTransaction, filter);
+    const rows = await InventoryTransaction.find(filter)
       .populate("officerId", "fullName rankAndNumber")
       .sort({ dateTime: 1 })
       .lean();
@@ -237,10 +261,9 @@ async function gatherReportData(type, stationId, dateFrom, dateTo) {
   }
 
   if (type === "crime") {
-    const rows = await Complaint.find({
-      stationId,
-      dateOfIncident: { $gte: dateFrom, $lte: dateTo },
-    })
+    const filter = { stationId, dateOfIncident: { $gte: dateFrom, $lte: dateTo } };
+    await guardRowCount(Complaint, filter);
+    const rows = await Complaint.find(filter)
       .sort({ dateOfIncident: 1 })
       .lean();
 
@@ -317,6 +340,9 @@ async function generateReport(req, res) {
 
     return res.status(201).json(record.toJSON());
   } catch (err) {
+    if (err instanceof ReportRowLimitError) {
+      return res.status(400).json({ error: err.message });
+    }
     console.error("generateReport error:", err);
     return res.status(500).json({ error: "Could not generate report" });
   }
@@ -354,6 +380,9 @@ async function downloadReport(req, res) {
     res.setHeader("Content-Disposition", `attachment; filename="${safeName}.pdf"`);
     return res.send(pdfBuffer);
   } catch (err) {
+    if (err instanceof ReportRowLimitError) {
+      return res.status(400).json({ error: err.message });
+    }
     console.error("downloadReport error:", err);
     return res.status(500).json({ error: "Could not generate the report file" });
   }
