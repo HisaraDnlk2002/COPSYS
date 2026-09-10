@@ -180,6 +180,38 @@
   color: var(--color-warning);
 }
 
+.login-forgot-link {
+  display: block;
+  background: none;
+  border: none;
+  color: var(--color-primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  margin-top: var(--space-xs);
+  text-align: right;
+}
+
+.login-forgot-link:hover {
+  text-decoration: underline;
+}
+
+.login-card form .login-forgot-link {
+  text-align: center;
+  margin-top: var(--space-md);
+}
+
+.login-forgot-success {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  margin: var(--space-md) 0;
+}
+
 .login-error {
   color: var(--color-danger);
   background: var(--color-danger-bg);

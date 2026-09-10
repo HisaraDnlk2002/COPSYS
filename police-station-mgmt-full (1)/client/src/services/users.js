@@ -30,12 +30,13 @@ export async function getPersonnelStats() {
 
 export async function createUser(payload) {
   if (USE_DUMMY_DATA) {
-    const newUser = { id: `u${dummyUsers.length + 1}`, status: "active", ...payload };
+    const newUser = { id: `u${dummyUsers.length + 1}`, status: "active", ...payload, generatedPassword: "Dummy#1234" };
     dummyUsers.push(newUser);
     return Promise.resolve(newUser);
   }
   // Matches server/src/controllers/usersController.js -> POST /api/users
-  // Expects { fullName, rankAndNumber, department, role, password }
+  // Expects { fullName, rankAndNumber, department, role, phoneNumber, email, address }
+  // — no `password`, the server generates and returns one as `generatedPassword`.
   return api.post("/users", payload);
 }
 
@@ -61,13 +62,14 @@ export async function updateUserStatus(id, status) {
   return api.patch(`/users/${id}/status`, { status });
 }
 
-// Admin sets/reissues an officer's password. There's no self-service
-// "forgot password" flow by design — Admin hands out credentials.
-export async function resetPassword(id, password) {
+// Admin reissues an officer's password on the spot — the server
+// generates it and returns it once as `generatedPassword` for Admin to
+// relay. For the officer-initiated flow (Login page -> Admin approves ->
+// emailed to the officer, Admin never sees it), see
+// services/passwordResetRequests.js instead.
+export async function resetPassword(id) {
   if (USE_DUMMY_DATA) {
-    // Dummy mode has no real auth check against password, so this is a
-    // no-op that just confirms the call succeeded.
-    return Promise.resolve({ id, message: "Password updated (dummy mode)" });
+    return Promise.resolve({ id, generatedPassword: "Dummy#1234", message: "Password updated (dummy mode)" });
   }
-  return api.patch(`/users/${id}/password`, { password });
+  return api.patch(`/users/${id}/password`, {});
 }

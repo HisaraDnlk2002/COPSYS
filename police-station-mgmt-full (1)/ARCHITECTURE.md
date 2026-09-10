@@ -230,8 +230,21 @@ User
   rankAndNumber: string         // also login username
   department: string
   role: "admin" | "oic" | "duty_officer" | "inventory_officer" | "officer"
+  email: string                 // added for password-reset delivery; optional at the
+                                 // schema level (accounts created before this field
+                                 // existed have none), required on the "Register new
+                                 // Personnel" form going forward
   status: "active" | "disabled" | "pending"
   passwordHash: string
+  stationId: string
+
+PasswordResetRequest             // one row per "Forgot password?" click on Login
+  officerId: ref User
+  officerName, rankAndNumber: string   // denormalized for the Admin queue
+  status: "pending" | "fulfilled" | "rejected"
+  resolvedBy: ref User | null
+  resolvedByName: string
+  resolvedAt: date | null
   stationId: string
 
 LeaveBalance
@@ -417,8 +430,21 @@ POST   /api/auth/login                          public
 
 GET    /api/users/me                            any
 GET    /api/users                                admin
-POST   /api/users                                admin   (Register new Personnel)
+POST   /api/users                                admin   (Register new Personnel — password is generated
+                                                            server-side, returned once as `generatedPassword`;
+                                                            never typed by Admin)
+PATCH  /api/users/:id                            admin   (Edit User — name/department/role/phone/email/address)
 PATCH  /api/users/:id/status                     admin
+PATCH  /api/users/:id/password                   admin   (Reset Password button — generates + returns a new
+                                                            password once, same as creation)
+
+POST   /api/password-reset-requests             public  (Login page's "Forgot password?" — always responds
+                                                            the same way whether or not the account exists)
+GET    /api/password-reset-requests              admin   (queue on the Personnel page)
+PATCH  /api/password-reset-requests/:id/approve  admin   (generates a new password and emails it to the
+                                                            officer via Gmail SMTP — see server/src/utils/mailer.js;
+                                                            Admin never sees the password itself)
+PATCH  /api/password-reset-requests/:id/reject   admin
 
 GET    /api/leave-requests/mine                  any
 GET    /api/leave-requests                       oic     (approval queue - inline actions on OIC dashboard too)

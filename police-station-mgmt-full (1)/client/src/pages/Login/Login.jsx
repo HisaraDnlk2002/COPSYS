@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth";
 import { useLanguage } from "../../i18n/useLanguage";
+import { submitPasswordResetRequest } from "../../services/passwordResetRequests";
 import policeLogo from "../../assets/Sri_Lanka_Police_logo.svg.png";
 import "./Login.css";
 
@@ -10,6 +11,8 @@ export function LoginPage() {
   const navigate = useNavigate();
   const { language, setLanguage, t } = useLanguage();
 
+  const [mode, setMode] = useState("login"); // "login" | "forgot"
+
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -17,6 +20,45 @@ export function LoginPage() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const usernameRef = useRef(null);
+
+  const [forgotRank, setForgotRank] = useState("");
+  const [forgotSubmitting, setForgotSubmitting] = useState(false);
+  const [forgotSent, setForgotSent] = useState(false);
+  const [forgotError, setForgotError] = useState("");
+
+  function openForgotPassword() {
+    setForgotRank(username);
+    setForgotSent(false);
+    setForgotError("");
+    setMode("forgot");
+  }
+
+  function backToLogin() {
+    setMode("login");
+    setForgotSent(false);
+    setForgotError("");
+  }
+
+  async function handleForgotSubmit(e) {
+    e.preventDefault();
+    if (!forgotRank.trim()) {
+      setForgotError(t("login.fieldsRequired"));
+      return;
+    }
+    setForgotError("");
+    setForgotSubmitting(true);
+    try {
+      // Always resolves the same way whether or not that account exists
+      // — see submitPasswordResetRequest's comment — so this never
+      // branches on "found" vs "not found".
+      await submitPasswordResetRequest(forgotRank.trim());
+      setForgotSent(true);
+    } catch (err) {
+      setForgotError(err.message || t("login.forgotPasswordFailed"));
+    } finally {
+      setForgotSubmitting(false);
+    }
+  }
 
   function checkCapsLock(e) {
     // getModifierState isn't implemented on every browser/input event —
@@ -49,24 +91,90 @@ export function LoginPage() {
     }
   }
 
+  const languageToggle = (
+    <div className="login-language-toggle">
+      <button
+        type="button"
+        className={`language-btn${language === "en" ? " active" : ""}`}
+        onClick={() => setLanguage("en")}
+      >
+        English
+      </button>
+      <button
+        type="button"
+        className={`language-btn${language === "si" ? " active" : ""}`}
+        onClick={() => setLanguage("si")}
+      >
+        සිංහල
+      </button>
+    </div>
+  );
+
+  if (mode === "forgot") {
+    return (
+      <div className="login-page">
+        {languageToggle}
+        <div className="login-card">
+          <div className="login-logo-ring">
+            <img src={policeLogo} alt="Sri Lanka Police" className="login-logo" />
+          </div>
+          <h1 className="login-title">{t("login.forgotPasswordTitle")}</h1>
+
+          {forgotSent ? (
+            <>
+              <p className="login-forgot-success">{t("login.forgotPasswordSuccess")}</p>
+              <button type="button" className="login-button" onClick={backToLogin}>
+                {t("login.forgotPasswordBackToLogin")}
+              </button>
+            </>
+          ) : (
+            <form onSubmit={handleForgotSubmit} noValidate>
+              <p className="login-subtitle">{t("login.forgotPasswordSubtitle")}</p>
+
+              <div className="login-field">
+                <label htmlFor="forgot-rank">{t("login.rankNumber")}</label>
+                <div className="login-input-wrap">
+                  <svg className="login-input-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" strokeLinecap="round" strokeLinejoin="round" />
+                    <circle cx="12" cy="7" r="4" />
+                  </svg>
+                  <input
+                    id="forgot-rank"
+                    type="text"
+                    placeholder={t("login.rankNumberPlaceholder")}
+                    value={forgotRank}
+                    onChange={(e) => setForgotRank(e.target.value)}
+                    autoComplete="username"
+                    autoFocus
+                    required
+                  />
+                </div>
+              </div>
+
+              {forgotError && (
+                <p className="login-error" role="alert" aria-live="polite">
+                  {forgotError}
+                </p>
+              )}
+
+              <button className="login-button" type="submit" disabled={forgotSubmitting}>
+                {forgotSubmitting && <span className="login-spinner" aria-hidden="true" />}
+                {forgotSubmitting ? t("login.forgotPasswordSubmitting") : t("login.forgotPasswordSubmit")}
+              </button>
+
+              <button type="button" className="login-forgot-link" onClick={backToLogin}>
+                {t("login.forgotPasswordBackToLogin")}
+              </button>
+            </form>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="login-page">
-      <div className="login-language-toggle">
-        <button
-          type="button"
-          className={`language-btn${language === "en" ? " active" : ""}`}
-          onClick={() => setLanguage("en")}
-        >
-          English
-        </button>
-        <button
-          type="button"
-          className={`language-btn${language === "si" ? " active" : ""}`}
-          onClick={() => setLanguage("si")}
-        >
-          සිංහල
-        </button>
-      </div>
+      {languageToggle}
 
       <form className="login-card" onSubmit={handleSubmit} noValidate>
         <div className="login-logo-ring">
@@ -136,6 +244,10 @@ export function LoginPage() {
             </button>
           </div>
           {capsLockOn && <p className="login-caps-warning">⚠ {t("login.capsLockWarning")}</p>}
+
+          <button type="button" className="login-forgot-link" onClick={openForgotPassword}>
+            {t("login.forgotPasswordLink")}
+          </button>
         </div>
 
         {error && (

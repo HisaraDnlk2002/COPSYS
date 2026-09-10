@@ -1,6 +1,7 @@
 const bcrypt = require("bcryptjs");
 const User = require("../models/User");
 const LeaveBalance = require("../models/LeaveBalance");
+const { generatePassword } = require("../utils/passwordGenerator");
 
 // GET /api/users/me — any authenticated user reads their own profile
 async function getMe(req, res) {
@@ -31,7 +32,10 @@ const VALID_ROLES = ["admin", "oic", "duty_officer", "inventory_officer", "offic
 
 // POST /api/users — admin only, registers a new officer
 // Matches the "Register new Personnel" form: full name, rank & number,
-// department, role, phone number, address, plus a password to set their login.
+// department, role, phone number, email, address. The password is no
+// longer typed by Admin — it's generated here and returned once in the
+// response for the "Account Created" screen to display (see
+// generatePassword's comment for why it's never chosen by a person).
 async function createUser(req, res) {
   const {
     fullName,
@@ -39,13 +43,13 @@ async function createUser(req, res) {
     department,
     role,
     phoneNumber,
+    email,
     address,
-    password,
     emergencyContactName,
     emergencyContactPhone,
   } = req.body;
 
-  if (!fullName || !rankAndNumber || !department || !role || !phoneNumber || !address || !password) {
+  if (!fullName || !rankAndNumber || !department || !role || !phoneNumber || !email || !address) {
     return res.status(400).json({ error: "All fields are required" });
   }
 
@@ -66,7 +70,8 @@ async function createUser(req, res) {
       }
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
+    const generatedPassword = generatePassword();
+    const passwordHash = await bcrypt.hash(generatedPassword, 10);
 
     const user = await User.create({
       fullName,
@@ -74,6 +79,7 @@ async function createUser(req, res) {
       department,
       role,
       phoneNumber,
+      email,
       address,
       emergencyContactName,
       emergencyContactPhone,
@@ -85,7 +91,7 @@ async function createUser(req, res) {
     // Starting leave balance — defaults from architecture doc, adjust later if needed
     await LeaveBalance.create({ officerId: user._id });
 
-    return res.status(201).json(user.toJSON());
+    return res.status(201).json({ ...user.toJSON(), generatedPassword });
   } catch (err) {
     console.error("createUser error:", err);
     return res.status(500).json({ error: "Could not create personnel account" });
@@ -101,7 +107,7 @@ async function createUser(req, res) {
 // action next to "View More" on the Personnel & User Management page.
 async function updateUser(req, res) {
   const { id } = req.params;
-  const { fullName, department, role, phoneNumber, address, emergencyContactName, emergencyContactPhone } = req.body;
+  const { fullName, department, role, phoneNumber, email, address, emergencyContactName, emergencyContactPhone } = req.body;
 
   if (role && !VALID_ROLES.includes(role)) {
     return res.status(400).json({ error: "Invalid role" });
@@ -112,6 +118,7 @@ async function updateUser(req, res) {
   if (department !== undefined) updates.department = department;
   if (role !== undefined) updates.role = role;
   if (phoneNumber !== undefined) updates.phoneNumber = phoneNumber;
+  if (email !== undefined) updates.email = email;
   if (address !== undefined) updates.address = address;
   if (emergencyContactName !== undefined) updates.emergencyContactName = emergencyContactName;
   if (emergencyContactPhone !== undefined) updates.emergencyContactPhone = emergencyContactPhone;
@@ -163,26 +170,27 @@ async function updateUserStatus(req, res) {
   }
 }
 
-// PATCH /api/users/:id/password — admin only, sets/resets an officer's
-// password. Admin issues the password at creation time (see createUser)
-// and can reissue it later if an officer forgets theirs — there's no
-// self-service "forgot password" flow, by design: Admin is the one who
-// hands out credentials per the station's process.
+// PATCH /api/users/:id/password — admin only, resets an officer's
+// password on the spot (Admin clicks "Reset Password" in the Personnel
+// list — e.g. an officer forgot theirs and asked in person/by phone
+// rather than through the self-service request queue). Generates a new
+// password the same way createUser and the approved forgot-password flow
+// do, and returns it once for Admin to relay directly.
+//
+// This is distinct from the self-service flow in
+// passwordResetRequestsController.js: that one is officer-initiated from
+// the Login page and the new password is emailed, never shown to Admin.
 async function resetPassword(req, res) {
   const { id } = req.params;
-  const { password } = req.body;
-
-  if (!password || password.length < 6) {
-    return res.status(400).json({ error: "Password must be at least 6 characters" });
-  }
 
   try {
-    const passwordHash = await bcrypt.hash(password, 10);
+    const generatedPassword = generatePassword();
+    const passwordHash = await bcrypt.hash(generatedPassword, 10);
     const user = await User.findByIdAndUpdate(id, { passwordHash }, { new: true });
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
-    return res.json({ id: user._id, message: "Password updated" });
+    return res.json({ id: user._id, generatedPassword, message: "Password updated" });
   } catch (err) {
     console.error("resetPassword error:", err);
     return res.status(500).json({ error: "Could not reset password" });

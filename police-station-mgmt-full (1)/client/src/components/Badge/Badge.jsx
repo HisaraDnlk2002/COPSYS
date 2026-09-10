@@ -17,6 +17,7 @@ const STATUS_TONE = {
   closed: "danger",
    complete: "success",
   archived: "neutral",
+  fulfilled: "success",
 
   // Inventory item/transaction vocabulary (Inventory + Weapon Management)
   available: "success",
