@@ -344,7 +344,7 @@ export function ComplaintsPage() {
               <div className="field-full">
                 <InputField label={t("complaints.detailedDescription")} type="textarea" required value={form.description}
                   onChange={(e) => updateField("description", e.target.value)} placeholder={t("complaints.descriptionPlaceholder")}
-                  voiceInput />
+                  voiceInput sinhalaTyping />
               </div>
             </div>
 

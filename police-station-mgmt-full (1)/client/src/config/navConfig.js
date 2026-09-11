@@ -2,7 +2,7 @@
 export const navItemsByRole = {
   admin: [
     { key: "dashboard", label: "Dashboard", path: "/dashboard" },
-    { key: "personnel", label: "Personnel & User Managment", path: "/personnel" },
+    { key: "personnel", label: "Personnel & User Management", path: "/personnel" },
     { key: "leave", label: "Leave Requests", path: "/leave" },
     { key: "complaints", label: "Complaints registry", path: "/complaints" },
     { key: "reports", label: "Reports", path: "/reports" },

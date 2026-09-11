@@ -194,6 +194,8 @@ export function DailyDutyUpdate() {
           value={reason}
           onChange={(e) => setReason(e.target.value)}
           placeholder={t("dutyRoster.daily.reasonPlaceholder")}
+          voiceInput
+          sinhalaTyping
         />
 
         <label style={{ display: "flex", alignItems: "center", gap: 8, margin: "12px 0" }}>

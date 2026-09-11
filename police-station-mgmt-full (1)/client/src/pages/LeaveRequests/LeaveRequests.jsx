@@ -325,6 +325,8 @@ export function LeaveRequestsPage() {
                 onChange={(e) => updateField("justification", e.target.value)}
                 placeholder={t("leave.justificationPlaceholder")}
                 helperText={needsLongJustification ? `${wordCount(form.justification)} / 30 ${t("leave.wordsMinimum")}` : undefined}
+                voiceInput
+                sinhalaTyping
               />
             </div>
 
@@ -471,6 +473,8 @@ export function LeaveRequestsPage() {
           value={rejectRemarks}
           onChange={(e) => setRejectRemarks(e.target.value)}
           placeholder={t("leave.reasonForRejectionPlaceholder")}
+          voiceInput
+          sinhalaTyping
         />
       </Modal>
 

@@ -4,7 +4,7 @@
     logout: "Logout",
     nav: {
       dashboard: "Dashboard",
-      personnel: "Personnel & User Managment",
+      personnel: "Personnel & User Management",
       leave: "Leave Requests",
       complaints: "Complaints registry",
       "audit-log": "Activity Log",
@@ -361,7 +361,7 @@
       cancel: "Cancel",
       saving: "Saving…",
       saveOfficerDetails: "Save Officer Details",
-      pageTitle: "Personnel & User Managment",
+      pageTitle: "Personnel & User Management",
       addNewUser: "ADD NEW USER",
       subtitle: "Manage Station Officer access roles, Department Assignment, and System Status",
       totalPersonnel: "Total Personnel",

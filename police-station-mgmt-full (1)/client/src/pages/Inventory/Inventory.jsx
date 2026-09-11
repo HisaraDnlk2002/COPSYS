@@ -1198,6 +1198,8 @@ export function InventoryPage() {
                   value={maintenanceForm.remarks}
                   readOnly={managingRecord.status === "completed"}
                   onChange={(e) => setMaintenanceForm((f) => ({ ...f, remarks: e.target.value }))}
+                  voiceInput
+                  sinhalaTyping
                 />
               </div>
             </div>
@@ -1289,6 +1291,8 @@ export function InventoryPage() {
                   value={inspectionForm.findings}
                   onChange={(e) => setInspectionForm((f) => ({ ...f, findings: e.target.value }))}
                   placeholder={t("inventory.findingsPlaceholder")}
+                  voiceInput
+                  sinhalaTyping
                 />
               </div>
               <div className="field-full">
@@ -1299,6 +1303,8 @@ export function InventoryPage() {
                   value={inspectionForm.damageIssues}
                   onChange={(e) => setInspectionForm((f) => ({ ...f, damageIssues: e.target.value }))}
                   placeholder={t("inventory.damageIssuesPlaceholder")}
+                  voiceInput
+                  sinhalaTyping
                 />
               </div>
               <InputField
@@ -1326,6 +1332,8 @@ export function InventoryPage() {
                   rows={2}
                   value={inspectionForm.remarks}
                   onChange={(e) => setInspectionForm((f) => ({ ...f, remarks: e.target.value }))}
+                  voiceInput
+                  sinhalaTyping
                 />
               </div>
             </div>
@@ -1358,6 +1366,8 @@ export function InventoryPage() {
           value={missingRemarks}
           onChange={(e) => setMissingRemarks(e.target.value)}
           placeholder={t("inventory.reportMissingPlaceholder")}
+          voiceInput
+          sinhalaTyping
         />
         {missingError && <p style={{ color: "var(--color-danger)", marginTop: 12 }}>{missingError}</p>}
       </Modal>
@@ -1396,6 +1406,8 @@ export function InventoryPage() {
           rows={3}
           value={alertRemarks}
           onChange={(e) => setAlertRemarks(e.target.value)}
+          voiceInput
+          sinhalaTyping
         />
         {alertError && <p style={{ color: "var(--color-danger)", marginTop: 12 }}>{alertError}</p>}
       </Modal>

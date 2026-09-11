@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth";
 import { useLanguage } from "../../i18n/useLanguage";
@@ -31,14 +31,18 @@ export function NotificationBell() {
   const stationWide = STATION_WIDE_ROLES.includes(user?.role);
   const eligible = ELIGIBLE_ROLES.includes(user?.role);
 
-  function load() {
+  // Memoized so this effect only re-runs when eligibility/scope actually
+  // change, not on every render (a plain function here would be a new
+  // reference each time, and satisfying exhaustive-deps with that would
+  // mean re-fetching on every re-render instead of just on mount/role change).
+  const load = useCallback(() => {
     const request = stationWide ? getAlerts() : getMyAlerts();
     request.then((res) => setAlerts(res || [])).catch((err) => console.error("Failed to load alerts:", err));
-  }
+  }, [stationWide]);
 
   useEffect(() => {
     if (eligible) load();
-  }, [eligible, stationWide]);
+  }, [eligible, load]);
 
   useEffect(() => {
     function handleClickOutside(e) {

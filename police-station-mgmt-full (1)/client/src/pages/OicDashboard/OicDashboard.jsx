@@ -183,6 +183,8 @@ export function OicDashboardPage() {
           value={rejectRemarks}
           onChange={(e) => setRejectRemarks(e.target.value)}
           placeholder={t("oic.reasonForRejectionPlaceholder")}
+          voiceInput
+          sinhalaTyping
         />
       </Modal>
     </div>

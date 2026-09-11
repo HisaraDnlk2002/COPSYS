@@ -404,6 +404,8 @@ export function DutyRosterPage() {
           value={sendBackReason}
           onChange={(e) => setSendBackReason(e.target.value)}
           placeholder={t("dutyRoster.reasonPlaceholder")}
+          voiceInput
+          sinhalaTyping
         />
       </Modal>
         </>

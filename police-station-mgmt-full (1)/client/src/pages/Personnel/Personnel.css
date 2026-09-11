@@ -74,6 +74,19 @@
   text-decoration: underline;
 }
 
+.personnel-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  margin-top: var(--space-md);
+}
+
+.personnel-pagination-label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
 .personnel-badge-count {
   display: inline-flex;
   align-items: center;

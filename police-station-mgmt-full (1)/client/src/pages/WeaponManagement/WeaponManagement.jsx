@@ -306,6 +306,8 @@ export function WeaponManagementPage() {
           value={confirmRemarks}
           onChange={(e) => setConfirmRemarks(e.target.value)}
           placeholder={t("weaponManagement.confirmRemarksPlaceholder")}
+          voiceInput
+          sinhalaTyping
         />
         {confirmError && <p style={{ color: "var(--color-danger)", marginTop: 12 }}>{confirmError}</p>}
       </Modal>
@@ -343,6 +345,8 @@ export function WeaponManagementPage() {
           rows={3}
           value={alertRemarks}
           onChange={(e) => setAlertRemarks(e.target.value)}
+          voiceInput
+          sinhalaTyping
         />
         {alertError && <p style={{ color: "var(--color-danger)", marginTop: 12 }}>{alertError}</p>}
       </Modal>

@@ -28,6 +28,7 @@ function sanitizeName(value) {
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PAGE_SIZE = 15;
 
 const EMPTY_FORM = {
   fullName: "",
@@ -71,6 +72,11 @@ export function PersonnelPage() {
   const [stats, setStats] = useState(null);
   const [users, setUsers] = useState([]);
   const [search, setSearch] = useState("");
+  // Rendering the entire personnel roster into one table meant endless
+  // scrolling on a station with more than a handful of officers — page
+  // through it instead, same pattern as the Audit Log and Reports ledger.
+  const [page, setPage] = useState(1);
+  const [requestsPage, setRequestsPage] = useState(1);
 
   const [form, setForm] = useState(EMPTY_FORM);
   const [formError, setFormError] = useState("");
@@ -280,6 +286,18 @@ export function PersonnelPage() {
 
   const pendingRequestCount = resetRequests.filter((r) => r.status === "pending").length;
 
+  // Clamp rather than reset via effect — a shrinking result set (a
+  // search narrowing the list, or a row being disabled/edited away)
+  // just falls back to the last valid page instead of needing an extra
+  // render/effect round-trip.
+  const totalPages = Math.max(Math.ceil(filteredUsers.length / PAGE_SIZE), 1);
+  const safePage = Math.min(page, totalPages);
+  const pagedUsers = filteredUsers.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  const requestsTotalPages = Math.max(Math.ceil(resetRequests.length / PAGE_SIZE), 1);
+  const safeRequestsPage = Math.min(requestsPage, requestsTotalPages);
+  const pagedResetRequests = resetRequests.slice((safeRequestsPage - 1) * PAGE_SIZE, safeRequestsPage * PAGE_SIZE);
+
   const columns = [
     { key: "fullName", label: t("personnel.colOfficerName") },
     { key: "rankAndNumber", label: t("personnel.colRankNo") },
@@ -408,7 +426,20 @@ export function PersonnelPage() {
         <p className="personnel-subtitle">{t("personnel.resetRequestsSubtitle")}</p>
 
         <Card variant="panel">
-          <Table columns={requestColumns} data={resetRequests} emptyMessage={t("personnel.noResetRequests")} />
+          <Table columns={requestColumns} data={pagedResetRequests} emptyMessage={t("personnel.noResetRequests")} />
+          {requestsTotalPages > 1 && (
+            <div className="personnel-pagination">
+              <Button variant="outline" disabled={safeRequestsPage <= 1} onClick={() => setRequestsPage(safeRequestsPage - 1)}>
+                {t("reports.prevPage")}
+              </Button>
+              <span className="personnel-pagination-label">
+                {t("reports.pageOf").replace("{page}", safeRequestsPage).replace("{total}", requestsTotalPages)}
+              </span>
+              <Button variant="outline" disabled={safeRequestsPage >= requestsTotalPages} onClick={() => setRequestsPage(safeRequestsPage + 1)}>
+                {t("reports.nextPage")}
+              </Button>
+            </div>
+          )}
         </Card>
       </div>
     );
@@ -441,12 +472,28 @@ export function PersonnelPage() {
         className="personnel-search"
         placeholder={t("personnel.searchPlaceholder")}
         value={search}
-        onChange={(e) => setSearch(e.target.value)}
+        onChange={(e) => {
+          setSearch(e.target.value);
+          setPage(1);
+        }}
         style={{ marginBottom: 16, width: "100%", boxSizing: "border-box" }}
       />
 
       <Card variant="panel">
-        <Table columns={columns} data={filteredUsers} emptyMessage={t("personnel.noPersonnelFound")} />
+        <Table columns={columns} data={pagedUsers} emptyMessage={t("personnel.noPersonnelFound")} />
+        {totalPages > 1 && (
+          <div className="personnel-pagination">
+            <Button variant="outline" disabled={safePage <= 1} onClick={() => setPage(safePage - 1)}>
+              {t("reports.prevPage")}
+            </Button>
+            <span className="personnel-pagination-label">
+              {t("reports.pageOf").replace("{page}", safePage).replace("{total}", totalPages)}
+            </span>
+            <Button variant="outline" disabled={safePage >= totalPages} onClick={() => setPage(safePage + 1)}>
+              {t("reports.nextPage")}
+            </Button>
+          </div>
+        )}
       </Card>
 
       <Modal

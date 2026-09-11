@@ -55,18 +55,89 @@ textarea.field-control {
   color: var(--color-text-muted);
 }
 
-.field-with-voice {
+.field-with-tools {
   position: relative;
 }
 
-.field-with-voice .field-control {
-  padding-right: 42px;
+/* Reserves room for whichever combination of tools (Sinhala typing
+   toggle, voice controls) a given field actually renders — sized for
+   both at once so the two features never have to fight over space when
+   a field opts into them together. */
+.field-with-tools .field-control {
+  padding-right: 132px;
+}
+
+.field-tool-controls {
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.field-sinhala-btn {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.field-sinhala-btn:hover {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+}
+
+.field-sinhala-btn.active {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.field-voice-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.field-voice-lang-toggle {
+  display: flex;
+  gap: 2px;
+  background: var(--color-surface-muted);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+}
+
+.field-voice-lang-btn {
+  border: none;
+  background: transparent;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.field-voice-lang-btn.active {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.field-voice-lang-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .field-voice-btn {
-  position: absolute;
-  top: 10px;
-  right: 10px;
   width: 26px;
   height: 26px;
   display: flex;

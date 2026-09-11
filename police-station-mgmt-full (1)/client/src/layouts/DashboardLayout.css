@@ -11,6 +11,16 @@
   padding: 14px var(--space-xl);
   border-bottom: 1px solid var(--color-border);
   background: var(--color-bg);
+  /* Pinned alongside the fixed sidebar, for the same reason — it stays
+     in view (notifications, language toggle, logout access via the
+     sidebar) no matter how far the page content scrolls. */
+  position: fixed;
+  top: 0;
+  left: 248px;
+  right: 0;
+  height: 64px;
+  box-sizing: border-box;
+  z-index: 20; /* above ordinary page content and the fixed sidebar (10), below Modal (100) and the mobile sidebar/backdrop (200/150) */
 }
 
 .topbar-brand-group {
@@ -96,7 +106,17 @@
   flex-direction: column;
   justify-content: space-between;
   padding: var(--space-lg) var(--space-md);
-  min-height: 100vh;
+  /* Pinned to the viewport so it (and Logout at its bottom) stay in
+     view regardless of how far the page content scrolls — only
+     .main-content scrolls now, the sidebar no longer does. */
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100vh;
+  overflow-y: auto;
+  background: var(--color-bg);
+  z-index: 10; /* stays below Modal (z-index: 100) so dialogs always paint above the fixed sidebar */
+  box-sizing: border-box;
 }
 
 .sidebar-nav {
@@ -146,6 +166,8 @@
   min-width: 0; /* let a flex child actually shrink instead of forcing horizontal overflow */
   display: flex;
   flex-direction: column;
+  margin-left: 248px; /* offsets the now-fixed .sidebar; overridden back to 0 on mobile, where the sidebar is off-canvas instead */
+  padding-top: 64px; /* reserves space for the now-fixed .topbar, which no longer takes up room in normal flow */
 }
 
 .page-body {
@@ -179,9 +201,6 @@
   }
 
   .sidebar {
-    position: fixed;
-    top: 0;
-    left: 0;
     z-index: 200;
     width: 248px;
     transform: translateX(-100%);
@@ -191,6 +210,14 @@
 
   .sidebar.open {
     transform: translateX(0);
+  }
+
+  .main-content {
+    margin-left: 0; /* the sidebar is off-canvas here, not a fixed rail */
+  }
+
+  .topbar {
+    left: 0; /* spans full width here, since there's no fixed sidebar rail to offset */
   }
 
   .sidebar-backdrop {
