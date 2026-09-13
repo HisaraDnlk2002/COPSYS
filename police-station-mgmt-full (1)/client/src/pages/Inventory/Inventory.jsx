@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth";
 import { useLanguage } from "../../i18n/useLanguage";
-import { Button, InputField, Card, StatCard, Table, Loader, Modal, SearchableSelect, Badge } from "../../components";
+import { Button, InputField, Card, StatCard, Table, Loader, Modal, SearchableSelect, Badge, Pagination } from "../../components";
 import {
   getInventoryStats,
   getInventoryItems,
@@ -34,6 +35,17 @@ function formatDateTime(value) {
   return `${formatDate(value)} ${value.slice(11, 16)}`;
 }
 
+// Slices a filtered list down to one page and clamps the requested page
+// number to whatever's actually valid for that list's current length —
+// same "falls back to the last valid page" convention as
+// Personnel/AuditLog/Complaints, just reusable here across this page's
+// several tables instead of one.
+function paginate(list, pageNum) {
+  const totalPages = Math.max(Math.ceil(list.length / PAGE_SIZE), 1);
+  const safePage = Math.min(pageNum, totalPages);
+  return { items: list.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE), totalPages, safePage };
+}
+
 // Same lookup as the shared officer search, but labeled by Rank &
 // Number instead of phone number — that's the officer's actual ID
 // elsewhere in this app (login username, Personnel table), so it's the
@@ -51,9 +63,15 @@ const EMPTY_ISSUE_FORM = { officer: null, item: null, quantity: "", deploymentDa
 const EMPTY_RETURN_FORM = { officer: null, item: null, quantity: "", returnDate: "", condition: "", ammoIssued: "", ammoReturned: "" };
 const EMPTY_ADD_FORM = { weaponSerialId: "", quantity: "", weaponType: "", category: "" };
 
+// Rendering a whole tab's table in one go meant endless scrolling once a
+// station has more than a handful of records — page through the
+// filtered results instead, same pattern as Personnel/AuditLog/Complaints.
+const PAGE_SIZE = 15;
+
 export function InventoryPage() {
   const { user } = useAuth();
   const { t } = useLanguage();
+  const location = useLocation();
   const canManage = user?.role === "inventory_officer";
 
   // No standalone "Damaged" tab — damaged-type transactions still get
@@ -89,12 +107,22 @@ export function InventoryPage() {
   const [submitting, setSubmitting] = useState(false);
   const [modalError, setModalError] = useState("");
 
-  const [search, setSearch] = useState("");
+  // GlobalSearch (topbar) lands here with { state: { searchTerm } } so an
+  // Inventory hit jumps straight to a pre-filtered list.
+  const [search, setSearch] = useState(location.state?.searchTerm || "");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [typeFilter, setTypeFilter] = useState("all"); // "all" | "issue" | "return" | "damaged" — only used on the "ledger" tab
   const [priorityFilter, setPriorityFilter] = useState("all"); // "all" | "critical" | "warning" | "info" — only used on the "alerts" tab
   const [alertStatusFilter, setAlertStatusFilter] = useState("all"); // "all" | "new" | "acknowledged" | "action_taken" | "resolved"
+  // Only one tab's table is ever visible at once, so one page number
+  // covers all of them — reset to 1 on every tab switch (see the tab
+  // button's onClick below) so a stale page from a longer table doesn't
+  // carry over into a shorter one. inspectionHistoryPage is separate
+  // because the "inspections" tab is the one place with two tables at
+  // once (due-for-inspection + history) sharing a single tab.
+  const [page, setPage] = useState(1);
+  const [inspectionHistoryPage, setInspectionHistoryPage] = useState(1);
 
   // The maintenance record currently open in the manage modal, or null.
   // Its own fields double as the form state (editing this object
@@ -582,6 +610,14 @@ export function InventoryPage() {
   const openAlertsCount = alerts.filter((a) => a.status !== "resolved").length;
   const criticalAlertsCount = alerts.filter((a) => a.priority === "critical" && a.status !== "resolved").length;
 
+  const itemsPage = paginate(filteredItems, page);
+  const issueTxPage = paginate(filteredIssueTx, page);
+  const returnTxPage = paginate(filteredReturnTx, page);
+  const ledgerTxPage = paginate(filteredLedgerTx, page);
+  const maintenancePage = paginate(filteredMaintenanceRecords, page);
+  const inspectionHistoryPageData = paginate(filteredInspectionRecords, inspectionHistoryPage);
+  const alertsPage = paginate(filteredAlerts, page);
+
   const filtersActive = Boolean(
     search.trim() || dateFrom || dateTo || typeFilter !== "all" || priorityFilter !== "all" || alertStatusFilter !== "all"
   );
@@ -836,7 +872,11 @@ export function InventoryPage() {
           <button
             key={tab.key}
             className={`inventory-tab${activeTab === tab.key ? " active" : ""}`}
-            onClick={() => setActiveTab(tab.key)}
+            onClick={() => {
+              setActiveTab(tab.key);
+              setPage(1);
+              setInspectionHistoryPage(1);
+            }}
           >
             {tab.label}
           </button>
@@ -914,7 +954,8 @@ export function InventoryPage() {
           <>
             <p className="inventory-ledger-title">{t("inventory.equipmentLedgerTitle")}</p>
             <p className="inventory-ledger-subtitle">{t("inventory.equipmentLedgerSubtitle")}</p>
-            <Table columns={ledgerColumns} data={filteredItems} emptyMessage={t("inventory.noInventoryItems")} />
+            <Table columns={ledgerColumns} data={itemsPage.items} emptyMessage={t("inventory.noInventoryItems")} />
+            <Pagination page={itemsPage.safePage} totalPages={itemsPage.totalPages} onPageChange={setPage} />
             <div className="inventory-footer-row">
               <span>{t("inventory.showingItems")} {filteredItems.length} / {stats?.totalAssets ?? items.length} {t("inventory.ofItemsRegistered")}</span>
             </div>
@@ -925,7 +966,8 @@ export function InventoryPage() {
           <>
             <p className="inventory-ledger-title">{t("inventory.issuingLogTitle")}</p>
             <p className="inventory-ledger-subtitle">{t("inventory.issuingLogSubtitle")}</p>
-            <Table columns={issueColumns} data={filteredIssueTx} emptyMessage={t("inventory.noItemsIssued")} />
+            <Table columns={issueColumns} data={issueTxPage.items} emptyMessage={t("inventory.noItemsIssued")} />
+            <Pagination page={issueTxPage.safePage} totalPages={issueTxPage.totalPages} onPageChange={setPage} />
           </>
         )}
 
@@ -933,7 +975,8 @@ export function InventoryPage() {
           <>
             <p className="inventory-ledger-title">{t("inventory.returnedLogTitle")}</p>
             <p className="inventory-ledger-subtitle">{t("inventory.returnedLogSubtitle")}</p>
-            <Table columns={returnColumns} data={filteredReturnTx} emptyMessage={t("inventory.noReturnsRecorded")} />
+            <Table columns={returnColumns} data={returnTxPage.items} emptyMessage={t("inventory.noReturnsRecorded")} />
+            <Pagination page={returnTxPage.safePage} totalPages={returnTxPage.totalPages} onPageChange={setPage} />
           </>
         )}
 
@@ -941,7 +984,8 @@ export function InventoryPage() {
           <>
             <p className="inventory-ledger-title">{t("inventory.auditLedgerTitle")}</p>
             <p className="inventory-ledger-subtitle">{t("inventory.auditLedgerSubtitle")}</p>
-            <Table columns={ledgerTxColumns} data={filteredLedgerTx} emptyMessage={t("inventory.noLedgerEntries")} />
+            <Table columns={ledgerTxColumns} data={ledgerTxPage.items} emptyMessage={t("inventory.noLedgerEntries")} />
+            <Pagination page={ledgerTxPage.safePage} totalPages={ledgerTxPage.totalPages} onPageChange={setPage} />
             <div className="inventory-footer-row">
               <span>{t("inventory.showingItems")} {filteredLedgerTx.length} / {allTx.length} {t("inventory.ofEntriesTotal")}</span>
             </div>
@@ -952,7 +996,8 @@ export function InventoryPage() {
           <>
             <p className="inventory-ledger-title">{t("inventory.maintenanceTitle")}</p>
             <p className="inventory-ledger-subtitle">{t("inventory.maintenanceSubtitle")}</p>
-            <Table columns={maintenanceColumns} data={filteredMaintenanceRecords} emptyMessage={t("inventory.noMaintenanceRecords")} />
+            <Table columns={maintenanceColumns} data={maintenancePage.items} emptyMessage={t("inventory.noMaintenanceRecords")} />
+            <Pagination page={maintenancePage.safePage} totalPages={maintenancePage.totalPages} onPageChange={setPage} />
           </>
         )}
 
@@ -967,7 +1012,8 @@ export function InventoryPage() {
             <Table columns={dueInspectionColumns} data={inspectableItems} emptyMessage={t("inventory.noInspectableItems")} />
 
             <h3 className="section-label">{t("inventory.inspectionHistoryTitle")}</h3>
-            <Table columns={inspectionHistoryColumns} data={filteredInspectionRecords} emptyMessage={t("inventory.noInspectionRecords")} />
+            <Table columns={inspectionHistoryColumns} data={inspectionHistoryPageData.items} emptyMessage={t("inventory.noInspectionRecords")} />
+            <Pagination page={inspectionHistoryPageData.safePage} totalPages={inspectionHistoryPageData.totalPages} onPageChange={setInspectionHistoryPage} />
           </>
         )}
 
@@ -979,7 +1025,8 @@ export function InventoryPage() {
               <span className="inventory-inspection-stat inventory-inspection-stat-danger">{criticalAlertsCount} {t("inventory.priorityCritical")}</span>
               <span className="inventory-inspection-stat inventory-inspection-stat-warning">{openAlertsCount} {t("inventory.openAlerts")}</span>
             </div>
-            <Table columns={alertColumns} data={filteredAlerts} emptyMessage={t("inventory.noAlerts")} />
+            <Table columns={alertColumns} data={alertsPage.items} emptyMessage={t("inventory.noAlerts")} />
+            <Pagination page={alertsPage.safePage} totalPages={alertsPage.totalPages} onPageChange={setPage} />
           </>
         )}
       </Card>

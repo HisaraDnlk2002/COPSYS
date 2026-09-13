@@ -1,3 +1,5 @@
+const fs = require("fs");
+const path = require("path");
 const LeaveRequest = require("../models/LeaveRequest");
 const LeaveBalance = require("../models/LeaveBalance");
 const User = require("../models/User");
@@ -5,6 +7,10 @@ const DutySchedule = require("../models/DutySchedule");
 const DutyRosterWeek = require("../models/DutyRosterWeek");
 const DailyDutyChange = require("../models/DailyDutyChange");
 const { suggestReplacements } = require("../services/dutyAllocationEngine");
+const { logAuditForActor } = require("../utils/auditLogger");
+const { UPLOAD_DIR } = require("../middleware/leaveDoctorNoteUpload");
+const { ensureYearBalance } = require("../utils/leaveBalanceRenewal");
+const { generateAlert } = require("../utils/alerts");
 
 function daysBetween(start, end) {
   const ms = new Date(end) - new Date(start);
@@ -38,13 +44,18 @@ async function listAll(req, res) {
   }
 }
 
-// POST /api/leave-requests — any authenticated user, applies for leave
-// Enforces the rules from the "Submission Rules" panel in the mockup:
-//   - Annual leave over 5 days needs >= 30 words of justification
-//   - (Medical cert + 48hr advance notice are noted but not hard-enforced
-//     here yet — flagged as TODO since they need file upload / clock checks)
+// POST /api/leave-requests — any authenticated user, applies for leave.
+// multipart/form-data (not plain JSON) so a medical application can
+// attach its doctor's note in the same request — see
+// leaveDoctorNoteUpload.js. Enforces the rules from the "Submission
+// Rules" panel in the mockup:
+//   - Personal leave over 5 days needs >= 30 words of justification
+//   - Medical leave needs at least one doctor's note / medical
+//     certificate attached, and has no balance cap at all
+//   - (48hr advance notice is noted but not hard-enforced here yet)
 async function create(req, res) {
   const { leaveType, startDate, endDate, justification, actingOfficerId, emergencyContact } = req.body;
+  const files = req.files || [];
 
   if (!leaveType || !startDate || !endDate) {
     return res.status(400).json({ error: "Leave type, start date and end date are required" });
@@ -55,21 +66,33 @@ async function create(req, res) {
     return res.status(400).json({ error: "End date must be on or after start date" });
   }
 
-  if (leaveType === "annual" && days > 5) {
+  if (leaveType === "personal" && days > 5) {
     const wordCount = (justification || "").trim().split(/\s+/).filter(Boolean).length;
     if (wordCount < 30) {
       return res.status(400).json({
-        error: "Annual leave over 5 days requires at least 30 words in the justification",
+        error: "Personal leave over 5 days requires at least 30 words in the justification",
       });
     }
   }
 
+  if (leaveType === "medical" && files.length === 0) {
+    return res.status(400).json({
+      error: "Medical leave requires at least one doctor's note or medical certificate attached",
+    });
+  }
+
   try {
-    const balance = await LeaveBalance.findOne({ officerId: req.user.uid });
-    if (balance && balance[leaveType] < days) {
-      return res.status(400).json({
-        error: `Insufficient ${leaveType} leave balance (have ${balance[leaveType]}, need ${days})`,
-      });
+    // Medical leave has no cap at all — only personal/casual are ever
+    // checked against the officer's remaining balance, and against
+    // whichever year the leave itself actually falls in (auto-renewed
+    // the first time it's touched — see ensureYearBalance).
+    if (leaveType !== "medical") {
+      const balance = await ensureYearBalance(req.user.uid, new Date(startDate).getFullYear());
+      if (balance[leaveType] < days) {
+        return res.status(400).json({
+          error: `Insufficient ${leaveType} leave balance (have ${balance[leaveType]}, need ${days})`,
+        });
+      }
     }
 
     const officer = await User.findById(req.user.uid);
@@ -83,15 +106,69 @@ async function create(req, res) {
       endDate,
       days,
       justification,
+      doctorNote: files.map((f) => ({
+        filename: f.filename,
+        originalName: f.originalname,
+        mimeType: f.mimetype,
+        size: f.size,
+      })),
       actingOfficerId: actingOfficerId || null,
       emergencyContact,
       stationId: req.user.stationId,
     });
 
+    // Reaches the station's OIC immediately (see utils/sseHub.js) rather
+    // than them only finding a new pending request next time they happen
+    // to open the registry — same "only one OIC per station" pattern
+    // already used for critical_complaint.
+    const oic = await User.findOne({ stationId: req.user.stationId, role: "oic" });
+    if (oic && oic._id.toString() !== req.user.uid) {
+      await generateAlert({
+        alertType: "leave_request_submitted",
+        title: "New Leave Request",
+        message: `${leaveRequest.refId}: ${officer.fullName} requested ${leaveType} leave (${days} day${days > 1 ? "s" : ""}).`,
+        recipientId: oic._id,
+        stationId: req.user.stationId,
+      });
+    }
+
     return res.status(201).json(leaveRequest.toJSON());
   } catch (err) {
     console.error("create leave request error:", err);
     return res.status(500).json({ error: "Could not submit leave request" });
+  }
+}
+
+// GET /api/leave-requests/:id/doctor-note/:attachmentId — the officer
+// who filed it, or oic/admin reviewing it. Same auth-gated streaming
+// pattern as complaintsController.js's downloadAttachment.
+async function downloadDoctorNote(req, res) {
+  try {
+    const leaveRequest = await LeaveRequest.findOne({ _id: req.params.id, stationId: req.user.stationId });
+    if (!leaveRequest) return res.status(404).json({ error: "Leave request not found" });
+
+    // Same access as listAll (GET /api/leave-requests) — oic/duty_officer
+    // can see the whole registry, so they can open its attachments too.
+    const isOwner = leaveRequest.officerId.toString() === req.user.uid;
+    const canReview = ["oic", "duty_officer", "admin"].includes(req.user.role);
+    if (!isOwner && !canReview) {
+      return res.status(403).json({ error: "You don't have access to this file" });
+    }
+
+    const attachment = leaveRequest.doctorNote.id(req.params.attachmentId);
+    if (!attachment) return res.status(404).json({ error: "Attachment not found" });
+
+    const filePath = path.join(UPLOAD_DIR, attachment.filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "File no longer exists on the server" });
+    }
+
+    res.setHeader("Content-Type", attachment.mimeType);
+    res.setHeader("Content-Disposition", `inline; filename="${attachment.originalName}"`);
+    return res.sendFile(filePath);
+  } catch (err) {
+    console.error("downloadDoctorNote error:", err);
+    return res.status(500).json({ error: "Could not download this attachment" });
   }
 }
 
@@ -131,17 +208,45 @@ async function setStatus(req, res, status, remarks) {
     }
     await leaveRequest.save();
 
-    // Deduct from balance only on approval
+    // Deduct from balance only on approval — and only for personal/casual;
+    // medical has no cap, so there's nothing to deduct it from (the field
+    // is always null, see LeaveBalance.js). Deducts from whichever year
+    // the leave itself starts in, auto-renewing that year's balance
+    // first if this is the first time it's been touched (e.g. a leave
+    // request straddling a New Year that only gets approved in January).
     if (status === "approved") {
-      await LeaveBalance.findOneAndUpdate(
-        { officerId: leaveRequest.officerId },
-        { $inc: { [leaveRequest.leaveType]: -leaveRequest.days } }
-      );
+      if (leaveRequest.leaveType !== "medical") {
+        await ensureYearBalance(leaveRequest.officerId, new Date(leaveRequest.startDate).getFullYear());
+        await LeaveBalance.findOneAndUpdate(
+          { officerId: leaveRequest.officerId, year: new Date(leaveRequest.startDate).getFullYear() },
+          { $inc: { [leaveRequest.leaveType]: -leaveRequest.days } }
+        );
+      }
       // Fix any shifts already sitting on a locked (non-draft) roster
       // during the leave period — this is what actually makes the
       // nominated Acting Officer mean something (spec §12/§19).
       await autoSubstituteForApprovedLeave(leaveRequest);
     }
+
+    logAuditForActor(req, {
+      action: `${status === "approved" ? "Approved" : "Rejected"} Leave Request ${leaveRequest.refId} for ${leaveRequest.officerName}`,
+      module: "Leave Requests",
+    });
+
+    // Reaches the applicant immediately (see utils/sseHub.js) rather
+    // than them only finding out next time they happen to check their
+    // own history — the whole point of an approval/rejection decision
+    // being something someone is actively waiting on.
+    await generateAlert({
+      alertType: status === "approved" ? "leave_approved" : "leave_rejected",
+      title: status === "approved" ? "Leave Request Approved" : "Leave Request Rejected",
+      message:
+        status === "approved"
+          ? `${leaveRequest.refId} (${leaveRequest.leaveType}, ${leaveRequest.days} day${leaveRequest.days > 1 ? "s" : ""}) was approved.`
+          : `${leaveRequest.refId} was rejected${remarks ? `: ${remarks}` : "."}`,
+      recipientId: leaveRequest.officerId,
+      stationId: req.user.stationId,
+    });
 
     return res.json(leaveRequest.toJSON());
   } catch (err) {
@@ -286,10 +391,10 @@ async function autoSubstituteForApprovedLeave(leaveRequest) {
 // GET /api/leave-balances/me
 async function getMyBalance(req, res) {
   try {
-    const balance = await LeaveBalance.findOne({ officerId: req.user.uid });
-    if (!balance) {
-      return res.status(404).json({ error: "No leave balance found" });
-    }
+    // Auto-renews this year's balance the first time anyone asks for it
+    // after a rollover — see ensureYearBalance — so this never 404s for
+    // an officer who legitimately has an account.
+    const balance = await ensureYearBalance(req.user.uid, new Date().getFullYear());
     return res.json(balance.toJSON());
   } catch (err) {
     console.error("getMyBalance error:", err);
@@ -302,10 +407,7 @@ async function getMyBalance(req, res) {
 // specific officer has left, not just their own.
 async function getBalanceForOfficer(req, res) {
   try {
-    const balance = await LeaveBalance.findOne({ officerId: req.params.officerId });
-    if (!balance) {
-      return res.status(404).json({ error: "No leave balance found" });
-    }
+    const balance = await ensureYearBalance(req.params.officerId, new Date().getFullYear());
     return res.json(balance.toJSON());
   } catch (err) {
     console.error("getBalanceForOfficer error:", err);
@@ -313,4 +415,4 @@ async function getBalanceForOfficer(req, res) {
   }
 }
 
-module.exports = { listMine, listAll, create, approve, reject, getMyBalance, getBalanceForOfficer };
+module.exports = { listMine, listAll, create, approve, reject, getMyBalance, getBalanceForOfficer, downloadDoctorNote };

@@ -155,9 +155,13 @@ export function SettingsPage() {
       ...s,
       rbac: {
         ...s.rbac,
+        // A settings doc missing this module entirely (predates it being
+        // added, or an incompletely-seeded default — see
+        // settingsController.js) used to crash this whole page outright;
+        // treat a missing module the same as "everyone unchecked" instead.
         [moduleKey]: {
-          ...s.rbac[moduleKey],
-          [rankKey]: !s.rbac[moduleKey][rankKey],
+          ...(s.rbac[moduleKey] || {}),
+          [rankKey]: !s.rbac[moduleKey]?.[rankKey],
         },
       },
     }));
@@ -378,7 +382,7 @@ export function SettingsPage() {
                         <td key={rank.key}>
                           <input
                             type="checkbox"
-                            checked={settings.rbac[module.key][rank.key]}
+                            checked={Boolean(settings.rbac[module.key]?.[rank.key])}
                             onChange={() => toggleRbac(module.key, rank.key)}
                           />
                         </td>

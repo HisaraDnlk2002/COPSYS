@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { Button, InputField, Card, StatCard, Table, Badge, Loader, Modal } from "../../components";
 import { useLanguage } from "../../i18n/useLanguage";
 import {
@@ -18,6 +19,7 @@ import "./Personnel.css";
 
 // Katunayake Airport Police Station's five branches.
 import { BRANCHES as DEPARTMENT_OPTIONS } from "../../config/branches";  // mirrored from server/src/config/branches.js
+import { RANKS as RANK_OPTIONS } from "../../config/ranks"; // mirrored from server/src/models/User.js's RANKS
 
 // Letters (any script) plus combining marks — needed so Sinhala vowel
 // signs (e.g. the ු in "චතුර") aren't stripped, since those are Unicode
@@ -32,6 +34,7 @@ const PAGE_SIZE = 15;
 
 const EMPTY_FORM = {
   fullName: "",
+  rank: "",
   rankAndNumber: "",
   department: "",
   role: "",
@@ -47,6 +50,7 @@ const EMPTY_FORM = {
 // dedicated flows (registration and Reset Password).
 const EMPTY_EDIT_FORM = {
   fullName: "",
+  rank: "",
   department: "",
   role: "",
   phoneNumber: "",
@@ -58,6 +62,7 @@ const EMPTY_EDIT_FORM = {
 
 export function PersonnelPage() {
   const { t } = useLanguage();
+  const location = useLocation();
 
   const ROLE_OPTIONS = [
     { value: "admin", label: t("personnel.roleAdmin") },
@@ -71,7 +76,10 @@ export function PersonnelPage() {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState(null);
   const [users, setUsers] = useState([]);
-  const [search, setSearch] = useState("");
+  // GlobalSearch (topbar) lands here with { state: { searchTerm } } so a
+  // Personnel hit jumps straight to a pre-filtered list instead of
+  // making the officer type the name again.
+  const [search, setSearch] = useState(location.state?.searchTerm || "");
   // Rendering the entire personnel roster into one table meant endless
   // scrolling on a station with more than a handful of officers — page
   // through it instead, same pattern as the Audit Log and Reports ledger.
@@ -142,7 +150,7 @@ export function PersonnelPage() {
     e.preventDefault();
     setFormError("");
 
-    const required = ["fullName", "rankAndNumber", "department", "role", "phoneNumber", "email", "address"];
+    const required = ["fullName", "rank", "rankAndNumber", "department", "role", "phoneNumber", "email", "address"];
     if (required.some((key) => !form[key])) {
       setFormError(t("personnel.errAllFields"));
       return;
@@ -227,6 +235,7 @@ export function PersonnelPage() {
     setEditUser(user);
     setEditForm({
       fullName: user.fullName || "",
+      rank: user.rank || "",
       department: user.department || "",
       role: user.role || "",
       phoneNumber: user.phoneNumber || "",
@@ -247,7 +256,7 @@ export function PersonnelPage() {
     if (!editUser) return;
     setEditError("");
 
-    const required = ["fullName", "department", "role", "phoneNumber", "address"];
+    const required = ["fullName", "rank", "department", "role", "phoneNumber", "address"];
     if (required.some((key) => !editForm[key])) {
       setEditError(t("personnel.errEditAllFields"));
       return;
@@ -279,6 +288,7 @@ export function PersonnelPage() {
     const term = search.toLowerCase();
     return (
       u.fullName?.toLowerCase().includes(term) ||
+      u.rank?.toLowerCase().includes(term) ||
       u.rankAndNumber?.toLowerCase().includes(term) ||
       u.department?.toLowerCase().includes(term)
     );
@@ -300,6 +310,7 @@ export function PersonnelPage() {
 
   const columns = [
     { key: "fullName", label: t("personnel.colOfficerName") },
+    { key: "rank", label: t("personnel.colRank"), render: (r) => r.rank || "—" },
     { key: "rankAndNumber", label: t("personnel.colRankNo") },
     { key: "role", label: t("personnel.colSystemRoles"), render: (r) => <span style={{ textTransform: "capitalize" }}>{r.role?.replace("_", " ")}</span> },
     { key: "department", label: t("personnel.colDepartment") },
@@ -375,6 +386,8 @@ export function PersonnelPage() {
             <form onSubmit={handleSubmit}>
               <div className="personnel-form-grid">
                 <InputField label={t("personnel.fullName")} required value={form.fullName} onChange={(e) => updateField("fullName", sanitizeName(e.target.value))} sinhalaTyping />
+                <InputField label={t("personnel.rank")} type="select" required value={form.rank}
+                  onChange={(e) => updateField("rank", e.target.value)} options={RANK_OPTIONS} />
                 <InputField label={t("personnel.rankAndNumber")} required value={form.rankAndNumber} onChange={(e) => updateField("rankAndNumber", e.target.value)}
                   placeholder={t("personnel.rankAndNumberPlaceholder")} />
                 <InputField label={t("personnel.departmentDivision")} type="select" required value={form.department}
@@ -532,6 +545,10 @@ export function PersonnelPage() {
         {viewUser && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
             <div>
+              <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("personnel.rank")}</p>
+              <p>{viewUser.rank || "—"}</p>
+            </div>
+            <div>
               <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("personnel.rankNumber")}</p>
               <p>{viewUser.rankAndNumber}</p>
             </div>
@@ -596,6 +613,14 @@ export function PersonnelPage() {
               value={editForm.fullName}
               onChange={(e) => updateEditField("fullName", sanitizeName(e.target.value))}
               sinhalaTyping
+            />
+            <InputField
+              label={t("personnel.rank")}
+              type="select"
+              required
+              value={editForm.rank}
+              onChange={(e) => updateEditField("rank", e.target.value)}
+              options={RANK_OPTIONS}
             />
             <InputField
               label={t("personnel.departmentDivision")}

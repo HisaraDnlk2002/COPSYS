@@ -3,7 +3,7 @@ import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../auth/useAuth";
 import { useLanguage } from "../i18n/useLanguage";
 import { navItemsByRole } from "../config/navConfig";
-import { NotificationBell, NavIcon } from "../components";
+import { NotificationBell, GlobalSearch, NavIcon } from "../components";
 import policeLogo from "../assets/Sri_Lanka_Police_logo.svg.png";
 import "./DashboardLayout.css";
 
@@ -40,17 +40,20 @@ export function DashboardLayout() {
 
       <div className="main-content">
         <header className="topbar">
-          <div className="topbar-brand-group">
-            <button
-              type="button"
-              className="menu-toggle"
-              aria-label="Toggle menu"
-              onClick={() => setSidebarOpen((open) => !open)}
-            >
-              ☰
-            </button>
-            <img src={policeLogo} alt="Sri Lanka Police" className="topbar-logo" />
-            <span className="topbar-brand">{t("brand")}</span>
+          <div className="topbar-left-group">
+            <div className="topbar-brand-group">
+              <button
+                type="button"
+                className="menu-toggle"
+                aria-label="Toggle menu"
+                onClick={() => setSidebarOpen((open) => !open)}
+              >
+                ☰
+              </button>
+              <img src={policeLogo} alt="Sri Lanka Police" className="topbar-logo" />
+              <span className="topbar-brand">{t("brand")}</span>
+            </div>
+            <GlobalSearch />
           </div>
           <div className="topbar-right">
             <div className="language-toggle">

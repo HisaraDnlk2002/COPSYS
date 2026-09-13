@@ -60,8 +60,10 @@ export function DashboardPage() {
 
   if (loading) return <Loader label={t("dashboard.loading")} />;
 
+  // Medical has no cap (always null — see LeaveBalance.js), so only the
+  // two finite types add up to a meaningful total here.
   const totalLeaveDays = leaveBalance
-    ? leaveBalance.annual + leaveBalance.sick + leaveBalance.casual
+    ? leaveBalance.personal + leaveBalance.casual
     : 0;
 
   const complaintColumns = [

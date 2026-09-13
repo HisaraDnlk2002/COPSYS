@@ -10,6 +10,7 @@ import {
   applyForLeave,
   approveLeaveRequest,
   rejectLeaveRequest,
+  openLeaveDoctorNote,
 } from "../../services/leave";
 import { searchOfficers } from "../../services/officers";
 import { listUsers } from "../../services/users";
@@ -68,8 +69,8 @@ export function LeaveRequestsPage() {
   const isOic = user?.role === "oic";
 
   const LEAVE_CATEGORY_OPTIONS = [
-    { value: "annual", label: t("leave.categoryAnnual") },
-    { value: "sick", label: t("leave.categorySick") },
+    { value: "personal", label: t("leave.categoryPersonal") },
+    { value: "medical", label: t("leave.categoryMedical") },
     { value: "casual", label: t("leave.categoryCasual") },
   ];
 
@@ -100,6 +101,7 @@ export function LeaveRequestsPage() {
     emergencyContact: "", // a personal contact's phone number — not a colleague
     actingOfficerOption: null, // full { value, label, subtitle } option for the search field
   });
+  const [doctorNoteFiles, setDoctorNoteFiles] = useState([]); // required when leaveType is "medical"
   const [formError, setFormError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -197,12 +199,21 @@ export function LeaveRequestsPage() {
     setForm((f) => ({ ...f, [key]: value }));
   }
 
+  async function handleOpenDoctorNote(attachmentId) {
+    try {
+      await openLeaveDoctorNote(viewing.id, attachmentId);
+    } catch (err) {
+      window.alert(err.message || t("leave.errDoctorNoteOpenFailed"));
+    }
+  }
+
   function handleActingOfficerChange(option) {
     setForm((f) => ({ ...f, actingOfficerOption: option }));
   }
 
   const days = daysBetween(form.startDate, form.endDate);
-  const needsLongJustification = form.leaveType === "annual" && days > 5;
+  const isMedical = form.leaveType === "medical";
+  const needsLongJustification = form.leaveType === "personal" && days > 5;
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -220,6 +231,10 @@ export function LeaveRequestsPage() {
       setFormError(t("leave.errJustification"));
       return;
     }
+    if (isMedical && doctorNoteFiles.length === 0) {
+      setFormError(t("leave.errDoctorNoteRequired"));
+      return;
+    }
     if (!form.actingOfficerOption) {
       setFormError(t("leave.errActingOfficerRequired"));
       return;
@@ -227,15 +242,18 @@ export function LeaveRequestsPage() {
 
     setSubmitting(true);
     try {
-      await applyForLeave({
-        leaveType: form.leaveType,
-        startDate: form.startDate,
-        endDate: form.endDate,
-        days,
-        justification: form.justification,
-        emergencyContact: form.emergencyContact,
-        actingOfficerId: form.actingOfficerOption.value,
-      });
+      await applyForLeave(
+        {
+          leaveType: form.leaveType,
+          startDate: form.startDate,
+          endDate: form.endDate,
+          days,
+          justification: form.justification,
+          emergencyContact: form.emergencyContact,
+          actingOfficerId: form.actingOfficerOption.value,
+        },
+        isMedical ? doctorNoteFiles : []
+      );
       setForm({
         leaveType: "",
         startDate: "",
@@ -244,6 +262,7 @@ export function LeaveRequestsPage() {
         emergencyContact: "",
         actingOfficerOption: null,
       });
+      setDoctorNoteFiles([]);
       setView("history");
       await loadData();
     } catch (err) {
@@ -335,6 +354,28 @@ export function LeaveRequestsPage() {
               />
             </div>
 
+            {isMedical && (
+              <div className="field-full">
+                <label className="field-label">
+                  {t("leave.doctorNote")}
+                  <span className="field-required"> *</span>
+                </label>
+                <input
+                  type="file"
+                  multiple
+                  accept="image/jpeg,image/png,image/webp,image/heic,application/pdf"
+                  onChange={(e) => setDoctorNoteFiles(Array.from(e.target.files || []))}
+                  style={{ fontSize: 13 }}
+                />
+                <p className="field-helper-text">{t("leave.doctorNoteHelper")}</p>
+                {doctorNoteFiles.length > 0 && (
+                  <p style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
+                    {doctorNoteFiles.map((f) => f.name).join(", ")}
+                  </p>
+                )}
+              </div>
+            )}
+
             <SearchableSelect
               label={t("leave.actingOfficer")}
               required
@@ -374,7 +415,7 @@ export function LeaveRequestsPage() {
           <aside className="submission-rules-panel">
             <h3>{t("leave.submissionRules")}</h3>
             <p><strong>{t("leave.ruleAdvanceNoticeLabel")}</strong> {t("leave.ruleAdvanceNoticeText")}</p>
-            <p><strong>{t("leave.ruleAnnualLeaveLabel")}</strong> {t("leave.ruleAnnualLeaveText")}</p>
+            <p><strong>{t("leave.rulePersonalLeaveLabel")}</strong> {t("leave.rulePersonalLeaveText")}</p>
             <p><strong>{t("leave.ruleMedicalLabel")}</strong> {t("leave.ruleMedicalText")}</p>
             <p><strong>{t("leave.ruleDutyHandoverLabel")}</strong> {t("leave.ruleDutyHandoverText")}</p>
             <p><strong>{t("leave.ruleBlackoutLabel")}</strong> {t("leave.ruleBlackoutText")}</p>
@@ -394,8 +435,8 @@ export function LeaveRequestsPage() {
       </div>
 
       <div className="stat-grid">
-        <StatCard label={t("leave.annualLeaves")} value={`${balance?.annual ?? 0} ${t("dashboard.days")}`} />
-        <StatCard label={t("leave.sickLeaves")} value={`${balance?.sick ?? 0} ${t("dashboard.days")}`} />
+        <StatCard label={t("leave.personalLeaves")} value={`${balance?.personal ?? 0} ${t("dashboard.days")}`} />
+        <StatCard label={t("leave.medicalLeaves")} value={t("leave.unlimited")} />
         <StatCard label={t("leave.casualLeaves")} value={`${balance?.casual ?? 0} ${t("dashboard.days")}`} />
         <StatCard label={t("leave.pendingLeaves")} value={requests.filter((r) => r.status === "pending").length} />
       </div>
@@ -520,6 +561,35 @@ export function LeaveRequestsPage() {
             <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("leave.justificationReason")}</p>
             <p style={{ marginBottom: 16 }}>{viewing.justification || t("leave.noJustificationProvided")}</p>
 
+            {viewing.leaveType === "medical" && (
+              <div style={{ marginBottom: 16 }}>
+                <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("leave.doctorNote")}</p>
+                {viewing.doctorNote?.length > 0 ? (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {viewing.doctorNote.map((a) => (
+                      <button
+                        key={a.id}
+                        type="button"
+                        onClick={() => handleOpenDoctorNote(a.id)}
+                        style={{
+                          fontSize: 12,
+                          padding: "4px 8px",
+                          borderRadius: 4,
+                          border: "1px solid var(--color-border, #e5e7eb)",
+                          background: "var(--color-surface-muted, #f3f4f6)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        📎 {a.originalName}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p style={{ color: "var(--color-text-muted)" }}>{t("leave.noDoctorNoteAttached")}</p>
+                )}
+              </div>
+            )}
+
             {viewing.remarks && (
               <>
                 <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("leave.colRemarks")}</p>
@@ -533,12 +603,12 @@ export function LeaveRequestsPage() {
             ) : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
                 <div>
-                  <p style={{ fontSize: 12, color: "var(--color-text-muted)" }}>{t("leave.annualLeaves")}</p>
-                  <p>{viewBalance?.annual ?? 0} {t("dashboard.days")}</p>
+                  <p style={{ fontSize: 12, color: "var(--color-text-muted)" }}>{t("leave.personalLeaves")}</p>
+                  <p>{viewBalance?.personal ?? 0} {t("dashboard.days")}</p>
                 </div>
                 <div>
-                  <p style={{ fontSize: 12, color: "var(--color-text-muted)" }}>{t("leave.sickLeaves")}</p>
-                  <p>{viewBalance?.sick ?? 0} {t("dashboard.days")}</p>
+                  <p style={{ fontSize: 12, color: "var(--color-text-muted)" }}>{t("leave.medicalLeaves")}</p>
+                  <p>{t("leave.unlimited")}</p>
                 </div>
                 <div>
                   <p style={{ fontSize: 12, color: "var(--color-text-muted)" }}>{t("leave.casualLeaves")}</p>

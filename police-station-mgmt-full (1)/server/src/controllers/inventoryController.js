@@ -2,7 +2,9 @@ const Inventory = require("../models/Inventory");
 const { INSPECTION_INTERVAL_DAYS } = require("../models/Inventory");
 const InventoryTransaction = require("../models/InventoryTransaction");
 const Maintenance = require("../models/Maintenance");
+const User = require("../models/User");
 const { generateAlert } = require("../utils/alerts");
+const { logAuditForActor } = require("../utils/auditLogger");
 
 // GET /api/inventory/stats — duty_officer, inventory_officer
 // Backs the 4 stat cards at the top of the Inventory Dashboard (Total
@@ -70,6 +72,7 @@ async function create(req, res) {
       nextInspectionDate: new Date(Date.now() + INSPECTION_INTERVAL_DAYS * 24 * 60 * 60 * 1000),
       stationId: req.user.stationId,
     });
+    logAuditForActor(req, { action: `Added Inventory Item: ${item.itemId} (${item.itemName})`, module: "Inventory" });
     return res.status(201).json(item.toJSON());
   } catch (err) {
     console.error("create inventory error:", err);
@@ -131,6 +134,18 @@ async function issue(req, res) {
     item.lastUpdatedBy = req.user.uid;
     await item.save();
 
+    const issueDateTime = dateTime ? new Date(dateTime) : new Date();
+    // A weapon is only meant to stay out for 24 hours by default — the
+    // Inventory Officer can still set a longer/shorter explicit
+    // deadline on the Issue form for a specific deployment, but leaving
+    // it blank no longer means "never goes overdue" (see
+    // InventoryTransaction.js's expectedReturnDate comment). Whichever
+    // value ends up here is what scanForTimeBasedAlerts in
+    // alertsController.js checks to fire "Return Overdue".
+    const resolvedExpectedReturn = expectedReturnDate
+      ? new Date(expectedReturnDate)
+      : new Date(issueDateTime.getTime() + 24 * 60 * 60 * 1000);
+
     const transaction = await InventoryTransaction.create({
       itemId: item._id,
       officerId,
@@ -138,8 +153,8 @@ async function issue(req, res) {
       type: "issue",
       dutyType,
       quantity,
-      dateTime: dateTime || new Date(),
-      expectedReturnDate: expectedReturnDate || null,
+      dateTime: issueDateTime,
+      expectedReturnDate: resolvedExpectedReturn,
       confirmationStatus: "pending",
       stationId: req.user.stationId,
     });
@@ -152,6 +167,12 @@ async function issue(req, res) {
       transactionId: transaction._id,
       recipientId: officerId,
       stationId: req.user.stationId,
+    });
+
+    const officer = await User.findById(officerId).select("fullName");
+    logAuditForActor(req, {
+      action: `Issued ${item.itemId} (${item.itemName}) to ${officer?.fullName || "an officer"}`,
+      module: "Inventory",
     });
 
     return res.status(201).json(transaction.toJSON());
@@ -212,6 +233,12 @@ async function returnItem(req, res) {
       transactionId: transaction._id,
       recipientId: officerId,
       stationId: req.user.stationId,
+    });
+
+    const officer = await User.findById(officerId).select("fullName");
+    logAuditForActor(req, {
+      action: `Recorded ${transactionType === "damaged" ? "Damaged Return" : "Return"} of ${item.itemId} from ${officer?.fullName || "an officer"}`,
+      module: "Inventory",
     });
 
     return res.status(201).json(transaction.toJSON());
@@ -434,6 +461,11 @@ async function reportMissing(req, res) {
       itemId: item._id,
       recipientId: lastAssignee,
       stationId: req.user.stationId,
+    });
+
+    logAuditForActor(req, {
+      action: `Reported Missing: ${item.itemId} (${item.itemName})`,
+      module: "Inventory",
     });
 
     return res.json(item.toJSON());

@@ -229,8 +229,8 @@ function getFilterFields(type, t) {
           kind: "select",
           label: t("reports.filterLeaveType"),
           options: [
-            { value: "annual", label: t("reports.leaveTypeAnnual") },
-            { value: "sick", label: t("reports.leaveTypeSick") },
+            { value: "personal", label: t("reports.leaveTypePersonal") },
+            { value: "medical", label: t("reports.leaveTypeMedical") },
             { value: "casual", label: t("reports.leaveTypeCasual") },
           ],
         },

@@ -2,6 +2,8 @@ const bcrypt = require("bcryptjs");
 const User = require("../models/User");
 const LeaveBalance = require("../models/LeaveBalance");
 const { generatePassword } = require("../utils/passwordGenerator");
+const { logAudit, logAuditForActor } = require("../utils/auditLogger");
+const { RANKS: VALID_RANKS, casualPersonalAllowance } = require("../config/ranks");
 
 // GET /api/users/me — any authenticated user reads their own profile
 async function getMe(req, res) {
@@ -75,6 +77,7 @@ async function changeMyPassword(req, res) {
 
     user.passwordHash = await bcrypt.hash(newPassword, 10);
     await user.save();
+    logAudit({ userId: user._id, userName: user.fullName, action: "Changed Own Password", module: "Authentication", status: "success", stationId: req.user.stationId });
     return res.json({ message: "Password updated" });
   } catch (err) {
     console.error("changeMyPassword error:", err);
@@ -96,14 +99,15 @@ async function listUsers(req, res) {
 const VALID_ROLES = ["admin", "oic", "duty_officer", "inventory_officer", "officer"];
 
 // POST /api/users — admin only, registers a new officer
-// Matches the "Register new Personnel" form: full name, rank & number,
-// department, role, phone number, email, address. The password is no
-// longer typed by Admin — it's generated here and returned once in the
-// response for the "Account Created" screen to display (see
+// Matches the "Register new Personnel" form: full name, rank, rank &
+// number, department, role, phone number, email, address. The password
+// is no longer typed by Admin — it's generated here and returned once in
+// the response for the "Account Created" screen to display (see
 // generatePassword's comment for why it's never chosen by a person).
 async function createUser(req, res) {
   const {
     fullName,
+    rank,
     rankAndNumber,
     department,
     role,
@@ -114,12 +118,15 @@ async function createUser(req, res) {
     emergencyContactPhone,
   } = req.body;
 
-  if (!fullName || !rankAndNumber || !department || !role || !phoneNumber || !email || !address) {
+  if (!fullName || !rank || !rankAndNumber || !department || !role || !phoneNumber || !email || !address) {
     return res.status(400).json({ error: "All fields are required" });
   }
 
   if (!VALID_ROLES.includes(role)) {
     return res.status(400).json({ error: "Invalid role" });
+  }
+  if (!VALID_RANKS.includes(rank)) {
+    return res.status(400).json({ error: "Invalid rank" });
   }
 
   try {
@@ -140,6 +147,7 @@ async function createUser(req, res) {
 
     const user = await User.create({
       fullName,
+      rank,
       rankAndNumber,
       department,
       role,
@@ -153,8 +161,17 @@ async function createUser(req, res) {
       status: "active",
     });
 
-    // Starting leave balance — defaults from architecture doc, adjust later if needed
-    await LeaveBalance.create({ officerId: user._id });
+    // Starting leave balance — Casual and Personal both use the same
+    // rank-based allowance (28 days for Sergeant and below, 21 above
+    // that); Medical stays null, meaning unlimited (see
+    // config/ranks.js's casualPersonalAllowance and LeaveBalance.js).
+    const leaveAllowance = casualPersonalAllowance(rank);
+    await LeaveBalance.create({ officerId: user._id, personal: leaveAllowance, casual: leaveAllowance, medical: null });
+
+    logAuditForActor(req, {
+      action: `Registered New Personnel: ${user.fullName} (${user.rankAndNumber})`,
+      module: "Personnel",
+    });
 
     return res.status(201).json({ ...user.toJSON(), generatedPassword });
   } catch (err) {
@@ -172,14 +189,18 @@ async function createUser(req, res) {
 // action next to "View More" on the Personnel & User Management page.
 async function updateUser(req, res) {
   const { id } = req.params;
-  const { fullName, department, role, phoneNumber, email, address, emergencyContactName, emergencyContactPhone } = req.body;
+  const { fullName, rank, department, role, phoneNumber, email, address, emergencyContactName, emergencyContactPhone } = req.body;
 
   if (role && !VALID_ROLES.includes(role)) {
     return res.status(400).json({ error: "Invalid role" });
   }
+  if (rank && !VALID_RANKS.includes(rank)) {
+    return res.status(400).json({ error: "Invalid rank" });
+  }
 
   const updates = {};
   if (fullName !== undefined) updates.fullName = fullName;
+  if (rank !== undefined) updates.rank = rank;
   if (department !== undefined) updates.department = department;
   if (role !== undefined) updates.role = role;
   if (phoneNumber !== undefined) updates.phoneNumber = phoneNumber;
@@ -207,6 +228,10 @@ async function updateUser(req, res) {
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
+    logAuditForActor(req, {
+      action: `Edited Personnel Details: ${user.fullName} (${user.rankAndNumber})`,
+      module: "Personnel",
+    });
     return res.json(user.toJSON());
   } catch (err) {
     console.error("updateUser error:", err);
@@ -228,6 +253,10 @@ async function updateUserStatus(req, res) {
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
+    logAuditForActor(req, {
+      action: `Account ${status === "disabled" ? "Disabled" : "Enabled"}: ${user.fullName} (${user.rankAndNumber})`,
+      module: "Personnel",
+    });
     return res.json(user.toJSON());
   } catch (err) {
     console.error("updateUserStatus error:", err);
@@ -255,6 +284,10 @@ async function resetPassword(req, res) {
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
+    logAuditForActor(req, {
+      action: `Password Reset by Admin for: ${user.fullName} (${user.rankAndNumber})`,
+      module: "Authentication",
+    });
     return res.json({ id: user._id, generatedPassword, message: "Password updated" });
   } catch (err) {
     console.error("resetPassword error:", err);

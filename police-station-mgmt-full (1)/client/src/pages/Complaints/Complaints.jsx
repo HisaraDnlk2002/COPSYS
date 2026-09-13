@@ -2,13 +2,15 @@ import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth";
 import { useLanguage } from "../../i18n/useLanguage";
-import { Button, InputField, Card, Table, Badge, Loader, AssignmentCell } from "../../components";
+import { Button, InputField, Card, Table, Badge, Loader, AssignmentCell, Pagination } from "../../components";
 import {
   getComplaints,
   registerComplaint,
   updateComplaintStatus,
   assignComplaint,
   downloadComplaintReceipt,
+  addComplaintNote,
+  openComplaintAttachment,
 } from "../../services/complaints";
 import { listUsers } from "../../services/users";
 import { formatDateAndTime } from "../../utils/formatDate";
@@ -38,6 +40,30 @@ function sanitizeNic(value) {
   const digitsOnly = upper.replace(/[^0-9]/g, "");
   return endsWithLetter ? digitsOnly.slice(0, 9) + upper.slice(-1) : digitsOnly.slice(0, 12);
 }
+
+// A case note's createdAt is a real timestamp (when it was actually
+// posted), not a calendar-only date like dateOfIncident — so this shows
+// local date + time, same convention as AuditLog.jsx's formatTimestamp,
+// rather than reusing formatDate's UTC-date-only rendering.
+function formatNoteTimestamp(value) {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  const date = d.toLocaleDateString("en-GB");
+  const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return `${date}, ${time}`;
+}
+
+function formatFileSize(bytes) {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// Rendering the entire registry into one table meant endless scrolling
+// once a station has more than a handful of complaints — page through
+// the filtered results instead, same pattern as Personnel/AuditLog.
+const PAGE_SIZE = 15;
 
 const EMPTY_FORM = {
   complaintBook: "",
@@ -126,13 +152,29 @@ export function ComplaintsPage() {
   // Personnel.jsx's "Account Created" pattern after registering an officer.
   const [registeredComplaint, setRegisteredComplaint] = useState(null);
   const [downloadingReceipt, setDownloadingReceipt] = useState(false);
-  const [search, setSearch] = useState("");
+  // GlobalSearch (topbar) lands here with { state: { searchTerm } } so a
+  // Complaints hit jumps straight to a pre-filtered list.
+  const [search, setSearch] = useState(location.state?.searchTerm || "");
   const [bookFilter, setBookFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  // A shrinking filtered result just clamps back to the last valid page
+  // (see safePage below) rather than needing an explicit reset here.
+  const [page, setPage] = useState(1);
   const [viewing, setViewing] = useState(null);
   const [statusSaving, setStatusSaving] = useState(false);
+  const [noteText, setNoteText] = useState("");
+  const [noteFiles, setNoteFiles] = useState([]);
+  const [addingNote, setAddingNote] = useState(false);
+  const [noteError, setNoteError] = useState("");
+
+  function openViewing(row) {
+    setViewing(row);
+    setNoteText("");
+    setNoteFiles([]);
+    setNoteError("");
+  }
 
   async function loadData() {
     setLoading(true);
@@ -248,6 +290,34 @@ export function ComplaintsPage() {
     setComplaints((prev) => prev.map((c) => (c.id === complaintId ? { ...c, ...updated } : c)));
   }
 
+  async function handleAddNote() {
+    if (!noteText.trim() && noteFiles.length === 0) {
+      setNoteError(t("complaints.errNoteEmpty"));
+      return;
+    }
+    setAddingNote(true);
+    setNoteError("");
+    try {
+      const updated = await addComplaintNote(viewing.id, { text: noteText.trim(), files: noteFiles });
+      setViewing((prev) => (prev && prev.id === viewing.id ? { ...prev, ...updated } : prev));
+      setComplaints((prev) => prev.map((c) => (c.id === viewing.id ? { ...c, ...updated } : c)));
+      setNoteText("");
+      setNoteFiles([]);
+    } catch (err) {
+      setNoteError(err.message || t("complaints.errNoteFailed"));
+    } finally {
+      setAddingNote(false);
+    }
+  }
+
+  async function handleOpenAttachment(noteId, attachmentId) {
+    try {
+      await openComplaintAttachment(viewing.id, noteId, attachmentId);
+    } catch (err) {
+      window.alert(err.message || t("complaints.errAttachmentFailed"));
+    }
+  }
+
   const filtersActive = bookFilter !== "all" || statusFilter !== "all" || dateFrom || dateTo;
 
   function clearFilters() {
@@ -280,6 +350,10 @@ export function ComplaintsPage() {
     );
   });
 
+  const totalPages = Math.max(Math.ceil(filteredComplaints.length / PAGE_SIZE), 1);
+  const safePage = Math.min(page, totalPages);
+  const pagedComplaints = filteredComplaints.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
   const columns = [
     { key: "refId", label: t("complaints.colRefId") },
     { key: "fullName", label: t("complaints.colComplainant"), render: (row) => complainantName(row) },
@@ -309,7 +383,7 @@ export function ComplaintsPage() {
       key: "actions",
       label: "",
       render: (row) => (
-        <Button variant="ghost" type="button" onClick={() => setViewing(row)}>
+        <Button variant="ghost" type="button" onClick={() => openViewing(row)}>
           {t("common.view")}
         </Button>
       ),
@@ -471,7 +545,8 @@ export function ComplaintsPage() {
       </div>
 
       <Card variant="panel">
-        <Table columns={columns} data={filteredComplaints} emptyMessage={t("complaints.noComplaintsMatch")} />
+        <Table columns={columns} data={pagedComplaints} emptyMessage={t("complaints.noComplaintsMatch")} />
+        <Pagination page={safePage} totalPages={totalPages} onPageChange={setPage} />
       </Card>
 
       {viewing && (
@@ -539,6 +614,76 @@ export function ComplaintsPage() {
                 </div>
               ) : (
                 <Badge status={viewing.status} />
+              )}
+
+              <h3 className="section-label">{t("complaints.caseNotes")}</h3>
+              <div style={{ maxHeight: 260, overflowY: "auto", marginBottom: 12 }}>
+                {(viewing.notes || []).length === 0 ? (
+                  <p style={{ color: "var(--color-text-muted)", fontSize: 13 }}>{t("complaints.noNotesYet")}</p>
+                ) : (
+                  [...viewing.notes].reverse().map((note) => (
+                    <div key={note.id} style={{ borderBottom: "1px solid var(--color-border, #e5e7eb)", padding: "10px 0" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--color-text-muted)" }}>
+                        <strong style={{ color: "var(--color-text)" }}>{note.authorName}</strong>
+                        <span>{formatNoteTimestamp(note.createdAt)}</span>
+                      </div>
+                      {note.text && <p style={{ margin: "4px 0", fontSize: 13 }}>{note.text}</p>}
+                      {note.attachments?.length > 0 && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+                          {note.attachments.map((a) => (
+                            <button
+                              key={a.id}
+                              type="button"
+                              onClick={() => handleOpenAttachment(note.id, a.id)}
+                              title={formatFileSize(a.size)}
+                              style={{
+                                fontSize: 12,
+                                padding: "4px 8px",
+                                borderRadius: 4,
+                                border: "1px solid var(--color-border, #e5e7eb)",
+                                background: "var(--color-surface-muted, #f3f4f6)",
+                                cursor: "pointer",
+                              }}
+                            >
+                              📎 {a.originalName}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {canManage && (
+                <div>
+                  <InputField
+                    label={t("complaints.addNote")}
+                    type="textarea"
+                    rows={3}
+                    value={noteText}
+                    onChange={(e) => setNoteText(e.target.value)}
+                    placeholder={t("complaints.addNotePlaceholder")}
+                    voiceInput
+                    sinhalaTyping
+                  />
+                  <input
+                    type="file"
+                    multiple
+                    accept="image/jpeg,image/png,image/webp,image/heic,application/pdf"
+                    onChange={(e) => setNoteFiles(Array.from(e.target.files || []))}
+                    style={{ marginTop: 6, fontSize: 13 }}
+                  />
+                  {noteFiles.length > 0 && (
+                    <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 4 }}>
+                      {noteFiles.map((f) => f.name).join(", ")}
+                    </p>
+                  )}
+                  {noteError && <p style={{ color: "var(--color-danger)", fontSize: 13, marginTop: 4 }}>{noteError}</p>}
+                  <Button variant="primary" type="button" onClick={handleAddNote} disabled={addingNote} style={{ marginTop: 8 }}>
+                    {addingNote ? t("complaints.addingNote") : t("complaints.addNoteButton")}
+                  </Button>
+                </div>
               )}
             </Card>
           </div>

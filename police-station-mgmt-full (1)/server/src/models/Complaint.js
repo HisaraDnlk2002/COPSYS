@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const attachmentSchema = require("./shared/attachmentSchema");
 
 const complainantSchema = new mongoose.Schema(
   {
@@ -10,6 +11,22 @@ const complainantSchema = new mongoose.Schema(
     address: { type: String, default: "" },
   },
   { _id: false }
+);
+
+// A single entry in a complaint's case-notes timeline ("investigating
+// since...", "witness statement taken", a photo of the scene) — this is
+// what turns the registry from a bare status tracker into an actual case
+// file. Embedded on the complaint itself rather than its own collection:
+// notes never exist independently of their complaint and are always
+// read/written as part of it.
+const complaintNoteSchema = new mongoose.Schema(
+  {
+    authorId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    authorName: { type: String, required: true }, // denormalized, same convention as AuditLog's userName
+    text: { type: String, default: "" },
+    attachments: { type: [attachmentSchema], default: [] },
+  },
+  { timestamps: true }
 );
 
 const complaintSchema = new mongoose.Schema(
@@ -58,16 +75,25 @@ const complaintSchema = new mongoose.Schema(
     assignedOfficerId: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     registeredBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
 
+    notes: { type: [complaintNoteSchema], default: [] },
+
     stationId: { type: String, default: "default-station" },
   },
   { timestamps: true }
 );
 
 // Frontend tables/handlers key off `id`, not `_id` — see User.js for the
-// same convention.
+// same convention. Notes and their attachments are subdocuments, so
+// they need the same `_id` -> `id` treatment done explicitly here —
+// toObject() alone doesn't cascade that into nested arrays.
 complaintSchema.methods.toJSON = function () {
   const obj = this.toObject();
   obj.id = obj._id.toString();
+  obj.notes = (obj.notes || []).map((note) => ({
+    ...note,
+    id: note._id.toString(),
+    attachments: (note.attachments || []).map((a) => ({ ...a, id: a._id.toString() })),
+  }));
   return obj;
 };
 

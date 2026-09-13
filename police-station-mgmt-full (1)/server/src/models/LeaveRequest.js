@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const attachmentSchema = require("./shared/attachmentSchema");
 
 const leaveRequestSchema = new mongoose.Schema(
   {
@@ -7,15 +8,22 @@ const leaveRequestSchema = new mongoose.Schema(
     officerId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     officerName: { type: String, required: true }, // denormalized for table display
 
-    leaveType: { type: String, enum: ["annual", "sick", "casual"], required: true },
+    leaveType: { type: String, enum: ["personal", "medical", "casual"], required: true },
 
     startDate: { type: Date, required: true },
     endDate: { type: Date, required: true },
     days: { type: Number, required: true },
 
-    // Required, >=30 words, if annual leave > 5 days — enforce this in the
-    // controller/validation layer, not here, since it depends on leaveType/days.
+    // Required, >=30 words, if personal leave > 5 days — enforce this in
+    // the controller/validation layer, not here, since it depends on
+    // leaveType/days.
     justification: { type: String, default: "" },
+
+    // Required proof for leaveType "medical" — a scanned/photographed
+    // doctor's note or medical certificate, uploaded with the
+    // application itself (see leaveDoctorNoteUpload.js). Empty for
+    // personal/casual requests, which have no such requirement.
+    doctorNote: { type: [attachmentSchema], default: [] },
 
     actingOfficerId: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     emergencyContact: { type: String, default: "" },
@@ -36,10 +44,13 @@ const leaveRequestSchema = new mongoose.Schema(
 );
 
 // Frontend tables/handlers key off `id`, not `_id` — see User.js for the
-// same convention.
+// same convention. doctorNote entries are subdocuments too, so they need
+// the same treatment explicitly here — toObject() alone doesn't cascade
+// that into nested arrays.
 leaveRequestSchema.methods.toJSON = function () {
   const obj = this.toObject();
   obj.id = obj._id.toString();
+  obj.doctorNote = (obj.doctorNote || []).map((a) => ({ ...a, id: a._id.toString() }));
   return obj;
 };
 

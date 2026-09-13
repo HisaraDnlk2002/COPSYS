@@ -28,6 +28,8 @@ const auditLogRoutes = require("./routes/auditLogRoutes");
 const officerRoutes = require("./routes/officerRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
 const passwordResetRequestRoutes = require("./routes/passwordResetRequestRoutes");
+const notificationStreamRoutes = require("./routes/notificationStreamRoutes");
+const searchRoutes = require("./routes/searchRoutes");
 
 const app = express();
 
@@ -58,6 +60,8 @@ app.use("/api/audit-logs", auditLogRoutes);
 app.use("/api/officers", officerRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/password-reset-requests", passwordResetRequestRoutes);
+app.use("/api/notifications", notificationStreamRoutes);
+app.use("/api/search", searchRoutes);
 
 app.use("/api", (req, res) => {
   res.status(404).json({ error: "Not found" });

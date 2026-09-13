@@ -24,11 +24,13 @@ const inventoryTransactionSchema = new mongoose.Schema(
     condition: { type: String, default: null }, // "Good" / "Faulty" — only on return
     remarks: { type: String, default: null },
 
-    // Only meaningful for type: "issue", and optional even then — the
-    // Inventory Officer can set an expected-back date/time when issuing.
-    // Only issues that HAVE one set can ever trigger a "Return Overdue"
-    // alert (see alertsController.js's on-demand scan); an issue with no
-    // deadline simply never goes overdue.
+    // Only meaningful for type: "issue". The Inventory Officer can set
+    // an explicit expected-back date on the Issue form; if they leave it
+    // blank, inventoryController.js's issue() defaults it to 24 hours
+    // after dateTime — every issue ends up with one either way, so
+    // alertsController.js's on-demand scan can always fire a "Return
+    // Overdue" alert once this passes, not only when a deadline was
+    // manually set.
     expectedReturnDate: { type: Date, default: null },
 
     // Set once an overdue alert has been generated for this issue, so

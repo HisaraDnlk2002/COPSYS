@@ -27,10 +27,20 @@ async function scanForTimeBasedAlerts(stationId) {
   }).populate("itemId");
 
   for (const tx of overdueIssues) {
-    // Already returned (and confirmed) since — not actually overdue,
-    // just never got its flag cleared because nothing clears it on
-    // return. Skip rather than false-alarm.
-    if (tx.itemId?.status !== "issued") continue;
+    // item.status alone can't tell us "was THIS issue returned" — stock
+    // is quantity-pooled (one Inventory doc can have many units, each
+    // possibly out to a different officer at once), so status only
+    // flips to "issued" once every last unit is out. A weapon with
+    // stock remaining never trips that, letting a genuinely overdue
+    // unit slip through. The only reliable signal is a later
+    // return/damaged transaction for this same item + officer.
+    const alreadyReturned = await InventoryTransaction.exists({
+      itemId: tx.itemId?._id,
+      officerId: tx.officerId,
+      type: { $in: ["return", "damaged"] },
+      dateTime: { $gte: tx.dateTime },
+    });
+    if (!tx.itemId || alreadyReturned) continue;
 
     await generateAlert({
       alertType: "return_overdue",

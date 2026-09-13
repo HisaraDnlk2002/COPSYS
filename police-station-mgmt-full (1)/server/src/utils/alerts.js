@@ -5,20 +5,26 @@
 // as a side effect of something else they're doing.
 
 const Alert = require("../models/Alert");
+const { sendToUser } = require("./sseHub");
 
 const ALERT_PRIORITY = {
   weapon_missing: "critical",
   ammo_discrepancy: "critical",
   inspection_failed: "critical",
   weapon_damage: "critical",
+  critical_complaint: "critical",
   return_overdue: "warning",
   inspection_due: "warning",
   maintenance_pending: "warning",
   return_awaiting_confirmation: "warning",
+  leave_rejected: "warning",
   weapon_issued: "info",
   weapon_returned: "info",
   maintenance_completed: "info",
   inspection_completed: "info",
+  roster_published: "info",
+  leave_request_submitted: "info",
+  leave_approved: "info",
 };
 
 async function generateRefId() {
@@ -44,7 +50,7 @@ async function generateAlert({
   const priority = ALERT_PRIORITY[alertType];
   if (!priority) throw new Error(`Unknown alert type: ${alertType}`);
 
-  return Alert.create({
+  const alert = await Alert.create({
     refId: await generateRefId(),
     alertType,
     priority,
@@ -57,6 +63,17 @@ async function generateAlert({
     recipientId,
     stationId,
   });
+
+  // Live push, on top of the normal on-open/on-load fetch — reaches the
+  // recipient immediately if they already have the app open, rather
+  // than waiting for them to next open the bell or reload the page. Only
+  // ever for personal alerts (recipientId set); station-wide/armory-side
+  // ones (missing/damaged/maintenance/inspection housekeeping) only ever
+  // showed on the Inventory Officer's own dashboard anyway, never the
+  // personal bell — see the bell's own eligibility comment.
+  sendToUser(recipientId, { type: "alert", alertType, priority, title });
+
+  return alert;
 }
 
 module.exports = { generateAlert };

@@ -1,27 +1,36 @@
 const mongoose = require("mongoose");
 
-// The 12 weapon-related alert types (dropped "Unauthorized weapon issue"
-// — nothing in the system can actually trigger it; every issue already
-// requires the Inventory Officer, and issuing a damaged/under-maintenance
-// item is already hard-blocked at the API, not something to alert on
-// after the fact). See generateAlert() in alertsController.js for what
-// creates each one.
+// The original 12 weapon-related alert types (dropped "Unauthorized
+// weapon issue" — nothing in the system can actually trigger it; every
+// issue already requires the Inventory Officer, and issuing a
+// damaged/under-maintenance item is already hard-blocked at the API, not
+// something to alert on after the fact), plus several added later for the
+// live-notification push (see utils/sseHub.js): roster_published (duty
+// roster), critical_complaint (Complaints, Grave Crime severity only),
+// and leave_request_submitted/leave_approved/leave_rejected (Leave
+// Requests). See generateAlert() in utils/alerts.js for what creates
+// each one.
 const ALERT_TYPES = [
   // critical
   "weapon_missing",
   "ammo_discrepancy",
   "inspection_failed",
   "weapon_damage",
+  "critical_complaint",
   // warning
   "return_overdue",
   "inspection_due",
   "maintenance_pending",
   "return_awaiting_confirmation",
+  "leave_rejected",
   // info
   "weapon_issued",
   "weapon_returned",
   "maintenance_completed",
   "inspection_completed",
+  "roster_published",
+  "leave_request_submitted",
+  "leave_approved",
 ];
 
 const ALERT_PRIORITIES = ["critical", "warning", "info"];

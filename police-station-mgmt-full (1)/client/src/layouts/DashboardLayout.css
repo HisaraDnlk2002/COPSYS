@@ -23,6 +23,17 @@
   z-index: 20; /* above ordinary page content and the fixed sidebar (10), below Modal (100) and the mobile sidebar/backdrop (200/150) */
 }
 
+/* Groups the brand and the global search together on the left side of
+   the topbar, separate from topbar-right's notification/language/user
+   cluster — keeps search sitting right next to the logo rather than
+   crowded in with the far-right icons. */
+.topbar-left-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  min-width: 0;
+}
+
 .topbar-brand-group {
   display: flex;
   align-items: center;

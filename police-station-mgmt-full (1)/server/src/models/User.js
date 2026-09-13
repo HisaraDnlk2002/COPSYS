@@ -1,10 +1,16 @@
 const mongoose = require("mongoose");
+const { RANKS } = require("../config/ranks");
 
 const ROLES = ["admin", "oic", "duty_officer", "inventory_officer", "officer"];
 
 const userSchema = new mongoose.Schema(
   {
     fullName: { type: String, required: true, trim: true },
+
+    // Not required at the schema level — accounts created before this
+    // field existed have none yet (same reasoning as email below).
+    // Required going forward by the "Register new Personnel" form itself.
+    rank: { type: String, enum: RANKS, default: null },
 
     // Doubles as the login username — authController.js looks users up
     // by this field, not by email.
@@ -56,3 +62,4 @@ userSchema.methods.toJSON = function () {
 
 module.exports = mongoose.model("User", userSchema);
 module.exports.ROLES = ROLES;
+module.exports.RANKS = RANKS;

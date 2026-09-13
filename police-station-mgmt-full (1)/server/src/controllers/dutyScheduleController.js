@@ -5,6 +5,8 @@ const User = require("../models/User");
 const LeaveRequest = require("../models/LeaveRequest");
 const { generateWeeklyRoster, suggestReplacements } = require("../services/dutyAllocationEngine");
 const { isGeneralPoolBranch } = require("../config/branches");
+const { logAuditForActor } = require("../utils/auditLogger");
+const { generateAlert } = require("../utils/alerts");
 
 // GET /api/duty-schedule/mine — any officer, their own shifts for THIS
 // week only. Only the sole caller (Dashboard.jsx's "Weekly Duty
@@ -803,6 +805,28 @@ async function publishWeek(req, res) {
     week.publishedBy = req.user.uid;
     week.publishedAt = new Date();
     await week.save();
+    logAuditForActor(req, {
+      action: `Published Duty Roster for week of ${new Date(week.weekStarting).toISOString().slice(0, 10)}`,
+      module: "Duty Roster",
+    });
+
+    // One personal alert per officer actually scheduled this week — this
+    // is what reaches them live (see utils/sseHub.js) the moment it's
+    // published, on top of them being able to see it next time they load
+    // their own dashboard's Weekly Duty Schedule card either way.
+    const weekLabel = new Date(week.weekStarting).toISOString().slice(0, 10);
+    const shifts = await DutySchedule.find({ weekId: week._id, status: { $ne: "removed" } }).select("officerId");
+    const scheduledOfficerIds = [...new Set(shifts.map((s) => s.officerId.toString()))];
+    for (const officerId of scheduledOfficerIds) {
+      await generateAlert({
+        alertType: "roster_published",
+        title: "Duty Roster Published",
+        message: `Your schedule for the week of ${weekLabel} is now available.`,
+        recipientId: officerId,
+        stationId: req.user.stationId,
+      });
+    }
+
     return res.json(week.toJSON());
   } catch (err) {
     console.error("publishWeek error:", err);
@@ -823,6 +847,11 @@ async function deleteWeek(req, res) {
 
     await DutySchedule.deleteMany({ weekId: week._id });
     await DutyRosterWeek.deleteOne({ _id: week._id });
+
+    logAuditForActor(req, {
+      action: `Deleted Draft Duty Roster for week of ${new Date(week.weekStarting).toISOString().slice(0, 10)}`,
+      module: "Duty Roster",
+    });
 
     return res.status(204).send();
   } catch (err) {
@@ -845,6 +874,13 @@ async function setWeekStatus(req, res, status, reason) {
       week.sendBackReason = reason || "";
     }
     await week.save();
+
+    const STATUS_LABEL = { submitted: "Submitted", approved: "Approved", sent_back: "Sent Back" };
+    const weekLabel = new Date(week.weekStarting).toISOString().slice(0, 10);
+    logAuditForActor(req, {
+      action: `${STATUS_LABEL[status] || status} Duty Roster for week of ${weekLabel}${reason ? ` (reason: ${reason})` : ""}`,
+      module: "Duty Roster",
+    });
 
     return res.json(week.toJSON());
   } catch (err) {

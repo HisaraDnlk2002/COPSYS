@@ -24,7 +24,7 @@ export async function getAllLeaveRequests() {
 export async function getMyLeaveBalance() {
   if (USE_DUMMY_DATA) {
     const uid = currentUserId();
-    return Promise.resolve(dummyLeaveBalances[uid] || { annual: 0, sick: 0, casual: 0 });
+    return Promise.resolve(dummyLeaveBalances[uid] || { personal: 0, medical: null, casual: 0 });
   }
   return api.get("/leave-balances/me");
 }
@@ -33,12 +33,16 @@ export async function getMyLeaveBalance() {
 // a specific officer's remaining balance rather than the viewer's own.
 export async function getLeaveBalanceForOfficer(officerId) {
   if (USE_DUMMY_DATA) {
-    return Promise.resolve(dummyLeaveBalances[officerId] || { annual: 0, sick: 0, casual: 0 });
+    return Promise.resolve(dummyLeaveBalances[officerId] || { personal: 0, medical: null, casual: 0 });
   }
   return api.get(`/leave-balances/${officerId}`);
 }
 
-export async function applyForLeave(payload) {
+// Always multipart/form-data, not plain JSON — a medical application
+// attaches its doctor's note (files) in the very same request. Every
+// other leave type just sends no files, which the backend treats as
+// "nothing attached" rather than requiring a different request shape.
+export async function applyForLeave(payload, files = []) {
   if (USE_DUMMY_DATA) {
     const uid = currentUserId();
     const newRequest = {
@@ -46,12 +50,32 @@ export async function applyForLeave(payload) {
       refId: `LV-${100 + dummyLeaveRequests.length + 1}`,
       officerId: uid,
       status: "pending",
+      doctorNote: files.map((f) => ({ id: f.name, originalName: f.name, mimeType: f.type, size: f.size })),
       ...payload,
     };
     dummyLeaveRequests.unshift(newRequest);
     return Promise.resolve(newRequest);
   }
-  return api.post("/leave-requests", payload);
+
+  const formData = new FormData();
+  Object.entries(payload).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) formData.append(key, value);
+  });
+  files.forEach((file) => formData.append("doctorNote", file));
+  return api.postForm("/leave-requests", formData);
+}
+
+// Fetches a leave request's doctor's note as a blob (auth-gated, same
+// pattern as Complaints' openComplaintAttachment) and opens it in a new
+// tab — the officer who filed it, or oic/duty_officer/admin reviewing it.
+export async function openLeaveDoctorNote(leaveRequestId, attachmentId) {
+  if (USE_DUMMY_DATA) {
+    window.alert("Dummy data mode has no real attachment file to open.");
+    return;
+  }
+  const { blob } = await api.getFile(`/leave-requests/${leaveRequestId}/doctor-note/${attachmentId}`);
+  const url = window.URL.createObjectURL(blob);
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 export async function approveLeaveRequest(id) {

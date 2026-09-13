@@ -97,3 +97,45 @@ export async function assignComplaint(id, assignedOfficerId) {
   }
   return api.patch(`/complaints/${id}/assign`, { assignedOfficerId });
 }
+
+// Adds one entry to a complaint's case-notes timeline — text and/or up
+// to 5 file attachments (photos of the scene, a scanned statement, …).
+// Returns the whole updated complaint (with its fresh `notes` array),
+// same shape as every other complaint mutation here.
+export async function addComplaintNote(id, { text, files = [] }) {
+  if (USE_DUMMY_DATA) {
+    const complaint = dummyComplaints.find((c) => c.id === id);
+    if (complaint) {
+      if (!complaint.notes) complaint.notes = [];
+      complaint.notes.push({
+        id: `note-${complaint.notes.length + 1}`,
+        authorName: "You",
+        text,
+        attachments: files.map((f) => ({ id: f.name, originalName: f.name, mimeType: f.type, size: f.size })),
+        createdAt: new Date().toISOString(),
+      });
+    }
+    return Promise.resolve(complaint);
+  }
+
+  const formData = new FormData();
+  formData.append("text", text || "");
+  files.forEach((file) => formData.append("attachments", file));
+  return api.postForm(`/complaints/${id}/notes`, formData);
+}
+
+// Fetches one attachment as a blob (auth-gated, same pattern as
+// downloadComplaintReceipt above) and either opens it in a new tab
+// (images/PDFs preview fine that way) or triggers a save, depending on
+// what the browser can actually display inline.
+export async function openComplaintAttachment(complaintId, noteId, attachmentId) {
+  if (USE_DUMMY_DATA) {
+    window.alert("Dummy data mode has no real attachment file to open.");
+    return;
+  }
+  const { blob } = await api.getFile(`/complaints/${complaintId}/notes/${noteId}/attachments/${attachmentId}`);
+  const url = window.URL.createObjectURL(blob);
+  window.open(url, "_blank", "noopener,noreferrer");
+  // Deliberately not revoked immediately — the new tab is still reading
+  // from this blob URL; the browser reclaims it when that tab closes.
+}

@@ -1,6 +1,11 @@
+const fs = require("fs");
+const path = require("path");
 const Complaint = require("../models/Complaint");
 const User = require("../models/User");
 const { buildComplaintReceipt } = require("../utils/complaintReceiptBuilder");
+const { logAuditForActor } = require("../utils/auditLogger");
+const { UPLOAD_DIR } = require("../middleware/complaintAttachmentUpload");
+const { generateAlert } = require("../utils/alerts");
 
 // Ref IDs follow the physical Complaint Book they're logged under — each
 // book (IB, CR, TR, ...) keeps its own running sequence, e.g. the 7th
@@ -157,6 +162,25 @@ async function create(req, res) {
       registeredBy: req.user.uid,
       stationId: req.user.stationId,
     });
+    logAuditForActor(req, { action: `Registered Complaint: ${complaint.refId}`, module: "Complaints" });
+
+    // A Grave Crime complaint reaches the station's OIC immediately (see
+    // utils/sseHub.js) rather than waiting for them to next open their
+    // Incident & Complaint Monitor — same "only one OIC per station"
+    // invariant already enforced in usersController.js.
+    if (complaint.severity === "Grave Crime") {
+      const oic = await User.findOne({ stationId: req.user.stationId, role: "oic" });
+      if (oic) {
+        await generateAlert({
+          alertType: "critical_complaint",
+          title: "Critical Complaint Filed",
+          message: `${complaint.refId}: ${complaint.title}`,
+          recipientId: oic._id,
+          stationId: req.user.stationId,
+        });
+      }
+    }
+
     return res.status(201).json(complaint.toJSON());
   } catch (err) {
     console.error("create complaint error:", err);
@@ -179,6 +203,16 @@ async function update(req, res) {
       { new: true }
     );
     if (!complaint) return res.status(404).json({ error: "Complaint not found" });
+
+    const changes = [];
+    if (status) changes.push(`status → ${status}`);
+    if (severity) changes.push(`severity → ${severity}`);
+    if (assignedOfficerId !== undefined) changes.push("reassigned");
+    logAuditForActor(req, {
+      action: `Updated Complaint ${complaint.refId}${changes.length ? ` (${changes.join(", ")})` : ""}`,
+      module: "Complaints",
+    });
+
     return res.json(complaint.toJSON());
   } catch (err) {
     console.error("update complaint error:", err);
@@ -202,6 +236,13 @@ async function assign(req, res) {
       { new: true }
     );
     if (!complaint) return res.status(404).json({ error: "Complaint not found" });
+
+    const officer = await User.findById(assignedOfficerId).select("fullName");
+    logAuditForActor(req, {
+      action: `Assigned Complaint ${complaint.refId} to ${officer?.fullName || "an officer"}`,
+      module: "Complaints",
+    });
+
     return res.json(complaint.toJSON());
   } catch (err) {
     console.error("assign complaint error:", err);
@@ -209,4 +250,83 @@ async function assign(req, res) {
   }
 }
 
-module.exports = { list, listLog, getOne, create, update, assign, downloadReceipt };
+// POST /api/complaints/:id/notes — oic, duty_officer, officer, admin.
+// multipart/form-data: `text` (optional if at least one file is
+// attached) + up to 5 `attachments` files (handled by
+// complaintAttachmentUpload.js before this runs). Turns the registry
+// from a bare status tracker into an actual running case file —
+// "investigating since...", "witness statement taken", a photo of the
+// scene — each entry timestamped and attributed to whoever added it.
+async function addNote(req, res) {
+  const text = (req.body.text || "").trim();
+  const files = req.files || [];
+
+  if (!text && files.length === 0) {
+    // Nothing was actually uploaded yet (fileFilter/limits rejected
+    // everything before multer even got here) vs. a genuinely empty
+    // submission both land here — same message covers both.
+    return res.status(400).json({ error: "Add a note or at least one attachment" });
+  }
+
+  try {
+    const complaint = await Complaint.findOne({ _id: req.params.id, stationId: req.user.stationId });
+    if (!complaint) return res.status(404).json({ error: "Complaint not found" });
+
+    const author = await User.findById(req.user.uid).select("fullName");
+
+    complaint.notes.push({
+      authorId: req.user.uid,
+      authorName: author?.fullName || "Unknown",
+      text,
+      attachments: files.map((f) => ({
+        filename: f.filename,
+        originalName: f.originalname,
+        mimeType: f.mimetype,
+        size: f.size,
+      })),
+    });
+    await complaint.save();
+
+    logAuditForActor(req, {
+      action: `Added Case Note to Complaint ${complaint.refId}${files.length ? ` (${files.length} attachment${files.length > 1 ? "s" : ""})` : ""}`,
+      module: "Complaints",
+    });
+
+    return res.status(201).json(complaint.toJSON());
+  } catch (err) {
+    console.error("addNote error:", err);
+    return res.status(500).json({ error: "Could not add case note" });
+  }
+}
+
+// GET /api/complaints/:id/notes/:noteId/attachments/:attachmentId — same
+// access as getOne. The on-disk filename is a random token (never the
+// officer's original name — see complaintAttachmentUpload.js), so there's
+// no path-traversal surface here: it's whatever was already stored on
+// this exact attachment subdocument, not anything from the request.
+async function downloadAttachment(req, res) {
+  try {
+    const complaint = await Complaint.findOne({ _id: req.params.id, stationId: req.user.stationId });
+    if (!complaint) return res.status(404).json({ error: "Complaint not found" });
+
+    const note = complaint.notes.id(req.params.noteId);
+    if (!note) return res.status(404).json({ error: "Note not found" });
+
+    const attachment = note.attachments.id(req.params.attachmentId);
+    if (!attachment) return res.status(404).json({ error: "Attachment not found" });
+
+    const filePath = path.join(UPLOAD_DIR, attachment.filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "File no longer exists on the server" });
+    }
+
+    res.setHeader("Content-Type", attachment.mimeType);
+    res.setHeader("Content-Disposition", `inline; filename="${attachment.originalName}"`);
+    return res.sendFile(filePath);
+  } catch (err) {
+    console.error("downloadAttachment error:", err);
+    return res.status(500).json({ error: "Could not download attachment" });
+  }
+}
+
+module.exports = { list, listLog, getOne, create, update, assign, downloadReceipt, addNote, downloadAttachment };

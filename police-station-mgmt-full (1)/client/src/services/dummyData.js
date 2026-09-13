@@ -27,23 +27,25 @@ export const dummyCredentials = {
   65521: { password: "officer123", userId: "u5" },
 };
 
-// Matches the leave balance numbers shown across the PDF's workflows
-// (20/12/5 days pattern seen on pages 3, 6, 12).
+// Casual/Personal follow the rank-based rule (28 days for Sergeant and
+// below, 21 above that — see server/src/config/ranks.js); medical is
+// always null, meaning unlimited.
 export const dummyLeaveBalances = {
-  u1: { annual: 21, sick: 15, casual: 15 },
-  u2: { annual: 21, sick: 15, casual: 15 },
-  u3: { annual: 20, sick: 12, casual: 5 },
-  u4: { annual: 20, sick: 15, casual: 15 },
-  u5: { annual: 20, sick: 12, casual: 5 },
+  u1: { personal: 21, medical: null, casual: 21 },
+  u2: { personal: 21, medical: null, casual: 21 },
+  u3: { personal: 28, medical: null, casual: 5 },
+  u4: { personal: 28, medical: null, casual: 28 },
+  u5: { personal: 28, medical: null, casual: 5 },
 };
 
-// Matches the LV-112/LV-132/LV-052/LV-012 rows seen on pages 3, 6, 12.
+// Matches the LV-112/LV-132/LV-052/LV-012 rows seen on pages 3, 6, 12 —
+// leaveType renamed from the register's old annual/sick to personal/medical.
 export const dummyLeaveRequests = [
-  { id: "lv1", refId: "LV-112", officerId: "u5", officerName: "PC Nishadi", leaveType: "annual", startDate: "2026-03-04", endDate: "2026-03-06", days: 2, status: "pending", remarks: "Home Renovation" },
-  { id: "lv2", refId: "LV-132", officerId: "u5", officerName: "PC Nishadi", leaveType: "sick", startDate: "2026-02-01", endDate: "2026-02-06", days: 5, status: "approved", remarks: "Seasonal Influenza" },
-  { id: "lv3", refId: "LV-052", officerId: "u5", officerName: "PC Nishadi", leaveType: "annual", startDate: "2025-12-04", endDate: "2025-12-06", days: 2, status: "approved", remarks: "Trip" },
+  { id: "lv1", refId: "LV-112", officerId: "u5", officerName: "PC Nishadi", leaveType: "personal", startDate: "2026-03-04", endDate: "2026-03-06", days: 2, status: "pending", remarks: "Home Renovation" },
+  { id: "lv2", refId: "LV-132", officerId: "u5", officerName: "PC Nishadi", leaveType: "medical", startDate: "2026-02-01", endDate: "2026-02-06", days: 5, status: "approved", remarks: "Seasonal Influenza" },
+  { id: "lv3", refId: "LV-052", officerId: "u5", officerName: "PC Nishadi", leaveType: "personal", startDate: "2025-12-04", endDate: "2025-12-06", days: 2, status: "approved", remarks: "Trip" },
   { id: "lv4", refId: "LV-012", officerId: "u5", officerName: "PC Nishadi", leaveType: "casual", startDate: "2025-03-08", endDate: "2025-03-16", days: 8, status: "approved", remarks: "Family Gathering" },
-  { id: "lv5", refId: "LV-201", officerId: "u3", officerName: "PC Perera", leaveType: "annual", startDate: "2026-10-12", endDate: "2026-10-15", days: 4, status: "pending", remarks: "Personal" },
+  { id: "lv5", refId: "LV-201", officerId: "u3", officerName: "PC Perera", leaveType: "personal", startDate: "2026-10-12", endDate: "2026-10-15", days: 4, status: "pending", remarks: "Personal" },
 ];
 
 // "My assigned complaints" table from the Officer Dashboard (page 2):
