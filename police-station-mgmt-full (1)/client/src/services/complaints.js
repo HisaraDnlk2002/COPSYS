@@ -58,6 +58,34 @@ export async function updateComplaintStatus(id, status) {
   return api.patch(`/complaints/${id}`, { status });
 }
 
+// Downloads the formal "Complaint Acknowledgement / Receipt" PDF for a
+// complaint — regenerated fresh from the current record each time
+// (nothing's stored server-side), so it's always safe to re-download
+// later if the complainant's copy is lost.
+export async function downloadComplaintReceipt(id, refId) {
+  if (USE_DUMMY_DATA) {
+    const blob = new Blob(["Dummy data mode has no receipt to generate.\n"], { type: "text/plain" });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `complaint-receipt-${refId || id}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+    return;
+  }
+  const { blob, filename } = await api.getFile(`/complaints/${id}/receipt`);
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+}
+
 export async function assignComplaint(id, assignedOfficerId) {
   if (USE_DUMMY_DATA) {
     const complaint = dummyComplaints.find((c) => c.id === id);

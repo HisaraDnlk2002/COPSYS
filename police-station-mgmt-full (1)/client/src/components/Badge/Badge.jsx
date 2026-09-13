@@ -35,6 +35,12 @@ const STATUS_TONE = {
   critical: "danger",
   warning: "warning",
   info: "info",
+
+  // Personal duty-schedule fallback (Dashboard's Weekly Duty Schedule
+  // card, RosterSummary): a day with no specific branch shift and no
+  // leave defaults to General Duty rather than reading as blank/unknown.
+  general_duty: "info",
+  on_leave: "warning",
 };
 
 export function Badge({ status, children, tone, title }) {

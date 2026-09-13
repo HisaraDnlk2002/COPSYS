@@ -18,6 +18,7 @@ import { getAllLeaveRequests } from "../../services/leave";
 import { CreateRosterWizard } from "./CreateRosterWizard";
 import { DailyDutyUpdate } from "./DailyDutyUpdate";
 import { WeeklyGrid } from "./WeeklyGrid";
+import { RosterSummary } from "./RosterSummary";
 import "./DutyRoster.css";
 
 function overlapsWeek(leave, weekStarting) {
@@ -386,6 +387,25 @@ export function DutyRosterPage() {
             )}
           </Card>
         </div>
+      )}
+
+      {selectedWeek && selectedWeek.status === "published" && (
+        <Card variant="panel" style={{ marginTop: 24 }}>
+          <h3 style={{ marginTop: 0 }}>{t("dutyRoster.summary.title")}</h3>
+          <p style={{ color: "var(--color-text-muted)", fontSize: 13, marginTop: -4, marginBottom: 16 }}>
+            {t("dutyRoster.summary.subtitle")}
+          </p>
+          {detailLoading ? (
+            <Loader label={t("dutyRoster.loadingWeekGrid")} />
+          ) : (
+            <RosterSummary
+              week={selectedWeek}
+              shifts={activeShifts}
+              officers={officers}
+              leaveRequests={leaveRequests}
+            />
+          )}
+        </Card>
       )}
 
       <Modal

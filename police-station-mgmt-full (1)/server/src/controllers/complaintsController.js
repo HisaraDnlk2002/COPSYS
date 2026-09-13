@@ -1,5 +1,6 @@
 const Complaint = require("../models/Complaint");
 const User = require("../models/User");
+const { buildComplaintReceipt } = require("../utils/complaintReceiptBuilder");
 
 // Ref IDs follow the physical Complaint Book they're logged under — each
 // book (IB, CR, TR, ...) keeps its own running sequence, e.g. the 7th
@@ -81,6 +82,29 @@ async function getOne(req, res) {
   } catch (err) {
     console.error("getOne complaint error:", err);
     return res.status(500).json({ error: "Could not load complaint" });
+  }
+}
+
+// GET /api/complaints/:id/receipt — same access as getOne. Regenerates a
+// formal "Complaint Acknowledgement / Receipt" PDF on demand (not stored)
+// so it's always in sync with the complaint's current status, and can be
+// reprinted later if the complainant's copy is lost.
+async function downloadReceipt(req, res) {
+  try {
+    const complaint = await Complaint.findOne({ _id: req.params.id, stationId: req.user.stationId }).populate(
+      "registeredBy",
+      "fullName rankAndNumber"
+    );
+    if (!complaint) return res.status(404).json({ error: "Complaint not found" });
+
+    const pdfBuffer = await buildComplaintReceipt(complaint);
+    const safeName = complaint.refId.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="complaint-receipt-${safeName}.pdf"`);
+    return res.send(pdfBuffer);
+  } catch (err) {
+    console.error("downloadReceipt error:", err);
+    return res.status(500).json({ error: "Could not generate the complaint receipt" });
   }
 }
 
@@ -185,4 +209,4 @@ async function assign(req, res) {
   }
 }
 
-module.exports = { list, listLog, getOne, create, update, assign };
+module.exports = { list, listLog, getOne, create, update, assign, downloadReceipt };

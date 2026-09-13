@@ -374,7 +374,7 @@ export function PersonnelPage() {
           <Card variant="panel">
             <form onSubmit={handleSubmit}>
               <div className="personnel-form-grid">
-                <InputField label={t("personnel.fullName")} required value={form.fullName} onChange={(e) => updateField("fullName", sanitizeName(e.target.value))} />
+                <InputField label={t("personnel.fullName")} required value={form.fullName} onChange={(e) => updateField("fullName", sanitizeName(e.target.value))} sinhalaTyping />
                 <InputField label={t("personnel.rankAndNumber")} required value={form.rankAndNumber} onChange={(e) => updateField("rankAndNumber", e.target.value)}
                   placeholder={t("personnel.rankAndNumberPlaceholder")} />
                 <InputField label={t("personnel.departmentDivision")} type="select" required value={form.department}
@@ -388,9 +388,9 @@ export function PersonnelPage() {
                   onChange={(e) => updateField("email", e.target.value)}
                   placeholder={t("personnel.emailPlaceholder")} helperText={t("personnel.emailHelper")} />
                 <InputField label={t("personnel.address")} required value={form.address}
-                  onChange={(e) => updateField("address", e.target.value)} />
+                  onChange={(e) => updateField("address", e.target.value)} sinhalaTyping />
                 <InputField label={t("personnel.emergencyContactName")} value={form.emergencyContactName}
-                  onChange={(e) => updateField("emergencyContactName", sanitizeName(e.target.value))} />
+                  onChange={(e) => updateField("emergencyContactName", sanitizeName(e.target.value))} sinhalaTyping />
                 <InputField label={t("personnel.emergencyContactPhone")} value={form.emergencyContactPhone}
                   onChange={(e) => updateField("emergencyContactPhone", e.target.value.replace(/\D/g, "").slice(0, 10))}
                   placeholder={t("personnel.phonePlaceholder")} />
@@ -595,6 +595,7 @@ export function PersonnelPage() {
               required
               value={editForm.fullName}
               onChange={(e) => updateEditField("fullName", sanitizeName(e.target.value))}
+              sinhalaTyping
             />
             <InputField
               label={t("personnel.departmentDivision")}
@@ -631,11 +632,13 @@ export function PersonnelPage() {
               required
               value={editForm.address}
               onChange={(e) => updateEditField("address", e.target.value)}
+              sinhalaTyping
             />
             <InputField
               label={t("personnel.emergencyContactName")}
               value={editForm.emergencyContactName}
               onChange={(e) => updateEditField("emergencyContactName", sanitizeName(e.target.value))}
+              sinhalaTyping
             />
             <InputField
               label={t("personnel.emergencyContactPhone")}

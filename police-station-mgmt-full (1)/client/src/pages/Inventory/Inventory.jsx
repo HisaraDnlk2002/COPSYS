@@ -850,6 +850,7 @@ export function InventoryPage() {
             placeholder={t("inventory.searchLedgerPlaceholder")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            sinhalaTyping
           />
         </div>
         {activeTab !== "weapons" && (
@@ -1073,7 +1074,7 @@ export function InventoryPage() {
             onChange={(e) => setReturnForm((f) => ({ ...f, quantity: e.target.value }))}
           />
           <InputField label={t("inventory.returnDate")} type="date" value={returnForm.returnDate} onChange={(e) => setReturnForm((f) => ({ ...f, returnDate: e.target.value }))} />
-          <InputField label={t("inventory.weaponCondition")} value={returnForm.condition} onChange={(e) => setReturnForm((f) => ({ ...f, condition: e.target.value }))} />
+          <InputField label={t("inventory.weaponCondition")} value={returnForm.condition} onChange={(e) => setReturnForm((f) => ({ ...f, condition: e.target.value }))} sinhalaTyping />
         </div>
 
         <h3 className="section-label">{t("inventory.ammoCheckTitle")}</h3>
@@ -1120,7 +1121,7 @@ export function InventoryPage() {
         </p>
         <div className="modal-form-grid">
           <InputField label={t("inventory.weaponSerialId")} value={addForm.weaponSerialId} onChange={(e) => setAddForm((f) => ({ ...f, weaponSerialId: e.target.value }))} />
-          <InputField label={t("inventory.weaponType")} value={addForm.weaponType} onChange={(e) => setAddForm((f) => ({ ...f, weaponType: e.target.value }))} />
+          <InputField label={t("inventory.weaponType")} value={addForm.weaponType} onChange={(e) => setAddForm((f) => ({ ...f, weaponType: e.target.value }))} sinhalaTyping />
           <InputField
             label={t("inventory.colCategory")}
             type="select"
@@ -1175,6 +1176,7 @@ export function InventoryPage() {
                 value={maintenanceForm.assignedTechnician}
                 readOnly={managingRecord.status === "completed"}
                 onChange={(e) => setMaintenanceForm((f) => ({ ...f, assignedTechnician: e.target.value }))}
+                sinhalaTyping
               />
               <InputField
                 label={t("inventory.colMaintenanceType")}
@@ -1312,6 +1314,7 @@ export function InventoryPage() {
                 value={inspectionForm.accessoriesChecked}
                 onChange={(e) => setInspectionForm((f) => ({ ...f, accessoriesChecked: e.target.value }))}
                 placeholder={t("inventory.accessoriesCheckedPlaceholder")}
+                sinhalaTyping
               />
               <InputField
                 label={t("inventory.colResult")}

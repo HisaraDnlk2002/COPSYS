@@ -611,6 +611,7 @@ export function ReportsPage() {
         value={filters[field.key] || ""}
         placeholder={field.placeholder}
         onChange={(e) => setFilters((f) => ({ ...f, [field.key]: e.target.value }))}
+        sinhalaTyping
       />
     );
   }

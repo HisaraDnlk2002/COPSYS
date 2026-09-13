@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { Button, InputField, Card, StatCard, Table, Badge, Loader, Modal } from "../../components";
 import { SearchableSelect } from "../../components";
 import {
@@ -63,6 +64,7 @@ function leaveSortKey(row, granularity) {
 export function LeaveRequestsPage() {
   const { user } = useAuth();
   const { t } = useLanguage();
+  const location = useLocation();
   const isOic = user?.role === "oic";
 
   const LEAVE_CATEGORY_OPTIONS = [
@@ -71,7 +73,10 @@ export function LeaveRequestsPage() {
     { value: "casual", label: t("leave.categoryCasual") },
   ];
 
-  const [view, setView] = useState("history"); // "history" | "apply"
+  // Dashboard's "Apply Leave" quick action lands here with
+  // { state: { openApply: true } } (see Dashboard.jsx) so it opens
+  // straight on the application form instead of the history list first.
+  const [view, setView] = useState(location.state?.openApply ? "apply" : "history"); // "history" | "apply"
   const [loading, setLoading] = useState(true);
   const [requests, setRequests] = useState([]);
   const [balance, setBalance] = useState(null);

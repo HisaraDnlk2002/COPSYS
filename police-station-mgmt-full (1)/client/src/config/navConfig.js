@@ -25,6 +25,7 @@ export const navItemsByRole = {
     { key: "leave", label: "Leave Requests", path: "/leave" },
     { key: "complaints", label: "Complaints registry", path: "/complaints" },
     { key: "reports", label: "Reports", path: "/reports" },
+    { key: "settings", label: "Settings", path: "/settings" },
   ],
   inventory_officer: [
     { key: "dashboard", label: "Dashboard", path: "/dashboard" },
@@ -33,11 +34,13 @@ export const navItemsByRole = {
     { key: "leave", label: "Leave Requests", path: "/leave" },
     { key: "complaints", label: "Complaints registry", path: "/complaints" },
     { key: "reports", label: "Reports", path: "/reports" },
+    { key: "settings", label: "Settings", path: "/settings" },
   ],
   officer: [
     { key: "dashboard", label: "Dashboard", path: "/dashboard" },
     { key: "weapon-management", label: "My Weapons", path: "/weapon-management" },
     { key: "leave", label: "Leave Requests", path: "/leave" },
     { key: "complaints", label: "Complaints registry", path: "/complaints" },
+    { key: "settings", label: "Settings", path: "/settings" },
   ],
 };

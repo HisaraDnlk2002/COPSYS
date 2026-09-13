@@ -45,6 +45,27 @@ function buildConsecutiveDayTracker(maxConsecutiveDays = 6) {
   };
 }
 
+// Rule: prefer rotating an officer off the shift type they worked the
+// immediately preceding roster week — nobody should land on nights two
+// weeks running if there's an available alternative. This is a soft
+// preference, not a hard exclusion: officers who worked the same shift
+// last week are simply pushed to the back of the candidate order, not
+// removed outright, so a short-staffed branch still fills its slots
+// (from the same-shift group) rather than reporting a shortfall over a
+// fairness rule. `previousShiftByOfficer` is officerId -> "day"|"night"
+// for whichever shift they mostly worked last week; an officer with no
+// entry (new hire, was on leave all week, first roster ever) is treated
+// as eligible either way.
+function splitByRotationPreference(officers, shiftType, previousShiftByOfficer) {
+  const rotated = [];
+  const sameAsLastWeek = [];
+  for (const officer of officers) {
+    if (previousShiftByOfficer.get(officer.id) === shiftType) sameAsLastWeek.push(officer);
+    else rotated.push(officer);
+  }
+  return { rotated, sameAsLastWeek };
+}
+
 // Rule: when distributing officers across shift slots, balance rank
 // composition rather than dumping all of one rank onto one shift —
 // rotates through officers grouped by rank in round-robin order.
@@ -91,6 +112,9 @@ function roundRobinByRank(officers) {
  * @param {Array} params.approvedLeaveRequests - [{ officerId, startDate, endDate }]
  * @param {Map<string, Set<string>>} [params.excludeByDate] - dateISO -> officerIds already
  *   committed elsewhere this week (another branch, or the other shift on the same day)
+ * @param {Map<string, "day"|"night">} [params.previousShiftByOfficer] - officerId -> the
+ *   shift type they mostly worked the immediately preceding roster week, used to prefer
+ *   rotating them onto the opposite shift this week (see splitByRotationPreference)
  * @returns {{ assignments: Array, unfilledDays: Array, excludedOfficerIds: Array }}
  */
 function generateWeeklyRoster({
@@ -101,6 +125,7 @@ function generateWeeklyRoster({
   officers,
   approvedLeaveRequests,
   excludeByDate = new Map(),
+  previousShiftByOfficer = new Map(),
 }) {
   const { start: shiftStart, end: shiftEnd } = SHIFTS[shiftType] || SHIFTS.day;
   const tracker = buildConsecutiveDayTracker();
@@ -135,13 +160,18 @@ function generateWeeklyRoster({
     const availablePermanent = filterAvailable(permanentOfficers);
     const availableGeneralPool = filterAvailable(generalPoolOfficers);
 
-    // Rule: fill from permanent branch officers first, balancing rank
-    // via round-robin, then draw only the shortfall from the General Pool
-    const orderedPermanent = roundRobinByRank(availablePermanent);
+    // Rule: fill from permanent branch officers first, balancing rank via
+    // round-robin — but within that, prefer whoever *didn't* work this
+    // same shift type last week, so the rotation rule and the rank
+    // balance rule don't fight each other (rotation picks the pool,
+    // round-robin picks the order within it).
+    const permanentSplit = splitByRotationPreference(availablePermanent, shiftType, previousShiftByOfficer);
+    const orderedPermanent = [...roundRobinByRank(permanentSplit.rotated), ...roundRobinByRank(permanentSplit.sameAsLastWeek)];
     const chosenPermanent = orderedPermanent.slice(0, requiredStaffing);
 
     const shortfall = requiredStaffing - chosenPermanent.length;
-    const orderedGeneralPool = roundRobinByRank(availableGeneralPool);
+    const generalPoolSplit = splitByRotationPreference(availableGeneralPool, shiftType, previousShiftByOfficer);
+    const orderedGeneralPool = [...roundRobinByRank(generalPoolSplit.rotated), ...roundRobinByRank(generalPoolSplit.sameAsLastWeek)];
     const chosenGeneralPool = shortfall > 0 ? orderedGeneralPool.slice(0, shortfall) : [];
 
     const chosenToday = [...chosenPermanent, ...chosenGeneralPool];
@@ -288,4 +318,5 @@ module.exports = {
   isOnLeave,
   buildConsecutiveDayTracker,
   roundRobinByRank,
+  splitByRotationPreference,
 };

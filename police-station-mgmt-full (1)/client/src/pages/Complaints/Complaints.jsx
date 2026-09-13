@@ -1,8 +1,15 @@
 import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth";
 import { useLanguage } from "../../i18n/useLanguage";
 import { Button, InputField, Card, Table, Badge, Loader, AssignmentCell } from "../../components";
-import { getComplaints, registerComplaint, updateComplaintStatus, assignComplaint } from "../../services/complaints";
+import {
+  getComplaints,
+  registerComplaint,
+  updateComplaintStatus,
+  assignComplaint,
+  downloadComplaintReceipt,
+} from "../../services/complaints";
 import { listUsers } from "../../services/users";
 import { formatDateAndTime } from "../../utils/formatDate";
 import "./Complaints.css";
@@ -53,8 +60,9 @@ const EMPTY_FORM = {
 
 export function ComplaintsPage() {
   const { user } = useAuth();
+  const location = useLocation();
   const { t } = useLanguage();
-  const canManage = ["oic", "duty_officer", "officer"].includes(user?.role);
+  const canManage = ["oic", "duty_officer", "officer", "admin"].includes(user?.role);
   const canChangeStatus = ["oic", "admin"].includes(user?.role);
   const canAssign = user?.role === "oic";
 
@@ -100,13 +108,24 @@ export function ComplaintsPage() {
   const BOOK_FILTER_OPTIONS = [{ value: "all", label: t("complaints.allBooks") }, ...COMPLAINT_BOOK_OPTIONS];
   const STATUS_FILTER_OPTIONS = [{ value: "all", label: t("complaints.allStatuses") }, ...STATUS_OPTIONS];
 
-  const [view, setView] = useState("list"); // "list" | "register"
+  // Dashboard's "Register complaint" quick action lands here with
+  // { state: { openRegister: true } } (see Dashboard.jsx) so it opens
+  // straight on the registration form instead of the registry list first.
+  // Gated on canManage too — inventory_officer sees that Dashboard button
+  // (it's not role-filtered there) but can't actually register, so they
+  // still land on the list rather than a form that would 403 on submit.
+  const [view, setView] = useState(location.state?.openRegister && canManage ? "register" : "list"); // "list" | "register"
   const [loading, setLoading] = useState(true);
   const [complaints, setComplaints] = useState([]);
   const [officers, setOfficers] = useState([]);
   const [form, setForm] = useState(EMPTY_FORM);
   const [formError, setFormError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // The just-registered complaint, shown as a confirmation screen (with
+  // a "Download Receipt" button) in place of the form — mirrors
+  // Personnel.jsx's "Account Created" pattern after registering an officer.
+  const [registeredComplaint, setRegisteredComplaint] = useState(null);
+  const [downloadingReceipt, setDownloadingReceipt] = useState(false);
   const [search, setSearch] = useState("");
   const [bookFilter, setBookFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -179,14 +198,28 @@ export function ComplaintsPage() {
 
     setSubmitting(true);
     try {
-      await registerComplaint(form);
+      const created = await registerComplaint(form);
+      // Stays on the "register" view — showing the confirmation +
+      // receipt screen below — rather than jumping back to the list;
+      // "Done" is what actually returns to it.
+      setRegisteredComplaint(created);
       clearForm();
-      setView("list");
       await loadData();
     } catch (err) {
       setFormError(err.message || t("complaints.errRegisterFailed"));
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleDownloadReceipt(complaint) {
+    setDownloadingReceipt(true);
+    try {
+      await downloadComplaintReceipt(complaint.id, complaint.refId);
+    } catch (err) {
+      window.alert(err.message || t("complaints.errReceiptFailed"));
+    } finally {
+      setDownloadingReceipt(false);
     }
   }
 
@@ -297,6 +330,22 @@ export function ComplaintsPage() {
           </div>
         </div>
 
+        {registeredComplaint ? (
+          <Card variant="panel">
+            <h3 style={{ marginBottom: 12 }}>{t("complaints.complaintRegistered")}</h3>
+            <p>
+              {t("complaints.complaintRegisteredText")} <strong>{registeredComplaint.refId}</strong>
+            </p>
+            <div style={{ display: "flex", gap: 12, marginTop: 24 }}>
+              <Button variant="outline" onClick={() => handleDownloadReceipt(registeredComplaint)} disabled={downloadingReceipt}>
+                {downloadingReceipt ? t("complaints.downloading") : t("complaints.downloadReceipt")}
+              </Button>
+              <Button variant="primary" onClick={() => { setRegisteredComplaint(null); setView("list"); }}>
+                {t("complaints.done")}
+              </Button>
+            </div>
+          </Card>
+        ) : (
         <Card variant="panel">
           <form onSubmit={handleSubmit}>
             <h3 className="section-label">{t("complaints.registerClassification")}</h3>
@@ -304,7 +353,8 @@ export function ComplaintsPage() {
               <InputField label={t("complaints.complaintBook")} type="select" required value={form.complaintBook}
                 onChange={(e) => updateField("complaintBook", e.target.value)} options={COMPLAINT_BOOK_OPTIONS} />
               <InputField label={t("complaints.complaintTitle")} required value={form.title}
-                onChange={(e) => updateField("title", e.target.value)} placeholder={t("complaints.complaintTitlePlaceholder")} />
+                onChange={(e) => updateField("title", e.target.value)} placeholder={t("complaints.complaintTitlePlaceholder")}
+                sinhalaTyping />
               <InputField label={t("complaints.complaintSource")} type="select" value={form.complaintSource}
                 onChange={(e) => updateField("complaintSource", e.target.value)} options={SOURCE_OPTIONS} />
               <InputField label={t("complaints.priority")} type="select" value={form.priority}
@@ -313,17 +363,17 @@ export function ComplaintsPage() {
 
             <h3 className="section-label">{t("complaints.complaintDetails")}</h3>
             <div className="complaint-form-grid">
-              <InputField label={t("complaints.fullName")} required value={form.fullName} onChange={(e) => updateField("fullName", e.target.value)} />
+              <InputField label={t("complaints.fullName")} required value={form.fullName} onChange={(e) => updateField("fullName", e.target.value)} sinhalaTyping />
               <InputField label={t("complaints.contactNumber")} value={form.contactNumber}
                 onChange={(e) => updateField("contactNumber", e.target.value.replace(/\D/g, "").slice(0, 10))} />
               <InputField label={t("complaints.nicNumber")} value={form.nic} onChange={(e) => updateField("nic", sanitizeNic(e.target.value))}
                 helperText={t("complaints.nicOrPassportHelper")} />
               <InputField label={t("complaints.passportId")} value={form.passportId} onChange={(e) => updateField("passportId", e.target.value)}
                 helperText={t("complaints.nicOrPassportHelper")} />
-              <InputField label={t("complaints.occupationOptional")} value={form.occupation} onChange={(e) => updateField("occupation", e.target.value)} />
+              <InputField label={t("complaints.occupationOptional")} value={form.occupation} onChange={(e) => updateField("occupation", e.target.value)} sinhalaTyping />
               <div className="field-full">
                 <InputField label={t("complaints.residentialAddress")} type="textarea" rows={2} required value={form.address}
-                  onChange={(e) => updateField("address", e.target.value)} placeholder={t("complaints.addressPlaceholder")} />
+                  onChange={(e) => updateField("address", e.target.value)} placeholder={t("complaints.addressPlaceholder")} sinhalaTyping />
               </div>
             </div>
 
@@ -339,7 +389,8 @@ export function ComplaintsPage() {
                 onChange={(e) => updateField("incidentTime", e.target.value)} />
               <div className="field-full">
                 <InputField label={t("complaints.incidentLocation")} required value={form.incidentLocation}
-                  onChange={(e) => updateField("incidentLocation", e.target.value)} placeholder={t("complaints.incidentLocationPlaceholder")} />
+                  onChange={(e) => updateField("incidentLocation", e.target.value)} placeholder={t("complaints.incidentLocationPlaceholder")}
+                  sinhalaTyping />
               </div>
               <div className="field-full">
                 <InputField label={t("complaints.detailedDescription")} type="textarea" required value={form.description}
@@ -360,6 +411,7 @@ export function ComplaintsPage() {
             </div>
           </form>
         </Card>
+        )}
       </div>
     );
   }
@@ -369,7 +421,7 @@ export function ComplaintsPage() {
       <div className="complaints-header">
         <h1>{t("complaints.registryTitle")}</h1>
         {canManage && (
-          <Button variant="primary" onClick={() => setView("register")}>
+          <Button variant="primary" onClick={() => { setRegisteredComplaint(null); setView("register"); }}>
             {t("complaints.registerComplaint")}
           </Button>
         )}
@@ -382,6 +434,7 @@ export function ComplaintsPage() {
             placeholder={t("complaints.searchComplaintsPlaceholder")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            sinhalaTyping
           />
         </div>
         <InputField
@@ -433,7 +486,12 @@ export function ComplaintsPage() {
             <Card variant="panel">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                 <h3 style={{ margin: 0 }}>{t("complaints.complaintPrefix")} {viewing.refId}</h3>
-                <Button variant="ghost" type="button" onClick={() => setViewing(null)}>{t("complaints.close")}</Button>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <Button variant="outline" type="button" onClick={() => handleDownloadReceipt(viewing)} disabled={downloadingReceipt}>
+                    {downloadingReceipt ? t("complaints.downloading") : t("complaints.downloadReceipt")}
+                  </Button>
+                  <Button variant="ghost" type="button" onClick={() => setViewing(null)}>{t("complaints.close")}</Button>
+                </div>
               </div>
 
               <h3 className="section-label">{t("complaints.complainant")}</h3>

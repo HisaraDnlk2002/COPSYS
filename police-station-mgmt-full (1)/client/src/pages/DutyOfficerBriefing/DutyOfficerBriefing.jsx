@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useLanguage } from "../../i18n/useLanguage";
-import { Button, StatCard, Card, Badge, Loader } from "../../components";
+import { Button, StatCard, Card, Badge, Loader, MyDutyCard } from "../../components";
 import { getBriefing } from "../../services/dutyRoster";
 import { getAllLeaveRequests } from "../../services/leave";
 
@@ -83,8 +83,12 @@ export function DutyOfficerBriefingPage() {
           <div className="stat-grid">
             <StatCard label={t("briefing.totalOfficers")} value={briefing.totalOfficers} />
             <StatCard label={t("briefing.presentActive")} value={briefing.present} />
-            <StatCard label={t("briefing.onLeaveAbsent")} value={briefing.absent} />
+            <StatCard label={t("briefing.onLeaveAbsent")} value={briefing.absent + briefing.onLeave} />
             <StatCard label={t("briefing.currentShortage")} value={briefing.shortage} />
+          </div>
+
+          <div style={{ marginTop: 24 }}>
+            <MyDutyCard />
           </div>
 
           <Card variant="panel" style={{ marginTop: 24 }}>

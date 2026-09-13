@@ -49,8 +49,18 @@ export function AuthProvider({ children }) {
     setUser(null);
   }
 
+  // Re-fetches the logged-in user's own profile and updates context —
+  // used after a self-service account edit (Settings' "My Account"
+  // section) so the topbar name and anything else reading `user` picks
+  // up the change immediately instead of waiting for a page reload.
+  async function refreshProfile() {
+    const profile = await getMyProfile();
+    setUser(profile);
+    return profile;
+  }
+
   return (
-    <AuthContext.Provider value={{ user, loading, error, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, error, login, logout, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );

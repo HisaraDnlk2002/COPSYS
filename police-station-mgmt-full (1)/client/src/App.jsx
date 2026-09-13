@@ -84,7 +84,11 @@ function App() {
               <Route
                 path="/settings"
                 element={
-                  <ProtectedRoute roles={["oic", "admin"]}>
+                  // No role restriction here — every role gets the "My
+                  // Account" section on this page; the System Settings
+                  // (Communication Protocols + RBAC) sections stay
+                  // gated to oic/admin inside SettingsPage itself.
+                  <ProtectedRoute>
                     <SettingsPage />
                   </ProtectedRoute>
                 }

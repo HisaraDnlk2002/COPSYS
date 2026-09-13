@@ -12,6 +12,29 @@ export async function getMyProfile() {
   return api.get("/users/me");
 }
 
+// Self-service edit of the logged-in user's own contact details — phone,
+// email, address, emergency contact. Not name/role/department/rank —
+// those stay admin-only via updateUser below.
+export async function updateMyProfile(payload) {
+  if (USE_DUMMY_DATA) {
+    const storedId = localStorage.getItem("dummyUserId");
+    const user = dummyUsers.find((u) => u.id === storedId);
+    if (user) Object.assign(user, payload);
+    return Promise.resolve(user);
+  }
+  return api.patch("/users/me", payload);
+}
+
+// Self-service password change — requires the caller's current password,
+// unlike Admin's resetPassword below. See services/passwordResetRequests.js
+// for the separate officer-initiated "forgot password" email flow.
+export async function changeMyPassword(payload) {
+  if (USE_DUMMY_DATA) {
+    return Promise.resolve({ message: "Password updated (dummy mode)" });
+  }
+  return api.patch("/users/me/password", payload);
+}
+
 export async function listUsers() {
   if (USE_DUMMY_DATA) {
     return Promise.resolve(dummyUsers);

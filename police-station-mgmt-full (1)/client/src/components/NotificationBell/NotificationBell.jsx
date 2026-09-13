@@ -2,16 +2,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth";
 import { useLanguage } from "../../i18n/useLanguage";
-import { getAlerts, getMyAlerts } from "../../services/alerts";
+import { getMyAlerts } from "../../services/alerts";
 import "./NotificationBell.css";
 
-// duty_officer/inventory_officer both have read access to the
-// station-wide Alerts tab (see inventoryRoutes.js/alertRoutes.js), so
-// their bell reflects every open alert at the station, not just ones
-// naming them personally — that's the whole point of the Inventory
-// Officer's dashboard. A plain Officer has no such access; their bell
-// is scoped to GET /alerts/mine, same as the My Weapons page.
-const STATION_WIDE_ROLES = ["duty_officer", "inventory_officer"];
+// Personal only, for every role that can hold a weapon — GET
+// /alerts/mine, scoped server-side to alerts whose recipientId is the
+// caller. Deliberately NOT the station-wide feed: duty_officer and
+// inventory_officer already have their own dedicated place to monitor
+// every open alert at the station (the Inventory page's Alerts tab) —
+// the bell is just "what's addressed to me", same shape for everyone,
+// so it never shows someone else's weapon issue.
 const ELIGIBLE_ROLES = ["officer", "duty_officer", "inventory_officer"];
 
 const PRIORITY_DOT_CLASS = { critical: "notif-bell-dot-danger", warning: "notif-bell-dot-warning", info: "notif-bell-dot-info" };
@@ -28,17 +28,17 @@ export function NotificationBell() {
   const [open, setOpen] = useState(false);
   const containerRef = useRef(null);
 
-  const stationWide = STATION_WIDE_ROLES.includes(user?.role);
   const eligible = ELIGIBLE_ROLES.includes(user?.role);
 
-  // Memoized so this effect only re-runs when eligibility/scope actually
-  // change, not on every render (a plain function here would be a new
+  // Memoized so this effect only re-runs when eligibility actually
+  // changes, not on every render (a plain function here would be a new
   // reference each time, and satisfying exhaustive-deps with that would
-  // mean re-fetching on every re-render instead of just on mount/role change).
+  // mean re-fetching on every re-render instead of just on mount).
   const load = useCallback(() => {
-    const request = stationWide ? getAlerts() : getMyAlerts();
-    request.then((res) => setAlerts(res || [])).catch((err) => console.error("Failed to load alerts:", err));
-  }, [stationWide]);
+    getMyAlerts()
+      .then((res) => setAlerts(res || []))
+      .catch((err) => console.error("Failed to load alerts:", err));
+  }, []);
 
   useEffect(() => {
     if (eligible) load();
@@ -64,7 +64,7 @@ export function NotificationBell() {
 
   function goToAlerts() {
     setOpen(false);
-    navigate(stationWide ? "/inventory" : "/weapon-management");
+    navigate("/weapon-management");
   }
 
   return (

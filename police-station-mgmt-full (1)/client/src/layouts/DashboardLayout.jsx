@@ -3,7 +3,7 @@ import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../auth/useAuth";
 import { useLanguage } from "../i18n/useLanguage";
 import { navItemsByRole } from "../config/navConfig";
-import { NotificationBell } from "../components";
+import { NotificationBell, NavIcon } from "../components";
 import policeLogo from "../assets/Sri_Lanka_Police_logo.svg.png";
 import "./DashboardLayout.css";
 
@@ -28,6 +28,7 @@ export function DashboardLayout() {
                 isActive ? "sidebar-link active" : "sidebar-link"
               }
             >
+              <NavIcon navKey={item.key} />
               {t(`nav.${item.key}`)}
             </NavLink>
           ))}

@@ -17,6 +17,71 @@ async function getMe(req, res) {
   }
 }
 
+// PATCH /api/users/me — any authenticated user, self-service edit of
+// their own contact details. Deliberately excludes fullName, role,
+// department, and rankAndNumber (the login username) — those stay
+// admin-only via updateUser below, same boundary as the Personnel
+// page's "Edit User" action.
+async function updateMe(req, res) {
+  const { phoneNumber, email, address, emergencyContactName, emergencyContactPhone } = req.body;
+
+  const updates = {};
+  if (phoneNumber !== undefined) updates.phoneNumber = phoneNumber;
+  if (email !== undefined) updates.email = email;
+  if (address !== undefined) updates.address = address;
+  if (emergencyContactName !== undefined) updates.emergencyContactName = emergencyContactName;
+  if (emergencyContactPhone !== undefined) updates.emergencyContactPhone = emergencyContactPhone;
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: "No fields to update" });
+  }
+
+  try {
+    const user = await User.findByIdAndUpdate(req.user.uid, updates, {
+      new: true,
+      runValidators: true,
+    });
+    if (!user) return res.status(404).json({ error: "Profile not found" });
+    return res.json(user.toJSON());
+  } catch (err) {
+    console.error("updateMe error:", err);
+    return res.status(500).json({ error: "Could not update your profile" });
+  }
+}
+
+// PATCH /api/users/me/password — any authenticated user, self-service
+// password change. Requires the current password (unlike Admin's
+// "Reset Password" below, or the officer-initiated forgot-password
+// email flow in passwordResetRequestsController.js) so a session left
+// open on someone's desk can't be used to silently lock them out.
+async function changeMyPassword(req, res) {
+  const { currentPassword, newPassword } = req.body;
+
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: "Current and new password are required" });
+  }
+  if (newPassword.length < 6) {
+    return res.status(400).json({ error: "New password must be at least 6 characters" });
+  }
+
+  try {
+    const user = await User.findById(req.user.uid);
+    if (!user) return res.status(404).json({ error: "Profile not found" });
+
+    const matches = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!matches) {
+      return res.status(401).json({ error: "Current password is incorrect" });
+    }
+
+    user.passwordHash = await bcrypt.hash(newPassword, 10);
+    await user.save();
+    return res.json({ message: "Password updated" });
+  } catch (err) {
+    console.error("changeMyPassword error:", err);
+    return res.status(500).json({ error: "Could not change your password" });
+  }
+}
+
 // GET /api/users — admin and oic, lists all personnel at this station
 async function listUsers(req, res) {
   try {
@@ -216,6 +281,8 @@ async function getStats(req, res) {
 
 module.exports = {
   getMe,
+  updateMe,
+  changeMyPassword,
   listUsers,
   getStats,
   createUser,

@@ -2,10 +2,9 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../auth/useAuth";
 import { useLanguage } from "../../i18n/useLanguage";
-import { Button, StatCard, Card, Table, Badge, Loader } from "../../components";
+import { Button, StatCard, Card, Table, Badge, Loader, MyDutyCard } from "../../components";
 import { getDashboardSummary } from "../../services/dashboard";
 import { getMyLeaveBalance } from "../../services/leave";
-import { getMySchedule } from "../../services/dutySchedule";
 import { getMyAssignedComplaints } from "../../services/complaints";
 import { formatDateAndTime } from "../../utils/formatDate";
 import "./Dashboard.css";
@@ -26,7 +25,6 @@ export function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState(null);
   const [leaveBalance, setLeaveBalance] = useState(null);
-  const [schedule, setSchedule] = useState([]);
   const [assignedComplaints, setAssignedComplaints] = useState([]);
 
   useEffect(() => {
@@ -35,10 +33,9 @@ export function DashboardPage() {
     async function load() {
       // allSettled, not all — one endpoint failing (e.g. no duty schedule
       // set up yet) shouldn't blank out the other three stat cards too.
-      const [summaryRes, balanceRes, scheduleRes, complaintsRes] = await Promise.allSettled([
+      const [summaryRes, balanceRes, complaintsRes] = await Promise.allSettled([
         getDashboardSummary(),
         getMyLeaveBalance(),
-        getMySchedule(),
         getMyAssignedComplaints(),
       ]);
       if (cancelled) return;
@@ -48,9 +45,6 @@ export function DashboardPage() {
 
       if (balanceRes.status === "fulfilled") setLeaveBalance(balanceRes.value);
       else console.error("Failed to load leave balance:", balanceRes.reason);
-
-      if (scheduleRes.status === "fulfilled") setSchedule(scheduleRes.value);
-      else console.error("Failed to load duty schedule:", scheduleRes.reason);
 
       if (complaintsRes.status === "fulfilled") setAssignedComplaints(complaintsRes.value);
       else console.error("Failed to load assigned complaints:", complaintsRes.reason);
@@ -70,25 +64,6 @@ export function DashboardPage() {
     ? leaveBalance.annual + leaveBalance.sick + leaveBalance.casual
     : 0;
 
-    const scheduleColumns = [
-    {
-      key: "day",
-      label: t("dashboard.colDay"),
-      render: (row) => new Date(row.date).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }),
-    },
-    {
-      key: "shift",
-      label: t("dashboard.colShiftTiming"),
-      render: (row) => `${row.shiftStart} - ${row.shiftEnd}`,
-    },
-    { key: "department", label: t("dashboard.colAssignDepartment") },
-    {
-      key: "status",
-      label: t("common.status"),
-      render: (row) => <Badge status={row.status} />,
-    },
-  ];
-
   const complaintColumns = [
     { key: "refId", label: t("dashboard.colCaseId") },
     { key: "category", label: t("dashboard.colIncidentType") },
@@ -105,19 +80,35 @@ export function DashboardPage() {
       <div className="dashboard-header">
         <h1>{DASHBOARD_TITLE_BY_ROLE[user?.role] || t("dashboard.titleDefault")}</h1>
         <div className="dashboard-header-actions">
-          <Button variant="outline" onClick={() => navigate("/leave")}>
+          <Button variant="outline" onClick={() => navigate("/leave", { state: { openApply: true } })}>
             {t("dashboard.applyLeave")}
           </Button>
-          <Button variant="primary" onClick={() => navigate("/complaints")}>
-            {t("dashboard.registerComplaint")}
-          </Button>
+          {/* inventory_officer is the one role on this shared dashboard that can't
+              register complaints (see Complaints.jsx's canManage) — hidden here
+              rather than sending them to a form they'd just get a 403 submitting. */}
+          {user?.role !== "inventory_officer" && (
+            <Button variant="primary" onClick={() => navigate("/complaints", { state: { openRegister: true } })}>
+              {t("dashboard.registerComplaint")}
+            </Button>
+          )}
         </div>
       </div>
 
       <div className="stat-grid">
         <StatCard
           label={t("dashboard.todaysDuty")}
-          value={summary?.todaysDuty || "—"}
+          // No specific branch shift today isn't "nothing" — same
+          // General Duty / On Leave default as the Weekly Duty Schedule
+          // card below, so the two don't visibly disagree about today.
+          value={
+            summary?.todaysDutyStatus === "assigned"
+              ? summary.todaysDuty
+              : summary?.todaysDutyStatus === "on_leave"
+              ? t("status.on_leave")
+              : summary?.todaysDutyStatus === "general_duty"
+              ? t("status.general_duty")
+              : "—"
+          }
           caption={summary?.todaysDutyShift ? `${t("dashboard.shift")} ${summary.todaysDutyShift}` : ""}
         />
         <StatCard label={t("dashboard.leaveStatus")} value={`${totalLeaveDays} ${t("dashboard.days")}`} caption={t("dashboard.availableBalance")} />
@@ -134,12 +125,7 @@ export function DashboardPage() {
       </div>
 
       <div className="dashboard-panels">
-        <Card variant="panel">
-          <div className="panel-header">
-            <h3>{t("dashboard.weeklyDutySchedule")}</h3>
-          </div>
-          <Table columns={scheduleColumns} data={schedule} emptyMessage={t("dashboard.noShiftsScheduled")} />
-        </Card>
+        <MyDutyCard />
 
         <Card variant="panel">
           <div className="panel-header">

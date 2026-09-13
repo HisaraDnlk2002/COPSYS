@@ -20,7 +20,7 @@ not "above" OIC, just a different concern.
 | View own dashboard | Yes | Yes (command view) | Yes | Yes | Yes |
 | Apply leave | Yes | Yes | Yes | Yes | Yes |
 | Approve/reject leave | No | Yes | No | No | No |
-| Register complaint | No | Yes | Yes | No | Yes |
+| Register complaint | Yes | Yes | Yes | No | Yes |
 | View/manage all complaints (registry + log) | No | Yes | Yes (own station) | No | No |
 | Personnel & User Management | Yes | No | No | No | No |
 | Inventory module | No | No | View only | Full access (issue/return/add) | No |

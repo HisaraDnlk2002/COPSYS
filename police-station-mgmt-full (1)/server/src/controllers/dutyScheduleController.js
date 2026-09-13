@@ -6,23 +6,97 @@ const LeaveRequest = require("../models/LeaveRequest");
 const { generateWeeklyRoster, suggestReplacements } = require("../services/dutyAllocationEngine");
 const { isGeneralPoolBranch } = require("../config/branches");
 
-// GET /api/duty-schedule/mine — any officer, their own shifts. Only from
-// weeks that have actually been published (spec §16) — an officer
-// shouldn't see a draft or an approved-but-unpublished plan.
+// GET /api/duty-schedule/mine — any officer, their own shifts for THIS
+// week only. Only the sole caller (Dashboard.jsx's "Weekly Duty
+// Schedule" card) — scoped to whichever published week's Mon-Sun range
+// contains today, not every week ever published, which would otherwise
+// only ever grow as more weeks get published over the life of the
+// station. Still only from weeks that have actually been published
+// (spec §16) — an officer shouldn't see a draft or an
+// approved-but-unpublished plan, even for the current week.
+//
+// Returns one row per day of that week, not just days with an actual
+// DutySchedule entry: officers aren't idle on days with no specific
+// branch shift — same convention as RosterSummary.jsx — so a gap day is
+// filled with a synthetic "general_duty" row (or "on_leave" if their own
+// approved leave covers it) instead of just being missing from the list.
 async function listMine(req, res) {
   try {
     const publishedWeeks = await DutyRosterWeek.find({
       stationId: req.user.stationId,
       status: "published",
-    }).select("_id");
-    const publishedWeekIds = publishedWeeks.map((w) => w._id);
+    }).select("_id weekStarting");
 
-    const shifts = await DutySchedule.find({
-      officerId: req.user.uid,
-      weekId: { $in: publishedWeekIds },
-      status: { $ne: "removed" },
-    }).sort({ date: 1 });
-    return res.json(shifts.map((s) => s.toJSON()));
+    // Compare on the UTC date component only (same convention as
+    // formatDate.js on the client) so this doesn't drift a day off
+    // depending on the server's local timezone.
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const currentWeek = publishedWeeks.find((w) => {
+      const startKey = w.weekStarting.toISOString().slice(0, 10);
+      const weekEnd = new Date(w.weekStarting);
+      weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
+      const endKey = weekEnd.toISOString().slice(0, 10);
+      return todayKey >= startKey && todayKey <= endKey;
+    });
+
+    if (!currentWeek) {
+      return res.json([]);
+    }
+
+    const weekEnd = new Date(currentWeek.weekStarting);
+    weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
+
+    const [shifts, approvedLeave] = await Promise.all([
+      DutySchedule.find({
+        officerId: req.user.uid,
+        weekId: currentWeek._id,
+        status: { $ne: "removed" },
+      }).sort({ date: 1 }),
+      LeaveRequest.find({
+        officerId: req.user.uid,
+        status: "approved",
+        startDate: { $lte: weekEnd },
+        endDate: { $gte: currentWeek.weekStarting },
+      }),
+    ]);
+
+    const shiftsByDateKey = new Map();
+    shifts.forEach((s) => {
+      const key = new Date(s.date).toISOString().slice(0, 10);
+      if (!shiftsByDateKey.has(key)) shiftsByDateKey.set(key, []);
+      shiftsByDateKey.get(key).push(s.toJSON());
+    });
+
+    function isOnLeave(dateKey) {
+      const day = new Date(dateKey);
+      return approvedLeave.some((l) => {
+        const start = new Date(l.startDate).toISOString().slice(0, 10);
+        const end = new Date(l.endDate).toISOString().slice(0, 10);
+        return dateKey >= start && dateKey <= end;
+      });
+    }
+
+    const rows = [];
+    for (let i = 0; i < 7; i++) {
+      const date = new Date(currentWeek.weekStarting);
+      date.setUTCDate(date.getUTCDate() + i);
+      const dateKey = date.toISOString().slice(0, 10);
+      const dayShifts = shiftsByDateKey.get(dateKey);
+
+      if (dayShifts && dayShifts.length > 0) {
+        rows.push(...dayShifts);
+      } else {
+        rows.push({
+          id: `${isOnLeave(dateKey) ? "leave" : "general"}-${dateKey}`,
+          date,
+          shiftStart: null,
+          shiftEnd: null,
+          department: null,
+          status: isOnLeave(dateKey) ? "on_leave" : "general_duty",
+        });
+      }
+    }
+    return res.json(rows);
   } catch (err) {
     console.error("listMine duty error:", err);
     return res.status(500).json({ error: "Could not load your schedule" });
@@ -193,11 +267,20 @@ async function create(req, res) {
 async function update(req, res) {
   const { shiftStart, shiftEnd, department, status } = req.body;
 
+  // The draft/sent_back lock below only protects roster *composition*
+  // edits — reassigning or removing a cell in WeeklyGrid. Marking daily
+  // attendance (present/absent) is a different action with a different
+  // lifecycle: the Daily Duty tab only ever shows shifts from an
+  // already-PUBLISHED week (see getTodaysDuty), so if this lock applied
+  // to attendance too, a duty_officer could never mark anyone present —
+  // every published week would 403 unconditionally.
+  const isAttendanceOnly = ["present", "absent"].includes(status) && !shiftStart && !shiftEnd && !department;
+
   try {
     const existing = await DutySchedule.findById(req.params.id);
     if (!existing) return res.status(404).json({ error: "Roster entry not found" });
 
-    if (req.user.role === "duty_officer") {
+    if (req.user.role === "duty_officer" && !isAttendanceOnly) {
       const week = await DutyRosterWeek.findById(existing.weekId);
       if (week && !["draft", "sent_back"].includes(week.status)) {
         return res.status(403).json({
@@ -303,6 +386,32 @@ async function generateRoster(req, res) {
       await DutySchedule.deleteMany({ weekId: week._id, department: t.branch, shiftType: t.shiftType });
     }
 
+    // Rotation rule: look up what shift type each officer mostly worked
+    // the immediately preceding roster week (station-wide, not scoped to
+    // one branch — an officer's rotation should hold regardless of which
+    // branch/pool covered them last week), so generateWeeklyRoster can
+    // prefer flipping them onto the opposite shift this week rather than
+    // running them on nights (or days) two weeks running.
+    const prevWeekStart = new Date(week.weekStarting);
+    prevWeekStart.setDate(prevWeekStart.getDate() - 7);
+    const prevWeekEnd = new Date(week.weekStarting);
+    prevWeekEnd.setDate(prevWeekEnd.getDate() - 1);
+    const previousWeekShifts = await DutySchedule.find({
+      stationId: req.user.stationId,
+      date: { $gte: prevWeekStart, $lte: prevWeekEnd },
+      status: { $ne: "removed" },
+    });
+    const previousShiftCounts = new Map(); // officerId -> { day, night }
+    for (const s of previousWeekShifts) {
+      const id = s.officerId.toString();
+      const counts = previousShiftCounts.get(id) || { day: 0, night: 0 };
+      counts[s.shiftType] = (counts[s.shiftType] || 0) + 1;
+      previousShiftCounts.set(id, counts);
+    }
+    const previousShiftByOfficer = new Map(
+      Array.from(previousShiftCounts, ([id, counts]) => [id, counts.night > counts.day ? "night" : "day"])
+    );
+
     let allAssignments = [];
     let allUnfilled = [];
     const allExcluded = new Set();
@@ -316,6 +425,7 @@ async function generateRoster(req, res) {
         officers: officerPayload,
         approvedLeaveRequests: leavePayload,
         excludeByDate,
+        previousShiftByOfficer,
       });
       allAssignments = allAssignments.concat(assignments);
       allUnfilled = allUnfilled.concat(unfilledDays);
@@ -508,9 +618,15 @@ async function getBriefing(req, res) {
     const dayEnd = new Date(dayStart);
     dayEnd.setDate(dayEnd.getDate() + 1);
 
-    const [totalOfficers, publishedWeeks] = await Promise.all([
+    const [totalOfficers, publishedWeeks, todaysLeave] = await Promise.all([
       User.countDocuments({ stationId: req.user.stationId, status: "active" }),
       DutyRosterWeek.find({ stationId: req.user.stationId, status: "published" }),
+      LeaveRequest.find({
+        stationId: req.user.stationId,
+        status: "approved",
+        startDate: { $lte: dayStart },
+        endDate: { $gte: dayStart },
+      }),
     ]);
 
     // Only weeks whose 7-day span actually covers "today" matter here.
@@ -529,12 +645,25 @@ async function getBriefing(req, res) {
       status: { $ne: "removed" },
     });
 
-    const presentOfficerIds = new Set();
+    const absentOfficerIds = new Set();
     const absentEntries = [];
     for (const s of todaysShifts) {
-      if (s.status === "absent") absentEntries.push(s);
-      else presentOfficerIds.add(s.officerId.toString());
+      if (s.status === "absent") {
+        absentEntries.push(s);
+        absentOfficerIds.add(s.officerId.toString());
+      }
     }
+
+    const onLeaveOfficerIds = new Set(
+      todaysLeave.map((l) => l.officerId.toString()).filter((id) => !absentOfficerIds.has(id))
+    );
+
+    // "Present / Active" isn't "has a specific branch shift today" — most
+    // officers default to General Duty with no DutySchedule row at all
+    // (same convention as RosterSummary/MyDutyCard), so counting only
+    // rostered shift rows badly undercounts. Present = every active
+    // officer minus whoever's explicitly absent or on approved leave.
+    const presentCount = Math.max(0, totalOfficers - absentOfficerIds.size - onLeaveOfficerIds.size);
 
     // An absence only counts as an unresolved "shortage" if nobody's
     // been assigned to cover it yet.
@@ -581,8 +710,9 @@ async function getBriefing(req, res) {
 
     return res.json({
       totalOfficers,
-      present: presentOfficerIds.size,
+      present: presentCount,
       absent: absentEntries.length,
+      onLeave: onLeaveOfficerIds.size,
       shortage: shortageCount,
       branchOverview,
       recentAlerts: recentAlerts.map((c) => c.toJSON()),

@@ -7,4 +7,6 @@ export { Modal } from "./Modal/Modal";
 export { Loader } from "./Loader/Loader";
 export { AssignmentCell } from "./AssignmentCell/AssignmentCell";
 export { NotificationBell } from "./NotificationBell/NotificationBell";
+export { NavIcon } from "./NavIcon/NavIcon";
+export { MyDutyCard } from "./MyDutyCard/MyDutyCard";
 export * from "./SearchableSelect/SearchableSelect";

@@ -64,6 +64,7 @@ export function DailyDutyUpdate() {
       load();
     } catch (err) {
       console.error("Could not mark present:", err);
+      alert(err.message || t("dutyRoster.daily.markPresentFailed"));
     }
   }
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { StatCard, Card, Table, Badge, Loader, Modal, Button, InputField, AssignmentCell } from "../../components";
+import { StatCard, Card, Table, Badge, Loader, Modal, Button, InputField, AssignmentCell, MyDutyCard } from "../../components";
 import { useLanguage } from "../../i18n/useLanguage";
 import { getOicStats } from "../../services/oicDashboard";
 import { getAllLeaveRequests, approveLeaveRequest, rejectLeaveRequest } from "../../services/leave";
@@ -9,6 +9,17 @@ import { formatDate } from "../../utils/formatDate";
 import "./OicDashboard.css";
 
 const ASSIGNABLE_ROLES = ["duty_officer", "officer"];
+
+// A request nobody actioned before its own leave dates ran out has
+// nothing left to approve/deny — the days already happened one way or
+// another. Keeps the Personnel Leave Requests card an actionable queue
+// rather than accumulating stale requests forever; the full Leave
+// Requests registry still shows every request, past or present.
+function leavePeriodHasPassed(leave) {
+  const today = new Date().setHours(0, 0, 0, 0);
+  const end = new Date(leave.endDate).setHours(0, 0, 0, 0);
+  return end < today;
+}
 
 export function OicDashboardPage() {
   const { t } = useLanguage();
@@ -35,7 +46,7 @@ export function OicDashboardPage() {
       }
 
       if (leaveRes.status === "fulfilled") {
-        setLeaveRequests(leaveRes.value.filter((l) => l.status === "pending"));
+        setLeaveRequests(leaveRes.value.filter((l) => l.status === "pending" && !leavePeriodHasPassed(l)));
       } else {
         console.error("Failed to load leave requests:", leaveRes.reason);
       }
@@ -137,10 +148,22 @@ export function OicDashboardPage() {
       </div>
 
       <div className="stat-grid">
-        <StatCard label={t("oic.totalOfficers")} value={stats?.totalOfficers} caption={`${t("oic.currentStationStrength")} ${stats?.currentStationStrength || ""}`} />
-        <StatCard label={t("oic.pendingLeaves")} value={stats?.pendingLeaves} caption={t("oic.requiredImmediateReviews")} />
-        <StatCard label={t("oic.activeComplaints")} value={stats?.activeComplaints} caption={stats?.activeComplaintsCaption} />
-        <StatCard label={t("oic.todaysDuties")} value={stats?.todaysDuties} caption={stats?.todaysDutiesCaption} />
+        <StatCard label={t("oic.totalOfficers")} value={stats?.totalOfficers ?? "—"} caption={`${t("oic.currentStationStrength")}: ${stats?.currentStationStrength ?? "—"}`} />
+        <StatCard label={t("oic.pendingLeaves")} value={stats?.pendingLeaves ?? "—"} caption={t("oic.requiredImmediateReviews")} />
+        <StatCard
+          label={t("oic.activeComplaints")}
+          value={stats?.activeComplaints ?? "—"}
+          caption={`${stats?.unassignedComplaints ?? 0} ${t("oic.unassignedCaption")}`}
+        />
+        <StatCard
+          label={t("oic.todaysDuties")}
+          value={stats?.todaysDuties ?? "—"}
+          caption={
+            stats?.staffingShortfalls
+              ? `${stats.staffingShortfalls} ${t("oic.staffingShortfallsCaption")}`
+              : t("oic.fullyStaffedCaption")
+          }
+        />
       </div>
 
       <div className="oic-panels">
@@ -161,6 +184,10 @@ export function OicDashboardPage() {
           </div>
           <Table columns={complaintColumns} data={complaints} emptyMessage={t("oic.noActiveComplaints")} />
         </Card>
+
+        <div style={{ gridColumn: "1 / -1" }}>
+          <MyDutyCard />
+        </div>
       </div>
 
       <Modal
