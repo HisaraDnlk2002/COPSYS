@@ -5,6 +5,7 @@ const {
   getSummary,
   getCrimeDistribution,
   getForceStrength,
+  getComplaintTrend,
   getActivityLog,
   previewReport,
   generateReport,
@@ -26,6 +27,7 @@ router.use(requireRole("admin", "oic", "duty_officer", "inventory_officer"));
 router.get("/summary", requireRole("admin", "oic"), getSummary);
 router.get("/crime-distribution", requireRole("admin", "oic"), getCrimeDistribution);
 router.get("/force-strength", requireRole("admin", "oic"), getForceStrength);
+router.get("/complaint-trend", requireRole("admin", "oic"), getComplaintTrend);
 router.get("/activity-log", getActivityLog);
 
 // Report Management module: preview, generate, download, archive, delete.

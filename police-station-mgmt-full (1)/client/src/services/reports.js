@@ -4,28 +4,51 @@ import {
   dummyReportsSummary,
   dummyCrimeDistribution,
   dummyForceStrength,
+  dummyComplaintTrend,
   dummyActivityLog,
 } from "./dummyData";
 
-export async function getReportsSummary() {
+// dateFrom/dateTo (YYYY-MM-DD) are optional — the server defaults to the
+// current calendar month when neither is given.
+export async function getReportsSummary(dateFrom, dateTo) {
   if (USE_DUMMY_DATA) {
     return Promise.resolve(dummyReportsSummary);
   }
-  return api.get("/reports/summary");
+  return api.get(`/reports/summary${dateRangeQuery(dateFrom, dateTo)}`);
 }
 
-export async function getCrimeDistribution() {
+export async function getCrimeDistribution(dateFrom, dateTo) {
   if (USE_DUMMY_DATA) {
     return Promise.resolve(dummyCrimeDistribution);
   }
-  return api.get("/reports/crime-distribution");
+  return api.get(`/reports/crime-distribution${dateRangeQuery(dateFrom, dateTo)}`);
 }
 
-export async function getForceStrength() {
+function dateRangeQuery(dateFrom, dateTo) {
+  const params = new URLSearchParams();
+  if (dateFrom) params.set("dateFrom", dateFrom);
+  if (dateTo) params.set("dateTo", dateTo);
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
+}
+
+// endDate (YYYY-MM-DD) is optional — server defaults to today. Always
+// returns exactly 7 days ending at endDate, not an arbitrary range.
+export async function getForceStrength(endDate) {
   if (USE_DUMMY_DATA) {
     return Promise.resolve(dummyForceStrength);
   }
-  return api.get("/reports/force-strength");
+  return api.get(`/reports/force-strength${endDate ? `?endDate=${endDate}` : ""}`);
+}
+
+// endDate (YYYY-MM-DD) is optional — server defaults to today. Always
+// returns the 6 calendar months ending in endDate's month, not an
+// arbitrary range (same fixed-window convention as getForceStrength).
+export async function getComplaintTrend(endDate) {
+  if (USE_DUMMY_DATA) {
+    return Promise.resolve(dummyComplaintTrend);
+  }
+  return api.get(`/reports/complaint-trend${endDate ? `?endDate=${endDate}` : ""}`);
 }
 
 // params: { page?, limit?, type? } — type scopes paging to one category

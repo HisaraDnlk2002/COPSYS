@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const LeaveRequest = require("../models/LeaveRequest");
 const DutySchedule = require("../models/DutySchedule");
+const DutyRosterWeek = require("../models/DutyRosterWeek");
 const InventoryTransaction = require("../models/InventoryTransaction");
 const Inventory = require("../models/Inventory");
 const Complaint = require("../models/Complaint");
@@ -8,10 +9,24 @@ const User = require("../models/User");
 const ReportExport = require("../models/ReportExport");
 const { buildCsv, buildPdf } = require("../utils/reportFileBuilder");
 
+// GET /api/reports/summary and /crime-distribution both take optional
+// ?dateFrom&dateTo (YYYY-MM-DD) — defaulting to the current calendar
+// month rather than an all-time total, so these headline numbers answer
+// "how's this month going" instead of growing forever and meaning less
+// every year the station's been using this system.
+function resolveDateRange(query) {
+  const now = new Date();
+  const dateFrom = query.dateFrom ? new Date(query.dateFrom) : new Date(now.getFullYear(), now.getMonth(), 1);
+  const dateTo = query.dateTo ? new Date(query.dateTo) : now;
+  dateFrom.setHours(0, 0, 0, 0);
+  dateTo.setHours(23, 59, 59, 999);
+  return { dateFrom, dateTo };
+}
+
 // The real, selectable report categories — "inventory" is deliberately
 // excluded here: it's the pre-split name for what's now "weapons", kept
 // alive in ReportExport.REPORT_TYPES only so old rows still validate.
-const REPORT_CATEGORY_TYPES = ["duty", "officers", "leave", "crime", "weapons", "ammunition", "station"];
+const REPORT_CATEGORY_TYPES = ["duty", "officers", "leave", "crime", "weapons", "ammunition", "station", "performance"];
 
 // Which roles can generate/preview/download/see each category. Mirrors
 // the sidebar's own role filtering on the client (Reports.jsx) — that
@@ -27,6 +42,7 @@ const CATEGORY_ROLES = {
   inventory: ["admin", "oic", "inventory_officer"],
   ammunition: ["admin", "oic", "inventory_officer"],
   station: ["admin", "oic"],
+  performance: ["admin", "oic"],
 };
 
 function canAccessCategory(role, type) {
@@ -36,24 +52,50 @@ function canAccessCategory(role, type) {
 
 // GET /api/reports/summary — admin/oic only
 // Matches the 3 top stat cards on page 16: Duty Summary %, Leave
-// Statistics (days), Inventory Movements (item count).
+// Statistics (days), Inventory Movements (item count). Scoped to
+// ?dateFrom/?dateTo (default: current month) — see resolveDateRange.
 async function getSummary(req, res) {
   try {
     const stationId = req.user.stationId;
+    const { dateFrom, dateTo } = resolveDateRange(req.query);
+    const dutyFilter = { stationId, date: { $gte: dateFrom, $lte: dateTo } };
 
-    const totalShifts = await DutySchedule.countDocuments({ stationId });
-    const confirmedShifts = await DutySchedule.countDocuments({ stationId, status: "confirmed" });
-    const dutyCompliance = totalShifts > 0 ? (confirmedShifts / totalShifts) * 100 : 0;
+    const totalShifts = await DutySchedule.countDocuments(dutyFilter);
+    // "present" — the only status a shift's daily-attendance update
+    // actually sets (see dutyScheduleController.js's update()/
+    // createDailyChange()). This previously checked for "confirmed",
+    // a status nothing in the system ever sets, so this stat card
+    // silently reported 0% unconditionally.
+    const presentShifts = await DutySchedule.countDocuments({ ...dutyFilter, status: "present" });
+    const dutyCompliance = totalShifts > 0 ? (presentShifts / totalShifts) * 100 : 0;
 
-    const approvedLeaves = await LeaveRequest.find({ stationId, status: "approved" });
+    const approvedLeaves = await LeaveRequest.find({
+      stationId,
+      status: "approved",
+      startDate: { $lte: dateTo },
+      endDate: { $gte: dateFrom },
+    });
     const totalLeaveDays = approvedLeaves.reduce((sum, l) => sum + l.days, 0);
+    // Broken out by type too — a single lump total hid exactly the
+    // distinction the Personal/Medical/Casual leave system (with its
+    // rank-based caps and unlimited Medical) is actually built around.
+    const leaveDaysByType = { personal: 0, medical: 0, casual: 0 };
+    for (const l of approvedLeaves) {
+      if (leaveDaysByType[l.leaveType] !== undefined) leaveDaysByType[l.leaveType] += l.days;
+    }
 
-    const inventoryMovements = await InventoryTransaction.countDocuments({ stationId });
+    const inventoryMovements = await InventoryTransaction.countDocuments({
+      stationId,
+      dateTime: { $gte: dateFrom, $lte: dateTo },
+    });
 
     return res.json({
       dutyCompliancePercent: Math.round(dutyCompliance * 10) / 10,
       leaveStatisticsDays: totalLeaveDays,
+      leaveDaysByType,
       inventoryMovements,
+      dateFrom: dateFrom.toISOString().slice(0, 10),
+      dateTo: dateTo.toISOString().slice(0, 10),
     });
   } catch (err) {
     console.error("getSummary error:", err);
@@ -63,11 +105,15 @@ async function getSummary(req, res) {
 
 // GET /api/reports/crime-distribution — admin/oic only
 // Bar chart: complaint count grouped by category, matches "Crime
-// Incidence Distribution" on page 16.
+// Incidence Distribution" on page 16. Scoped to ?dateFrom/?dateTo
+// (default: current month), same range as getSummary above it on the
+// hub — otherwise a date picker that only affected some of the page
+// would be more confusing than not having one.
 async function getCrimeDistribution(req, res) {
   try {
+    const { dateFrom, dateTo } = resolveDateRange(req.query);
     const results = await Complaint.aggregate([
-      { $match: { stationId: req.user.stationId } },
+      { $match: { stationId: req.user.stationId, dateOfIncident: { $gte: dateFrom, $lte: dateTo } } },
       { $group: { _id: "$category", count: { $sum: 1 } } },
       { $sort: { count: -1 } },
     ]);
@@ -78,34 +124,83 @@ async function getCrimeDistribution(req, res) {
   }
 }
 
-// GET /api/reports/force-strength — admin/oic only
-// Line chart: active duty vs on-leave personnel over recent days,
-// matches "Weekly Force Strength" on page 16.
+// GET /api/reports/force-strength?endDate=YYYY-MM-DD — admin/oic only
+// Line chart: active duty vs on-leave personnel over 7 days ending at
+// ?endDate (default: today), matches "Weekly Force Strength" on page 16.
+// Still always exactly 7 days (unlike summary/crime-distribution, this
+// one stays a fixed-width window, not an arbitrary range) — but an
+// endDate lets the hub's own Reporting Period picker scroll it to a past
+// week (e.g. picking "Last Month") instead of it always being locked to
+// the current rolling week.
 async function getForceStrength(req, res) {
   try {
     const stationId = req.user.stationId;
     const totalOfficers = await User.countDocuments({ stationId, status: "active" });
+    const endDate = req.query.endDate ? new Date(req.query.endDate) : new Date();
 
-    // Last 7 days, counting how many were on approved leave that day vs active
+    // Only published weeks matter — same "an officer's own duty status
+    // only ever comes from a published plan" rule used everywhere else
+    // duty status is computed (listMine, getBriefing, RosterSummary).
+    const publishedWeeks = await DutyRosterWeek.find({ stationId, status: "published" }).select("_id weekStarting");
+
+    // 7 days ending at endDate. "Active Duty" isn't just "not on
+    // approved leave" — that undercounted every officer with no leave
+    // request as if they weren't part of the force at all, and made the
+    // chart flat whenever leave happened to not overlap the window.
+    // Same "everyone not explicitly out counts as on duty (a specific
+    // shift, or General Duty by default)" rule as getBriefing's
+    // presentCount — just computed once per day here instead of only
+    // for today.
     const days = [];
     for (let i = 6; i >= 0; i--) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      date.setHours(0, 0, 0, 0);
+      // UTC, not local (setDate/setHours) — DutySchedule.date and
+      // DutyRosterWeek.weekStarting are both stored as UTC midnight for
+      // a calendar day (built from plain "YYYY-MM-DD" strings, which
+      // parse as UTC per spec). This server runs at UTC+5:30 — a local
+      // "today" boundary would sit 5.5 hours after the actual stored
+      // UTC-midnight value, so a day's own shifts could fall just
+      // before the query window and never match at all.
+      const date = new Date(endDate);
+      date.setUTCDate(date.getUTCDate() - i);
+      date.setUTCHours(0, 0, 0, 0);
       const nextDay = new Date(date);
-      nextDay.setDate(nextDay.getDate() + 1);
+      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
 
-      const onLeave = await LeaveRequest.countDocuments({
-        stationId,
-        status: "approved",
-        startDate: { $lte: nextDay },
-        endDate: { $gte: date },
+      const coveringWeek = publishedWeeks.find((w) => {
+        const start = new Date(w.weekStarting);
+        const end = new Date(start);
+        end.setUTCDate(end.getUTCDate() + 7);
+        return date >= start && date < end;
       });
 
+      const absentOfficerIds = new Set();
+      if (coveringWeek) {
+        const shifts = await DutySchedule.find({
+          stationId,
+          weekId: coveringWeek._id,
+          date: { $gte: date, $lt: nextDay },
+          status: { $ne: "removed" },
+        }).select("officerId status");
+        for (const s of shifts) {
+          if (s.status === "absent") absentOfficerIds.add(s.officerId.toString());
+        }
+      }
+
+      const approvedLeave = await LeaveRequest.find({
+        stationId,
+        status: "approved",
+        startDate: { $lte: date },
+        endDate: { $gte: date },
+      }).select("officerId");
+      // Don't double-count someone who's both marked absent from a
+      // shift and separately has approved leave that day.
+      const onLeaveCount = approvedLeave.filter((l) => !absentOfficerIds.has(l.officerId.toString())).length;
+
+      const notOnDuty = absentOfficerIds.size + onLeaveCount;
       days.push({
         date: date.toISOString().slice(0, 10),
-        activeDuty: totalOfficers - onLeave,
-        onLeave,
+        activeDuty: Math.max(0, totalOfficers - notOnDuty),
+        onLeave: notOnDuty,
       });
     }
 
@@ -113,6 +208,73 @@ async function getForceStrength(req, res) {
   } catch (err) {
     console.error("getForceStrength error:", err);
     return res.status(500).json({ error: "Could not load force strength data" });
+  }
+}
+
+// GET /api/reports/complaint-trend?endDate=YYYY-MM-DD — admin/oic only
+// Line/area chart: complaint volume by severity plus open-vs-resolved
+// counts, one point per calendar month, for the 6 months ending in the
+// month containing ?endDate (default: today). Crime Incidence
+// Distribution already answers "what kind of complaints came in this
+// range" as a single-range snapshot; this answers the question that
+// snapshot can't — whether Grave Crime volume or the resolved share is
+// trending up or down month over month. Always a fixed 6-month window
+// (same reasoning as getForceStrength's fixed 7 days) rather than
+// following the hub's arbitrary dateFrom/dateTo range, since a trend
+// needs several comparable buckets and a short custom range wouldn't
+// have enough of them to show a trend at all.
+async function getComplaintTrend(req, res) {
+  try {
+    const stationId = req.user.stationId;
+    const endDate = req.query.endDate ? new Date(req.query.endDate) : new Date();
+
+    // Anchor to the *first* day of endDate's month, in UTC — same
+    // UTC-vs-local reasoning as getForceStrength: dateOfIncident is
+    // stored as UTC midnight (parsed from a plain "YYYY-MM-DD" string),
+    // so a local month boundary would sit 5.5 hours off and could clip
+    // the first/last day's complaints out of their real bucket.
+    const anchor = new Date(Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth(), 1));
+    const rangeStart = new Date(anchor);
+    rangeStart.setUTCMonth(rangeStart.getUTCMonth() - 5);
+    const rangeEnd = new Date(anchor);
+    rangeEnd.setUTCMonth(rangeEnd.getUTCMonth() + 1); // exclusive — start of the month after the anchor
+
+    const complaints = await Complaint.find({
+      stationId,
+      dateOfIncident: { $gte: rangeStart, $lt: rangeEnd },
+    }).select("dateOfIncident severity status");
+
+    const months = [];
+    for (let i = 0; i < 6; i++) {
+      const monthStart = new Date(rangeStart);
+      monthStart.setUTCMonth(monthStart.getUTCMonth() + i);
+      months.push({
+        month: monthStart.toISOString().slice(0, 7), // "YYYY-MM"
+        general: 0,
+        serious: 0,
+        graveCrime: 0,
+        resolved: 0,
+        open: 0,
+        total: 0,
+      });
+    }
+
+    for (const c of complaints) {
+      const key = c.dateOfIncident.toISOString().slice(0, 7);
+      const bucket = months.find((m) => m.month === key);
+      if (!bucket) continue; // shouldn't happen given the query range, but don't let one bad row 500 the whole chart
+      bucket.total += 1;
+      if (c.severity === "Grave Crime") bucket.graveCrime += 1;
+      else if (c.severity === "Serious") bucket.serious += 1;
+      else bucket.general += 1;
+      if (c.status === "closed") bucket.resolved += 1;
+      else bucket.open += 1;
+    }
+
+    return res.json(months);
+  } catch (err) {
+    console.error("getComplaintTrend error:", err);
+    return res.status(500).json({ error: "Could not load complaint trend data" });
   }
 }
 
@@ -181,6 +343,7 @@ const REPORT_TYPE_LABELS = {
   weapons: "Weapons Issue & Return",
   ammunition: "Ammunition Usage",
   station: "Station Summary",
+  performance: "Officer Performance",
 };
 
 // Ceiling on how many rows a single report is allowed to pull into memory.
@@ -227,6 +390,7 @@ const FILTER_KEYS_BY_TYPE = {
   weapons: ["transactionType", "officerId"],
   ammunition: ["officerId"],
   station: [],
+  performance: ["department"],
 };
 const OBJECT_ID_FILTER_KEYS = new Set(["officerId", "assignedOfficerId"]);
 
@@ -487,7 +651,8 @@ async function gatherReportData(type, stationId, dateFrom, dateTo, filters = {})
     const dutyFilter = { stationId, date: { $gte: dateFrom, $lte: dateTo } };
     const [totalShifts, confirmedShifts] = await Promise.all([
       DutySchedule.countDocuments(dutyFilter),
-      DutySchedule.countDocuments({ ...dutyFilter, status: "confirmed" }),
+      // "present", not "confirmed" — see getSummary's comment above.
+      DutySchedule.countDocuments({ ...dutyFilter, status: "present" }),
     ]);
 
     const approvedLeaves = await LeaveRequest.find({
@@ -529,6 +694,100 @@ async function gatherReportData(type, stationId, dateFrom, dateTo, filters = {})
     };
   }
 
+  if (type === "performance") {
+    // One row per active officer, not one row per event — same rollup
+    // shape as "station" above, just per-officer instead of per-metric.
+    // Answers "how is officer X doing" (attendance, caseload, leave
+    // taken), which nothing else in Reports could show before this —
+    // every other category is a raw, unaggregated record ledger.
+    const officerFilter = { stationId, status: "active" };
+    if (filters.department) officerFilter.department = new RegExp(escapeRegex(filters.department), "i");
+    const officers = await User.find(officerFilter).select("fullName rankAndNumber department").sort({ fullName: 1 }).lean();
+    const officerIds = officers.map((o) => o._id);
+
+    const [shifts, complaints, leaves] = await Promise.all([
+      // Only present/absent — "pending" (a future/unresolved shift) and
+      // "removed" aren't attendance outcomes, so they're excluded from
+      // both the counts and the attendance-rate denominator.
+      DutySchedule.find({
+        stationId,
+        officerId: { $in: officerIds },
+        date: { $gte: dateFrom, $lte: dateTo },
+        status: { $in: ["present", "absent"] },
+      }).select("officerId status").lean(),
+      // createdAt, not dateOfIncident — this is about how busy the
+      // officer actually was during the period, not when the incident
+      // itself happened (which can be much older if reported late).
+      Complaint.find({
+        stationId,
+        assignedOfficerId: { $in: officerIds },
+        createdAt: { $gte: dateFrom, $lte: dateTo },
+      }).select("assignedOfficerId status").lean(),
+      LeaveRequest.find({
+        stationId,
+        officerId: { $in: officerIds },
+        status: "approved",
+        startDate: { $lte: dateTo },
+        endDate: { $gte: dateFrom },
+      }).select("officerId days").lean(),
+    ]);
+
+    const presentByOfficer = new Map();
+    const absentByOfficer = new Map();
+    for (const s of shifts) {
+      const key = String(s.officerId);
+      const map = s.status === "present" ? presentByOfficer : absentByOfficer;
+      map.set(key, (map.get(key) || 0) + 1);
+    }
+
+    const assignedByOfficer = new Map();
+    const resolvedByOfficer = new Map();
+    for (const c of complaints) {
+      const key = String(c.assignedOfficerId);
+      assignedByOfficer.set(key, (assignedByOfficer.get(key) || 0) + 1);
+      if (c.status === "closed") resolvedByOfficer.set(key, (resolvedByOfficer.get(key) || 0) + 1);
+    }
+
+    const leaveDaysByOfficer = new Map();
+    for (const l of leaves) {
+      const key = String(l.officerId);
+      leaveDaysByOfficer.set(key, (leaveDaysByOfficer.get(key) || 0) + (l.days || 0));
+    }
+
+    const rows = officers.map((o) => {
+      const key = String(o._id);
+      const present = presentByOfficer.get(key) || 0;
+      const absent = absentByOfficer.get(key) || 0;
+      const recorded = present + absent;
+      return {
+        rankAndNumber: o.rankAndNumber,
+        fullName: o.fullName,
+        department: o.department || "—",
+        present,
+        absent,
+        attendanceRate: recorded > 0 ? Math.round((present / recorded) * 1000) / 10 : "",
+        complaintsAssigned: assignedByOfficer.get(key) || 0,
+        complaintsResolved: resolvedByOfficer.get(key) || 0,
+        leaveDaysTaken: leaveDaysByOfficer.get(key) || 0,
+      };
+    });
+
+    return {
+      columns: [
+        { key: "rankAndNumber", label: "Rank & Number" },
+        { key: "fullName", label: "Officer" },
+        { key: "department", label: "Department" },
+        { key: "present", label: "Present" },
+        { key: "absent", label: "Absent" },
+        { key: "attendanceRate", label: "Attendance %" },
+        { key: "complaintsAssigned", label: "Complaints Assigned" },
+        { key: "complaintsResolved", label: "Complaints Resolved" },
+        { key: "leaveDaysTaken", label: "Leave Days Taken" },
+      ],
+      rows,
+    };
+  }
+
   throw new Error(`Unknown report type: ${type}`);
 }
 
@@ -539,7 +798,8 @@ async function gatherReportData(type, stationId, dateFrom, dateTo, filters = {})
 function computeSummary(type, rows) {
   switch (type) {
     case "duty":
-      return { "Total Shifts": rows.length, "Confirmed": rows.filter((r) => r.status === "confirmed").length };
+      // "present", not "confirmed" — see getSummary's comment above.
+      return { "Total Shifts": rows.length, "Confirmed": rows.filter((r) => r.status === "present").length };
     case "officers":
       return { "Total Officers": rows.length, "Active": rows.filter((r) => r.status === "active").length };
     case "leave":
@@ -562,6 +822,15 @@ function computeSummary(type, rows) {
         "Ammo Returned": rows.reduce((sum, r) => sum + (r.ammoReturned || 0), 0),
         "Ammo Used": rows.reduce((sum, r) => sum + (r.ammoUsed || 0), 0),
       };
+    case "performance": {
+      const rates = rows.map((r) => r.attendanceRate).filter((v) => typeof v === "number");
+      const avgAttendance = rates.length ? Math.round((rates.reduce((a, b) => a + b, 0) / rates.length) * 10) / 10 : "—";
+      return {
+        "Officers": rows.length,
+        "Avg Attendance %": avgAttendance,
+        "Total Complaints Assigned": rows.reduce((sum, r) => sum + (r.complaintsAssigned || 0), 0),
+      };
+    }
     default:
       return {};
   }
@@ -767,6 +1036,7 @@ module.exports = {
   getSummary,
   getCrimeDistribution,
   getForceStrength,
+  getComplaintTrend,
   getActivityLog,
   previewReport,
   generateReport,

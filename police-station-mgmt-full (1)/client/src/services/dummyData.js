@@ -225,6 +225,17 @@ export const dummyForceStrength = [
   { date: "Sun", activeDuty: 133, onLeave: 9 },
 ];
 
+// Stacked/line chart: "Complaint Severity & Resolution Trend" — 6
+// calendar months of complaint volume by severity plus open-vs-resolved.
+export const dummyComplaintTrend = [
+  { month: "2026-04", general: 14, serious: 6, graveCrime: 1, resolved: 15, open: 6, total: 21 },
+  { month: "2026-05", general: 17, serious: 5, graveCrime: 2, resolved: 18, open: 6, total: 24 },
+  { month: "2026-06", general: 12, serious: 8, graveCrime: 1, resolved: 14, open: 7, total: 21 },
+  { month: "2026-07", general: 19, serious: 7, graveCrime: 3, resolved: 20, open: 9, total: 29 },
+  { month: "2026-08", general: 15, serious: 4, graveCrime: 2, resolved: 17, open: 4, total: 21 },
+  { month: "2026-09", general: 10, serious: 3, graveCrime: 0, resolved: 8, open: 5, total: 13 },
+];
+
 // "Recent Activity Logs" table — official PDF/CSV reports ready for download.
 export const dummyActivityLog = [
   { id: "log1", reportTitle: "Quarterly Crime Statistics-01", type: "crime", generatedBy: "Insp. Pathirana", date: "2026-03-05", status: "Complete" },

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
-  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  BarChart, Bar, LineChart, Line, ComposedChart, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { Button, Card, StatCard, Table, Loader, InputField, Badge, SearchableSelect } from "../../components";
 import { useLanguage } from "../../i18n/useLanguage";
@@ -11,6 +11,7 @@ import {
   getReportsSummary,
   getCrimeDistribution,
   getForceStrength,
+  getComplaintTrend,
   getActivityLog,
   previewReport,
   generateReport,
@@ -42,6 +43,7 @@ const CATEGORY_LABEL_KEY = {
   inventory: "catWeaponsTitle",
   ammunition: "catAmmunitionTitle",
   station: "catStationTitle",
+  performance: "catPerformanceTitle",
 };
 
 function categoryLabelFor(type, t) {
@@ -289,6 +291,8 @@ function getFilterFields(type, t) {
       ];
     case "ammunition":
       return [{ key: "officerId", kind: "officer", label: t("reports.filterOfficer") }];
+    case "performance":
+      return [{ key: "department", kind: "text", label: t("reports.filterDepartment"), placeholder: t("reports.filterDepartmentPlaceholder") }];
     default:
       return [];
   }
@@ -308,6 +312,15 @@ export function ReportsPage() {
   const [summary, setSummary] = useState(null);
   const [crimeData, setCrimeData] = useState([]);
   const [forceData, setForceData] = useState([]);
+  const [trendData, setTrendData] = useState([]);
+  // Scopes the hub's stat cards + Crime Distribution chart — separate
+  // from `preset`/`range` below (the workbench's own picker) since the
+  // hub and a category workbench are different "pages" within this
+  // component and shouldn't share one one date range between them.
+  // Defaults to the current month rather than all-time, so these numbers
+  // answer "how's this month going" instead of growing forever.
+  const [hubPreset, setHubPreset] = useState("thisMonth");
+  const [hubRange, setHubRange] = useState(() => PRESETS.find((p) => p.key === "thisMonth").range());
 
   // The paginated ledger — either "all categories" (hub) or scoped to
   // one category (workbench), depending on `view`.
@@ -341,6 +354,7 @@ export function ReportsPage() {
       { type: "weapons", title: t("reports.catWeaponsTitle"), desc: t("reports.catWeaponsDesc"), roles: ["admin", "oic", "inventory_officer"] },
       { type: "ammunition", title: t("reports.catAmmunitionTitle"), desc: t("reports.catAmmunitionDesc"), roles: ["admin", "oic", "inventory_officer"] },
       { type: "station", title: t("reports.catStationTitle"), desc: t("reports.catStationDesc"), roles: ["admin", "oic"] },
+      { type: "performance", title: t("reports.catPerformanceTitle"), desc: t("reports.catPerformanceDesc"), roles: ["admin", "oic"] },
     ],
     [t]
   );
@@ -387,16 +401,32 @@ export function ReportsPage() {
   // Station-wide Overview (stat cards + charts) — admin/oic only. Every
   // other role starts with `loading` already false (see its useState
   // above) and never lingers on the hub long enough to need this (see the
-  // redirect effect below), so there's nothing for this effect to do for them.
+  // redirect effect below), so there's nothing for this effect to do for
+  // them. Re-fetches all three whenever hubRange changes (the picker
+  // below) — Force Strength still always shows exactly 7 days (not an
+  // arbitrary-width range like the other two), but now ending at the
+  // selected range's dateTo instead of always today, so e.g. picking
+  // "Last Month" scrolls it to that week instead of doing nothing.
   useEffect(() => {
     if (!isOverviewRole) return;
     let cancelled = false;
-    Promise.all([getReportsSummary(), getCrimeDistribution(), getForceStrength()])
-      .then(([summaryRes, crimeRes, forceRes]) => {
+    // Syncing the loading flag to hubRange changing — a fresh fetch
+    // starting, not a cascading update (hubRange itself isn't touched
+    // here).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoading(true);
+    Promise.all([
+      getReportsSummary(hubRange.dateFrom, hubRange.dateTo),
+      getCrimeDistribution(hubRange.dateFrom, hubRange.dateTo),
+      getForceStrength(hubRange.dateTo),
+      getComplaintTrend(hubRange.dateTo),
+    ])
+      .then(([summaryRes, crimeRes, forceRes, trendRes]) => {
         if (cancelled) return;
         setSummary(summaryRes);
         setCrimeData(crimeRes);
         setForceData(forceRes);
+        setTrendData(trendRes);
       })
       .catch((err) => console.error("Failed to load reports:", err))
       .finally(() => {
@@ -406,7 +436,7 @@ export function ReportsPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [hubRange.dateFrom, hubRange.dateTo]);
 
   // Covers the browser back/forward buttons too, not just clicks — any
   // time the URL's :type changes, the form resets and the ledger reloads
@@ -449,6 +479,11 @@ export function ReportsPage() {
   function applyPreset(p) {
     setPreset(p.key);
     if (p.range) setRange((r) => ({ ...r, ...p.range() }));
+  }
+
+  function applyHubPreset(p) {
+    setHubPreset(p.key);
+    if (p.range) setHubRange((r) => ({ ...r, ...p.range() }));
   }
 
   function resetFilters() {
@@ -775,6 +810,8 @@ export function ReportsPage() {
     );
   }
 
+  const hubRangeCaption = `${new Date(hubRange.dateFrom).toLocaleDateString()} – ${new Date(hubRange.dateTo).toLocaleDateString()}`;
+
   return (
     <div className="reports-page">
       <div className="reports-shell">
@@ -790,10 +827,48 @@ export function ReportsPage() {
             </div>
           </div>
 
+          <Card variant="panel" className="reports-filter-card">
+            <h4>{t("reports.reportPeriod")}</h4>
+            <div className="reports-preset-row">
+              {PRESETS.filter((p) => p.key !== "today").map((p) => (
+                <button
+                  key={p.key}
+                  type="button"
+                  className={`reports-preset-btn${hubPreset === p.key ? " active" : ""}`}
+                  onClick={() => applyHubPreset(p)}
+                >
+                  {t(p.labelKey)}
+                </button>
+              ))}
+            </div>
+            <div className="reports-filter-grid">
+              <InputField
+                label={t("reports.dateFrom")}
+                type="date"
+                value={hubRange.dateFrom}
+                onChange={(e) => {
+                  setHubPreset("custom");
+                  setHubRange((r) => ({ ...r, dateFrom: e.target.value }));
+                }}
+              />
+              <InputField
+                label={t("reports.dateTo")}
+                type="date"
+                value={hubRange.dateTo}
+                onChange={(e) => {
+                  setHubPreset("custom");
+                  setHubRange((r) => ({ ...r, dateTo: e.target.value }));
+                }}
+              />
+            </div>
+          </Card>
+
           <div className="stat-grid">
-            <StatCard label={t("reports.dutySummary")} value={`${summary?.dutyCompliancePercent ?? 0}%`} caption={summary?.dutyComplianceCaption} />
-            <StatCard label={t("reports.leaveStatistics")} value={`${summary?.leaveStatisticsDays ?? 0} ${t("reports.days")}`} caption={summary?.leaveStatisticsCaption} />
-            <StatCard label={t("reports.inventoryMovements")} value={`${summary?.inventoryMovements ?? 0} ${t("reports.items")}`} caption={summary?.inventoryMovementsCaption} />
+            <StatCard label={t("reports.dutySummary")} value={`${summary?.dutyCompliancePercent ?? 0}%`} caption={hubRangeCaption} />
+            <StatCard label={t("leave.categoryPersonal")} value={`${summary?.leaveDaysByType?.personal ?? 0} ${t("reports.days")}`} caption={hubRangeCaption} />
+            <StatCard label={t("leave.categoryMedical")} value={`${summary?.leaveDaysByType?.medical ?? 0} ${t("reports.days")}`} caption={hubRangeCaption} />
+            <StatCard label={t("leave.categoryCasual")} value={`${summary?.leaveDaysByType?.casual ?? 0} ${t("reports.days")}`} caption={hubRangeCaption} />
+            <StatCard label={t("reports.inventoryMovements")} value={`${summary?.inventoryMovements ?? 0} ${t("reports.items")}`} caption={hubRangeCaption} />
           </div>
 
           <div className="reports-charts-grid">
@@ -824,6 +899,25 @@ export function ReportsPage() {
               </ResponsiveContainer>
             </Card>
           </div>
+
+          <Card variant="panel" className="chart-card">
+            <h4>{t("reports.complaintTrend")}</h4>
+            <p style={{ fontSize: 13, color: "var(--color-text-muted)", marginTop: -4, marginBottom: 8 }}>
+              {t("reports.complaintTrendDesc")}
+            </p>
+            <ResponsiveContainer width="100%" height={240}>
+              <ComposedChart data={trendData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="month" fontSize={12} />
+                <YAxis fontSize={12} />
+                <Tooltip />
+                <Bar stackId="severity" dataKey="general" fill="var(--color-primary)" name={t("complaints.severityGeneral")} radius={[0, 0, 0, 0]} />
+                <Bar stackId="severity" dataKey="serious" fill="var(--color-warning)" name={t("complaints.severitySerious")} radius={[0, 0, 0, 0]} />
+                <Bar stackId="severity" dataKey="graveCrime" fill="var(--color-danger)" name={t("complaints.severityGraveCrime")} radius={[4, 4, 0, 0]} />
+                <Line type="monotone" dataKey="resolved" stroke="var(--color-success)" strokeWidth={2} name={t("reports.resolved")} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </Card>
 
           <Card variant="panel">
             <h4 style={{ marginBottom: 4 }}>{t("reports.recentActivityLogs")}</h4>
