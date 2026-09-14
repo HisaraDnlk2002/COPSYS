@@ -31,19 +31,48 @@ function shortBranchLabel(value) {
   return value.split(" (")[0];
 }
 
+// Earliest date "Select Week" will let the Duty Officer pick — the later
+// of today and the day right after the most recently created roster
+// week's own start. Stops the calendar from being clickable on a week
+// that's already been created (or any date before today), rather than
+// only catching a backward pick after the fact via a server error.
+//
+// Built entirely in UTC, not local time — weekStarting comes back from
+// the API as UTC midnight (see DutyRosterWeek.js), and this runs in
+// whichever timezone the officer's own browser happens to be in. Mixing
+// local Date methods (setHours/getDate) with toISOString() at the end
+// would silently shift the result a calendar day backward for anyone
+// ahead of UTC (e.g. UTC+5:30) once local midnight converts to the
+// previous UTC day — the same class of bug already fixed server-side in
+// reportsController.js's getForceStrength.
+function computeMinWeekStarting(existingWeeks) {
+  const now = new Date();
+  // "Today" as the officer's own local calendar date, re-expressed as a
+  // UTC-midnight instant so it can be compared/serialized alongside
+  // weekStarting without a second timezone conversion undoing it.
+  let min = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+  for (const w of existingWeeks) {
+    const dayAfter = new Date(w.weekStarting); // already UTC midnight
+    dayAfter.setUTCDate(dayAfter.getUTCDate() + 1);
+    if (dayAfter > min) min = dayAfter;
+  }
+  return min.toISOString().slice(0, 10);
+}
+
 const STEPS = [
   { n: 1, label: "Select Week" },
   { n: 2, label: "Branch Strength & Allocation" },
   { n: 3, label: "Review & Finish" },
 ];
 
-export function CreateRosterWizard({ onCancel, onComplete, existingWeek }) {
+export function CreateRosterWizard({ onCancel, onComplete, existingWeek, existingWeeks = [] }) {
   const { t } = useLanguage();
 
   const [step, setStep] = useState(existingWeek ? 2 : 1);
   const [weekId, setWeekId] = useState(existingWeek?.id || null);
   const [weekStarting, setWeekStarting] = useState("");
   const [creatingWeek, setCreatingWeek] = useState(false);
+  const minWeekStarting = computeMinWeekStarting(existingWeeks);
 
   const [requirements, setRequirements] = useState(() => buildRequirements(existingWeek));
   const [savingRequirements, setSavingRequirements] = useState(false);
@@ -87,7 +116,11 @@ export function CreateRosterWizard({ onCancel, onComplete, existingWeek }) {
   }
 
   async function handleStep1Next() {
-    if (!weekStarting) return;
+    // Belt-and-suspenders alongside the date input's own `min` — that
+    // only grays out the calendar widget's cells, it doesn't stop a
+    // date typed directly into the field's segments (bypassing the
+    // popup entirely) from reaching here.
+    if (!weekStarting || weekStarting < minWeekStarting) return;
     setCreatingWeek(true);
     setError("");
     try {
@@ -202,11 +235,17 @@ export function CreateRosterWizard({ onCancel, onComplete, existingWeek }) {
             label={t("dutyRoster.weekStarting")}
             type="date"
             required
+            min={minWeekStarting}
             value={weekStarting}
             onChange={(e) => setWeekStarting(e.target.value)}
+            helperText={t("dutyRoster.wizard.weekStartingHelper")}
           />
           <div className="roster-actions-row" style={{ marginTop: 16 }}>
-            <Button variant="primary" onClick={handleStep1Next} disabled={!weekStarting || creatingWeek}>
+            <Button
+              variant="primary"
+              onClick={handleStep1Next}
+              disabled={!weekStarting || weekStarting < minWeekStarting || creatingWeek}
+            >
               {creatingWeek ? t("dutyRoster.wizard.creating") : t("dutyRoster.wizard.nextStep")}
             </Button>
           </div>

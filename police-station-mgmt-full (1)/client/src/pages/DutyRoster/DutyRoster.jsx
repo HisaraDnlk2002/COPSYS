@@ -222,6 +222,7 @@ export function DutyRosterPage() {
           {showWizard && (
         <CreateRosterWizard
           existingWeek={editingWeek}
+          existingWeeks={weeks}
           onCancel={() => {
             setShowWizard(false);
             setEditingWeek(null);
@@ -342,6 +343,14 @@ export function DutyRosterPage() {
                   }}
                 >
                   {t("dutyRoster.editRequirements")}
+                </Button>
+                {/* Server now allows regenerating a sent-back week too
+                    (same composition-editing lock as manual edits) — this
+                    used to be draft-only, which meant Smart Allocation
+                    became permanently unusable the moment the OIC sent a
+                    week back. */}
+                <Button variant="outline" onClick={handleGenerate} disabled={generating}>
+                  {generating ? t("dutyRoster.generating") : t("dutyRoster.generateRoster")}
                 </Button>
                 <Button variant="primary" onClick={handleSubmitWeek}>
                   {t("dutyRoster.submitToOic")}

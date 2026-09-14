@@ -1202,7 +1202,23 @@ export function InventoryPage() {
             onChange={(e) => setReturnForm((f) => ({ ...f, quantity: e.target.value }))}
           />
           <InputField label={t("inventory.returnDate")} type="date" value={returnForm.returnDate} onChange={(e) => setReturnForm((f) => ({ ...f, returnDate: e.target.value }))} />
-          <InputField label={t("inventory.weaponCondition")} value={returnForm.condition} onChange={(e) => setReturnForm((f) => ({ ...f, condition: e.target.value }))} sinhalaTyping />
+          <InputField
+            label={t("inventory.weaponCondition")}
+            type="select"
+            required
+            value={returnForm.condition}
+            onChange={(e) => setReturnForm((f) => ({ ...f, condition: e.target.value }))}
+            // A fixed choice, not free text — the server only ever
+            // classifies a return as damaged when this is exactly
+            // "Faulty" (see returnItem() in inventoryController.js), so
+            // free typing let a genuinely damaged weapon silently go
+            // back into available stock on anything but that exact word
+            // ("Damaged", "Broken scope", a typo, ...).
+            options={[
+              { value: "Good", label: t("status.good") },
+              { value: "Faulty", label: t("status.faulty") },
+            ]}
+          />
         </div>
 
         <h3 className="section-label">{t("inventory.ammoCheckTitle")}</h3>

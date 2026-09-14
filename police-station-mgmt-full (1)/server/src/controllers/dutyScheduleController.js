@@ -316,13 +316,21 @@ async function update(req, res) {
 // Shifts NOT being (re)generated in this call are treated as already
 // committed, so an officer used there can't be double-booked elsewhere
 // in the same pass (spec §14).
+//
+// Allowed on "draft" OR "sent_back" — same composition-editing lock as
+// create()/update()/updateRequirements() above. This used to only allow
+// "draft", which meant Smart Allocation became permanently unusable the
+// moment the OIC sent a week back (the only way to regenerate was
+// composing every shift by hand), and the error it threw in that exact
+// state ("Send it back to revise first") was actively misleading since
+// that had already happened.
 async function generateRoster(req, res) {
   try {
     const week = await DutyRosterWeek.findById(req.params.weekId);
     if (!week) return res.status(404).json({ error: "Roster week not found" });
 
-    if (week.status !== "draft") {
-      return res.status(400).json({ error: "Only a draft week can be auto-generated. Send it back to revise first." });
+    if (!["draft", "sent_back"].includes(week.status)) {
+      return res.status(400).json({ error: "Only a draft or sent-back week can be auto-generated." });
     }
     if (!week.requirements || week.requirements.length === 0) {
       return res.status(400).json({ error: "Set branch requirements before generating." });
