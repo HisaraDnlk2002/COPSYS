@@ -39,10 +39,17 @@ const inventoryTransactionSchema = new mongoose.Schema(
     // page load.
     overdueAlertGenerated: { type: Boolean, default: false },
 
-    // Ammunition reconciliation — only entered on return/damaged. Both
-    // are captured at return time (not pulled from the original issue,
-    // which doesn't record ammo at all); ammoUsed is derived and stored
-    // so history views don't have to recompute it.
+    // Ammunition reconciliation. ammoIssued is optional on BOTH an
+    // "issue" transaction (recorded at issue time, if the Inventory
+    // Officer entered it then) and a "return"/"damaged" one — the
+    // Return form pre-fills its own ammoIssued/quantity from the
+    // officer's matching open issue record when one exists (see
+    // Inventory.jsx's returnForm-prefill effect), but it's still a
+    // separate, editable value here rather than a read of the issue
+    // row, since older issues predate this field and an officer can
+    // always correct it at return time. ammoReturned is only ever
+    // entered on return/damaged; ammoUsed is derived from the pair and
+    // stored so history views don't have to recompute it.
     ammoIssued: { type: Number, default: null },
     ammoReturned: { type: Number, default: null },
     ammoUsed: { type: Number, default: null },

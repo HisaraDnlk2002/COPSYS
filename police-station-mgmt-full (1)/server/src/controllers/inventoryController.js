@@ -107,7 +107,7 @@ async function update(req, res) {
 // POST /api/inventory/:id/issue — duty_officer, inventory_officer
 // Matches the "Issue Item" modal: Officer ID, Weapon Serial ID, Quantity to Issue, Deployment Date
 async function issue(req, res) {
-  const { officerId, quantity, dutyType, dateTime, expectedReturnDate } = req.body;
+  const { officerId, quantity, dutyType, dateTime, expectedReturnDate, ammoIssued } = req.body;
 
   if (!officerId || !quantity) {
     return res.status(400).json({ error: "Officer ID and quantity are required" });
@@ -146,6 +146,12 @@ async function issue(req, res) {
       ? new Date(expectedReturnDate)
       : new Date(issueDateTime.getTime() + 24 * 60 * 60 * 1000);
 
+    // Optional — recorded here (rather than only ever being typed in
+    // from memory on return) so the Return form can pre-fill "Ammo
+    // Issued" from this same record instead of the Inventory Officer
+    // having to recall or re-verify it every time a weapon comes back.
+    const hasAmmoIssued = ammoIssued !== undefined && ammoIssued !== null && ammoIssued !== "";
+
     const transaction = await InventoryTransaction.create({
       itemId: item._id,
       officerId,
@@ -155,6 +161,7 @@ async function issue(req, res) {
       quantity,
       dateTime: issueDateTime,
       expectedReturnDate: resolvedExpectedReturn,
+      ammoIssued: hasAmmoIssued ? Number(ammoIssued) : null,
       confirmationStatus: "pending",
       stationId: req.user.stationId,
     });
@@ -276,21 +283,9 @@ async function listTransactions(req, res) {
 // server-side to req.user.uid, so an officer viewing it can only ever
 // see their own currently-assigned firearm(s) and their own custody
 // history, never the station-wide ledger.
-//
-// "Currently assigned" requires status === "issued" as well as
-// assignedTo === me, belt-and-suspenders: assignedTo is only cleared
-// once a return is *confirmed* (see confirmTransaction below), so
-// during the pending-confirmation window it correctly still shows here
-// — the officer is still the one formally accountable for it.
 async function getMyWeapons(req, res) {
   try {
     const officerId = req.user.uid;
-
-    const assigned = await Inventory.find({
-      assignedTo: officerId,
-      status: "issued",
-      category: "Firearms",
-    }).sort({ itemName: 1 });
 
     // Pull a bit more than we'll show, then filter to firearms-only
     // client-side of the query (category lives on the populated item,
@@ -309,6 +304,44 @@ async function getMyWeapons(req, res) {
     // the My Weapons page as an action item, not just another history
     // row. See confirmTransaction for what confirming each type does.
     const pendingConfirmation = firearmsTx.filter((tx) => tx.confirmationStatus === "pending");
+
+    // "Currently assigned" is netted from this officer's OWN issue vs.
+    // confirmed-return/damaged transaction history — NOT the shared
+    // Inventory line's own status/assignedTo fields (the old approach).
+    // Those only ever reflect the single most-recent officer, and
+    // status only flips to "issued" once a line's whole stock count is
+    // fully depleted to 0 (see issue()), so any line stocked above 1
+    // unit never showed up here at all, even while this officer
+    // genuinely holds one of its units — see Inventory.jsx's
+    // getOutstandingItemIds, which hit the exact same bug in the
+    // Return form's weapon picker. A return/damaged transaction only
+    // counts against the balance once CONFIRMED (matching
+    // confirmTransaction's own "a return actually applies the stock
+    // update" timing) — a return the officer hasn't personally
+    // confirmed yet shouldn't already stop showing the weapon as
+    // theirs, since they're still formally accountable for it until
+    // they do.
+    //
+    // Run over this officer's FULL firearms transaction history, not
+    // just the capped `recentTx` above — an old still-outstanding issue
+    // could otherwise fall off the 50-row cap once enough other
+    // transactions (any category) pile up, and wrongly disappear from
+    // "assigned" even though it was never actually returned.
+    const allFirearmsTx = await InventoryTransaction.find({ officerId })
+      .populate("itemId", "itemId itemName category");
+    const netByItem = new Map(); // item's Mongo id -> { item, net }
+    for (const tx of allFirearmsTx) {
+      if (tx.itemId?.category !== "Firearms") continue;
+      const key = tx.itemId._id.toString();
+      const entry = netByItem.get(key) || { item: tx.itemId, net: 0 };
+      if (tx.type === "issue") entry.net += tx.quantity || 1;
+      else if (tx.confirmationStatus === "secured") entry.net -= tx.quantity || 1;
+      netByItem.set(key, entry);
+    }
+    const assignedItemIds = [...netByItem.values()].filter((e) => e.net > 0).map((e) => e.item._id);
+    const assigned = assignedItemIds.length
+      ? await Inventory.find({ _id: { $in: assignedItemIds } }).sort({ itemName: 1 })
+      : [];
 
     return res.json({
       assigned: assigned.map((i) => i.toJSON()),

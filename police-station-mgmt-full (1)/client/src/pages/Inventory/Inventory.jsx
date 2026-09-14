@@ -59,7 +59,7 @@ async function searchOfficersByRank(query) {
 // officer/item start out unselected ({ value, label } from SearchableSelect,
 // not free text) — see handleIssueSubmit/handleReturnSubmit for why that
 // matters: the backend needs real ids, not whatever was typed.
-const EMPTY_ISSUE_FORM = { officer: null, item: null, quantity: "", deploymentDate: "", expectedReturnDate: "" };
+const EMPTY_ISSUE_FORM = { officer: null, item: null, quantity: "", deploymentDate: "", expectedReturnDate: "", ammoIssued: "" };
 const EMPTY_RETURN_FORM = { officer: null, item: null, quantity: "", returnDate: "", condition: "", ammoIssued: "", ammoReturned: "" };
 const EMPTY_ADD_FORM = { weaponSerialId: "", quantity: "", weaponType: "", category: "" };
 
@@ -103,6 +103,11 @@ export function InventoryPage() {
   const [openModal, setOpenModal] = useState(null); // null | "issue" | "return" | "add"
   const [issueForm, setIssueForm] = useState(EMPTY_ISSUE_FORM);
   const [returnForm, setReturnForm] = useState(EMPTY_RETURN_FORM);
+  // The issue record the Return form's quantity/ammoIssued were
+  // pre-filled from (see findOpenIssueRecord) — kept only to show the
+  // "Issued on … for …" caption under the weapon picker, not submitted
+  // with the return itself.
+  const [returnSourceIssue, setReturnSourceIssue] = useState(null);
   const [addForm, setAddForm] = useState(EMPTY_ADD_FORM);
   const [submitting, setSubmitting] = useState(false);
   const [modalError, setModalError] = useState("");
@@ -189,6 +194,7 @@ export function InventoryPage() {
     setOpenModal(null);
     setIssueForm(EMPTY_ISSUE_FORM);
     setReturnForm(EMPTY_RETURN_FORM);
+    setReturnSourceIssue(null);
     setAddForm(EMPTY_ADD_FORM);
     setModalError("");
   }
@@ -214,6 +220,31 @@ export function InventoryPage() {
       }));
   }
 
+  // Which items a given officer is actually still holding — netted from
+  // their own issue vs. return/damaged transaction history, not the
+  // shared Inventory line's own `status` field. That field only flips
+  // to "issued" once the line's whole stock quantity is depleted to 0
+  // (see issue() in inventoryController.js) — correct for a
+  // one-of-a-kind serialized weapon (quantity 1), but any line stocked
+  // above 1 unit stays "available" forever no matter how many units are
+  // actually out with officers, so the old status-based check could
+  // never find a real, currently-issued unit on one of those lines at
+  // all. Netting each officer's own issue quantity against their own
+  // return/damaged quantity per item gets the right answer regardless
+  // of how the line's stock count reads.
+  function getOutstandingItemIds(officerValue) {
+    const net = new Map(); // item's Mongo id -> units still outstanding
+    for (const tx of issueTx) {
+      if (tx.officerId?._id !== officerValue || !tx.itemId?._id) continue;
+      net.set(tx.itemId._id, (net.get(tx.itemId._id) || 0) + (tx.quantity || 1));
+    }
+    for (const tx of [...returnTx, ...damagedTx]) {
+      if (tx.officerId?._id !== officerValue || !tx.itemId?._id) continue;
+      net.set(tx.itemId._id, (net.get(tx.itemId._id) || 0) - (tx.quantity || 1));
+    }
+    return new Set([...net.entries()].filter(([, n]) => n > 0).map(([id]) => id));
+  }
+
   // "System loads the officer's currently issued weapon" — the Return
   // modal's item picker is scoped to whichever officer is selected
   // first, rather than searching the whole ledger. Returns nothing
@@ -224,11 +255,11 @@ export function InventoryPage() {
   async function searchOfficerIssuedItems(query) {
     if (!returnForm.officer) return [];
     const q = query.toLowerCase();
+    const outstandingIds = getOutstandingItemIds(returnForm.officer.value);
     return items
       .filter(
         (i) =>
-          i.assignedTo === returnForm.officer.value &&
-          i.status === "issued" &&
+          outstandingIds.has(i.id) &&
           (i.itemId.toLowerCase().includes(q) || i.itemName.toLowerCase().includes(q))
       )
       .map((i) => ({
@@ -236,6 +267,25 @@ export function InventoryPage() {
         label: `${i.itemId} — ${i.itemName}`,
         subtitle: i.category,
       }));
+  }
+
+  // The record the Return form pre-fills from once a weapon is picked —
+  // the officer's own most recent "issue" transaction for that exact
+  // item. Most recent (not just "any match") because the same serial
+  // can have older issue history from before a past return, and that
+  // older row isn't the one currently open.
+  function findOpenIssueRecord(officerValue, itemValue) {
+    if (!officerValue || !itemValue) return null;
+    // Populated officerId/itemId only carry the fields listTransactions
+    // selected (fullName/rankAndNumber, itemId/itemName/category) plus
+    // Mongo's own _id — never the custom `id` the top-level transaction
+    // gets from InventoryTransaction's toJSON, since populate() doesn't
+    // route a subdocument through its own model's toJSON transform.
+    return (
+      issueTx
+        .filter((tx) => tx.officerId?._id === officerValue && tx.itemId?._id === itemValue)
+        .sort((a, b) => new Date(b.dateTime) - new Date(a.dateTime))[0] || null
+    );
   }
 
   async function handleIssueSubmit(e) {
@@ -255,6 +305,7 @@ export function InventoryPage() {
         dateTime: issueForm.deploymentDate,
         quantity: Number(issueForm.quantity),
         expectedReturnDate: issueForm.expectedReturnDate || undefined,
+        ammoIssued: issueForm.ammoIssued === "" ? undefined : Number(issueForm.ammoIssued),
       });
       await loadAll();
       closeModal();
@@ -1078,6 +1129,14 @@ export function InventoryPage() {
             onChange={(e) => setIssueForm((f) => ({ ...f, expectedReturnDate: e.target.value }))}
             helperText={t("inventory.expectedReturnDateHelper")}
           />
+          <InputField
+            label={t("inventory.ammoIssued")}
+            type="number"
+            min="0"
+            value={issueForm.ammoIssued}
+            onChange={(e) => setIssueForm((f) => ({ ...f, ammoIssued: e.target.value }))}
+            helperText={t("inventory.ammoIssuedAtIssueHelper")}
+          />
         </div>
         {modalError && <p style={{ color: "var(--color-danger)", marginTop: 12 }}>{modalError}</p>}
       </Modal>
@@ -1100,7 +1159,10 @@ export function InventoryPage() {
             label={t("inventory.officerId")}
             required
             value={returnForm.officer}
-            onChange={(opt) => setReturnForm((f) => ({ ...f, officer: opt, item: null }))}
+            onChange={(opt) => {
+              setReturnForm((f) => ({ ...f, officer: opt, item: null, quantity: "", ammoIssued: "" }));
+              setReturnSourceIssue(null);
+            }}
             searchFn={searchOfficersByRank}
             placeholder={t("leave.searchOfficerPlaceholder")}
           />
@@ -1109,9 +1171,28 @@ export function InventoryPage() {
             required
             minChars={0}
             value={returnForm.item}
-            onChange={(opt) => setReturnForm((f) => ({ ...f, item: opt }))}
+            onChange={(opt) => {
+              // Pre-fill from the officer's own matching issue record —
+              // "choose the weapon, the rest fills itself in" instead of
+              // re-typing facts already on file. Still just a starting
+              // point: every field stays editable for a partial return
+              // or a correction.
+              const sourceIssue = findOpenIssueRecord(returnForm.officer?.value, opt?.value);
+              setReturnSourceIssue(sourceIssue);
+              setReturnForm((f) => ({
+                ...f,
+                item: opt,
+                quantity: sourceIssue ? String(sourceIssue.quantity) : f.quantity,
+                ammoIssued: sourceIssue?.ammoIssued != null ? String(sourceIssue.ammoIssued) : f.ammoIssued,
+              }));
+            }}
             searchFn={searchOfficerIssuedItems}
             placeholder={returnForm.officer ? t("inventory.weaponSerialId") : t("inventory.selectOfficerFirst")}
+            helperText={
+              returnSourceIssue
+                ? `${t("inventory.prefilledFromIssue")} ${formatDate(returnSourceIssue.dateTime)} (${returnSourceIssue.dutyType || "—"})`
+                : undefined
+            }
           />
           <InputField
             label={t("inventory.quantityToReturn")}

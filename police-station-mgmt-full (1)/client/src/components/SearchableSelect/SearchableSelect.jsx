@@ -49,16 +49,7 @@ export function SearchableSelect({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  function handleInputChange(e) {
-    const text = e.target.value;
-    setQuery(text);
-    setOpen(true);
-    setHighlighted(-1);
-
-    if (value && text !== value.label) {
-      onChange(null);
-    }
-
+  function runSearch(text) {
     clearTimeout(debounceTimer);
     if (text.trim().length < minChars) {
       setOptions([]);
@@ -77,6 +68,31 @@ export function SearchableSelect({
         setLoading(false);
       }
     }, 300);
+  }
+
+  function handleInputChange(e) {
+    const text = e.target.value;
+    setQuery(text);
+    setOpen(true);
+    setHighlighted(-1);
+
+    if (value && text !== value.label) {
+      onChange(null);
+    }
+
+    runSearch(text);
+  }
+
+  // minChars={0} means a field like the Return form's weapon picker is
+  // meant to show its options (e.g. "whatever's currently issued to
+  // this officer") the moment it's focused, with nothing typed — that
+  // only actually happens if focusing runs the search too, not just
+  // typing. Guarded to minChars <= 0 so every other field (which needs
+  // at least one keystroke before searchFn's query makes sense) keeps
+  // its previous focus behavior.
+  function handleFocus() {
+    setOpen(true);
+    if (minChars <= 0) runSearch(query);
   }
 
   function selectOption(opt) {
@@ -120,7 +136,7 @@ export function SearchableSelect({
           className={`field-control${error ? " field-error" : ""}`}
           value={query}
           onChange={handleInputChange}
-          onFocus={() => setOpen(true)}
+          onFocus={handleFocus}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
           required={required}
