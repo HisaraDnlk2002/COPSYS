@@ -51,16 +51,37 @@ export function RosterSummary({ week, shifts, officers, leaveRequests }) {
   }
 
   return (
-    <div style={{ overflowX: "auto" }}>
+    // overflowY explicitly "visible", not left to default — per the CSS
+    // overflow spec, setting only overflow-x to a non-visible value
+    // silently computes overflow-y as "auto" too, which makes THIS div
+    // (not whatever taller ancestor is actually scrolling, e.g.
+    // DutyRoster.jsx's row-height-capped preview) the nearest scrolling
+    // ancestor for the sticky <th> headers below. Sticky then binds to
+    // this container's (never-moving) scroll position instead of the
+    // one the officer actually scrolls, so the header silently never
+    // appears to stick. Being explicit here keeps this div a
+    // horizontal-only scroller, so sticky correctly finds whatever
+    // ancestor is really handling the vertical scroll instead.
+    <div style={{ overflowX: "auto", overflowY: "visible" }}>
       <table className="roster-grid-table" style={{ borderCollapse: "separate", borderSpacing: 0, width: "100%" }}>
+        {/* position: sticky on each <th> (not the <thead>, for more
+            consistent cross-browser table behavior) — a no-op wherever
+            this table isn't inside a scrolling container (Full View,
+            print), but keeps the day/officer headers in view while
+            scrolling through officers in the embedded card's own
+            capped-height preview (see DutyRoster.jsx). */}
         <thead>
           <tr>
-            <th style={{ minWidth: 160, textAlign: "left" }}>{t("dutyRoster.summary.officer")}</th>
-            <th style={{ minWidth: 130, textAlign: "left" }}>{t("dutyRoster.summary.department")}</th>
+            <th style={{ minWidth: 160, textAlign: "left", position: "sticky", top: 0, background: "var(--color-bg, #fff)", zIndex: 1 }}>
+              {t("dutyRoster.summary.officer")}
+            </th>
+            <th style={{ minWidth: 130, textAlign: "left", position: "sticky", top: 0, background: "var(--color-bg, #fff)", zIndex: 1 }}>
+              {t("dutyRoster.summary.department")}
+            </th>
             {DAY_NAMES.map((day, i) => {
               const date = dateForDayIndex(week.weekStarting, i);
               return (
-                <th key={day} style={{ minWidth: 90 }}>
+                <th key={day} style={{ minWidth: 90, position: "sticky", top: 0, background: "var(--color-bg, #fff)", zIndex: 1 }}>
                   {date.toLocaleDateString(undefined, { weekday: "short", day: "numeric" })}
                 </th>
               );
@@ -88,11 +109,18 @@ export function RosterSummary({ week, shifts, officers, leaveRequests }) {
                 let cell;
                 let colorKind;
                 if (officerShifts.length > 0) {
-                  colorKind = officerShifts.some((s) => s.status === "absent") ? "absent" : "onDuty";
+                  // Spec §10 — a shift marked absent because of approved
+                  // leave reads as "On Leave" here too, not just the
+                  // no-shift-row case below (officerOnLeaveThatDay).
+                  const hasLeaveAbsence = officerShifts.some((s) => s.status === "absent" && s.absenceReason === "leave");
+                  const hasPlainAbsence = officerShifts.some((s) => s.status === "absent" && s.absenceReason !== "leave");
+                  colorKind = hasPlainAbsence ? "absent" : hasLeaveAbsence ? "leave" : "onDuty";
                   cell = officerShifts
                     .map((s) =>
                       s.status === "absent"
-                        ? t("dutyRoster.summary.absent")
+                        ? s.absenceReason === "leave"
+                          ? t("dutyRoster.summary.onLeave")
+                          : t("dutyRoster.summary.absent")
                         : `${s.shiftType === "night" ? t("dutyRoster.summary.night") : t("dutyRoster.summary.day")} · ${branchShort(s.department)}`
                     )
                     .join(" + ");

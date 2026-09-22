@@ -12,9 +12,11 @@ import {
   approveRosterWeek,
   sendBackRosterWeek,
   publishRosterWeek,
+  unpublishRosterWeek,
 } from "../../services/dutyRoster";
 import { listUsers } from "../../services/users";
 import { getAllLeaveRequests } from "../../services/leave";
+import { formatDate } from "../../utils/formatDate";
 import { CreateRosterWizard } from "./CreateRosterWizard";
 import { DailyDutyUpdate } from "./DailyDutyUpdate";
 import { WeeklyGrid } from "./WeeklyGrid";
@@ -53,6 +55,9 @@ export function DutyRosterPage() {
 
   const [sendBackReason, setSendBackReason] = useState("");
   const [showSendBackModal, setShowSendBackModal] = useState(false);
+  const [unpublishReason, setUnpublishReason] = useState("");
+  const [showUnpublishModal, setShowUnpublishModal] = useState(false);
+  const [showFullRosterSummary, setShowFullRosterSummary] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -132,9 +137,10 @@ export function DutyRosterPage() {
     }
   }
 
-  async function handleDeleteWeek(weekId, e) {
+  async function handleDeleteWeek(weekId, status, e) {
     e.stopPropagation(); // don't also trigger selecting the row
-    if (!window.confirm(t("dutyRoster.confirmDeleteDraft"))) return;
+    const confirmMessage = status === "unpublished" ? t("dutyRoster.confirmDeleteUnpublished") : t("dutyRoster.confirmDeleteDraft");
+    if (!window.confirm(confirmMessage)) return;
     try {
       await deleteRosterWeek(weekId);
       setWeeks((prev) => prev.filter((w) => w.id !== weekId));
@@ -156,9 +162,43 @@ export function DutyRosterPage() {
       console.error("Could not publish week:", err);
     }
   }
+
+  // Spec §17 — never fires from the confirmation prompt itself; the
+  // modal's own Cancel/close is the only other way out, same pattern as
+  // handleSendBack/handleDeleteWeek.
+  async function handleUnpublish() {
+    if (!selectedWeekId) return;
+    try {
+      const updated = await unpublishRosterWeek(selectedWeekId, unpublishReason);
+      setWeeks((prev) => prev.map((w) => (w.id === selectedWeekId ? { ...w, ...updated } : w)));
+    } catch (err) {
+      console.error("Could not unpublish week:", err);
+    } finally {
+      setShowUnpublishModal(false);
+      setUnpublishReason("");
+    }
+  }
+
+  // Print-isolation CSS (DutyRoster.css, @media print, scoped to this
+  // one class on <body> — never a blanket rule, so it can't leak into
+  // printing from any other page) hides everything except
+  // .roster-summary-print-target while this class is present. Toggled
+  // right around window.print() rather than left on, so a stray Ctrl+P
+  // on this page at any other time still prints normally.
+  function handlePrintRosterSummary() {
+    document.body.classList.add("printing-roster-summary");
+    function cleanup() {
+      document.body.classList.remove("printing-roster-summary");
+      window.removeEventListener("afterprint", cleanup);
+    }
+    window.addEventListener("afterprint", cleanup);
+    window.print();
+  }
+
   // Manual grid editing: only while the Duty Officer can still change
-  // things (draft, or sent back for revision).
-  const isEditableStatus = ["draft", "sent_back"].includes(weekDetail?.week?.status);
+  // things (draft, sent back for revision, or pulled back from
+  // published).
+  const isEditableStatus = ["draft", "sent_back", "unpublished"].includes(weekDetail?.week?.status);
 
   if (loading) return <Loader label={t("dutyRoster.loading")} />;
 
@@ -241,30 +281,50 @@ export function DutyRosterPage() {
         />
       )}
 
-      <div className="roster-weeks-list">
-        {weeks.length === 0 && <p style={{ color: "var(--color-text-muted)" }}>{t("dutyRoster.noRosterWeeks")}</p>}
-        {weeks.map((week) => (
-          <div
-            key={week.id}
-            className={`roster-week-row${week.id === selectedWeekId ? " active" : ""}`}
-            onClick={() => setSelectedWeekId(week.id)}
-          >
-            <span>
-              {t("dutyRoster.weekOf")} {week.weekStarting}
-            </span>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      {!showWizard && (weeks.length === 0 ? (
+        <p style={{ color: "var(--color-text-muted)" }}>{t("dutyRoster.noRosterWeeks")}</p>
+      ) : (
+        <div className="roster-weeks-list">
+          {/* Horizontal tabs, not a stacked list — a vertical row per
+              week cost real space at the top of the page before ever
+              reaching the roster grid itself. Only the 4 most recent
+              weeks are shown here — `weeks` itself stays the full set
+              (already sorted newest-first by the server) since other
+              logic still needs every week, not just the visible ones:
+              CreateRosterWizard's own min-date guard (existingWeeks
+              prop) has to see every existing week to stop a new one
+              from clashing with an older one that's since scrolled out
+              of this strip, and selecting an older week from elsewhere
+              still finds it via weeks.find() below either way. */}
+          {weeks.slice(0, 4).map((week) => (
+            <div
+              key={week.id}
+              className={`roster-week-tab${week.id === selectedWeekId ? " active" : ""}`}
+              onClick={() => setSelectedWeekId(week.id)}
+            >
+              <span>{formatDate(week.weekStarting)}</span>
               <Badge status={week.status === "sent_back" ? "rejected" : week.status === "submitted" ? "pending" : week.status} />
-              {isDutyOfficer && week.status === "draft" && (
-                <Button variant="ghost" onClick={(e) => handleDeleteWeek(week.id, e)}>
-                  {t("dutyRoster.delete")}
-                </Button>
+              {isDutyOfficer && ["draft", "unpublished"].includes(week.status) && (
+                <button
+                  type="button"
+                  className="roster-week-tab-delete"
+                  title={t("dutyRoster.delete")}
+                  onClick={(e) => handleDeleteWeek(week.id, week.status, e)}
+                >
+                  ×
+                </button>
               )}
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+          {weeks.length > 4 && (
+            <span style={{ color: "var(--color-text-muted)", fontSize: 12, padding: "0 8px" }}>
+              {weeks.length - 4} {t("dutyRoster.olderWeeksNotShown")}
+            </span>
+          )}
+        </div>
+      ))}
 
-      {selectedWeek && (
+      {!showWizard && selectedWeek && (
         <div className="roster-content-layout" style={{ display: "flex", gap: 24, alignItems: "flex-start" }}>
           <Card variant="panel" style={{ flex: 1 }}>
             {unfilledDays.length > 0 && (
@@ -277,6 +337,12 @@ export function DutyRosterPage() {
             {selectedWeek.status === "sent_back" && selectedWeek.sendBackReason && (
               <div className="unfilled-warning">
                 {t("dutyRoster.sentBackByOic")} {selectedWeek.sendBackReason}
+              </div>
+            )}
+
+            {selectedWeek.status === "unpublished" && selectedWeek.unpublishReason && (
+              <div className="unfilled-warning">
+                {t("dutyRoster.unpublishedReasonPrefix")} {selectedWeek.unpublishReason}
               </div>
             )}
 
@@ -333,7 +399,7 @@ export function DutyRosterPage() {
               </div>
             )}
 
-            {isDutyOfficer && selectedWeek.status === "sent_back" && (
+            {isDutyOfficer && ["sent_back", "unpublished"].includes(selectedWeek.status) && (
               <div className="roster-actions-row">
                 <Button
                   variant="ghost"
@@ -344,11 +410,11 @@ export function DutyRosterPage() {
                 >
                   {t("dutyRoster.editRequirements")}
                 </Button>
-                {/* Server now allows regenerating a sent-back week too
-                    (same composition-editing lock as manual edits) — this
-                    used to be draft-only, which meant Smart Allocation
-                    became permanently unusable the moment the OIC sent a
-                    week back. */}
+                {/* Server allows regenerating a sent-back OR unpublished
+                    week too (same composition-editing lock as manual
+                    edits) — this used to be draft-only, which meant
+                    Smart Allocation became permanently unusable the
+                    moment a week left draft even once. */}
                 <Button variant="outline" onClick={handleGenerate} disabled={generating}>
                   {generating ? t("dutyRoster.generating") : t("dutyRoster.generateRoster")}
                 </Button>
@@ -376,6 +442,14 @@ export function DutyRosterPage() {
                 </Button>
               </div>
             )}
+
+            {isDutyOfficer && selectedWeek.status === "published" && (
+              <div className="roster-actions-row">
+                <Button variant="ghost" onClick={() => setShowUnpublishModal(true)}>
+                  {t("dutyRoster.unpublish")}
+                </Button>
+              </div>
+            )}
           </Card>
 
           <Card variant="panel" style={{ width: 280, flexShrink: 0 }}>
@@ -398,24 +472,75 @@ export function DutyRosterPage() {
         </div>
       )}
 
-      {selectedWeek && selectedWeek.status === "published" && (
-        <Card variant="panel" style={{ marginTop: 24 }}>
-          <h3 style={{ marginTop: 0 }}>{t("dutyRoster.summary.title")}</h3>
-          <p style={{ color: "var(--color-text-muted)", fontSize: 13, marginTop: -4, marginBottom: 16 }}>
-            {t("dutyRoster.summary.subtitle")}
-          </p>
-          {detailLoading ? (
-            <Loader label={t("dutyRoster.loadingWeekGrid")} />
-          ) : (
-            <RosterSummary
-              week={selectedWeek}
-              shifts={activeShifts}
-              officers={officers}
-              leaveRequests={leaveRequests}
-            />
-          )}
+      {!showWizard && selectedWeek && selectedWeek.status === "published" && (
+        <Card variant="panel" style={{ marginTop: 40 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+            <div>
+              <h3 style={{ marginTop: 0, marginBottom: 4 }}>{t("dutyRoster.summary.title")}</h3>
+              <p style={{ color: "var(--color-text-muted)", fontSize: 13, margin: 0 }}>
+                {t("dutyRoster.summary.subtitle")}
+              </p>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+              <Button variant="outline" onClick={() => setShowFullRosterSummary(true)}>
+                {t("dutyRoster.summary.fullView")}
+              </Button>
+              <Button variant="outline" onClick={handlePrintRosterSummary}>
+                {t("dutyRoster.summary.print")}
+              </Button>
+            </div>
+          </div>
+          {/* Printing always reads from here (normal document flow),
+              never from the Full View modal below — a position:fixed
+              overlay doesn't play well with the print-isolation CSS
+              trick (see handlePrintRosterSummary/DutyRoster.css). Both
+              show the exact same data either way, so there's nothing
+              for the Full View copy to miss.
+
+              maxHeight is deliberate, not a layout accident — full
+              width (every day column stays readable), but only a
+              handful of officer rows before this scrolls internally,
+              so the page itself doesn't need much scrolling to get
+              past a 25-officer table. "Full View" removes the cap
+              instead of just changing the width, matching what
+              actually scrolls a full station roster: how many people,
+              not how many days. */}
+          <div className="roster-summary-print-target" style={{ marginTop: 16, maxHeight: 420, overflowY: "auto" }}>
+            {detailLoading ? (
+              <Loader label={t("dutyRoster.loadingWeekGrid")} />
+            ) : (
+              <RosterSummary
+                week={selectedWeek}
+                shifts={activeShifts}
+                officers={officers}
+                leaveRequests={leaveRequests}
+              />
+            )}
+          </div>
         </Card>
       )}
+
+      {/* Spec-adjacent UX fix — the summary's own card squeezes a
+          9-column table (officer, department, 7 days) into whatever
+          width the page layout leaves it, forcing awkward horizontal
+          scrolling to see the later days. "Full View" reopens the exact
+          same table at near-viewport width instead, nothing new to
+          keep in sync. */}
+      <Modal
+        open={showFullRosterSummary}
+        onClose={() => setShowFullRosterSummary(false)}
+        title={t("dutyRoster.summary.title")}
+        size="wide"
+      >
+        {selectedWeek && (
+          <RosterSummary
+            week={selectedWeek}
+            shifts={activeShifts}
+            officers={officers}
+            leaveRequests={leaveRequests}
+          />
+        )}
+      </Modal>
 
       <Modal
         open={showSendBackModal}
@@ -433,6 +558,35 @@ export function DutyRosterPage() {
           value={sendBackReason}
           onChange={(e) => setSendBackReason(e.target.value)}
           placeholder={t("dutyRoster.reasonPlaceholder")}
+          voiceInput
+          sinhalaTyping
+        />
+      </Modal>
+
+      {/* Spec §17 — unpublishing never fires straight from the button;
+          it always confirms first and requires a reason, same shape as
+          sendBackWeek above but a Duty Officer pulling back their own
+          live roster, not an OIC review verdict. */}
+      <Modal
+        open={showUnpublishModal}
+        onClose={() => setShowUnpublishModal(false)}
+        title={t("dutyRoster.unpublishModalTitle")}
+        footer={
+          <Button variant="primary" onClick={handleUnpublish} disabled={!unpublishReason.trim()}>
+            {t("dutyRoster.unpublishConfirm")}
+          </Button>
+        }
+      >
+        <p style={{ color: "var(--color-text-muted)", fontSize: 13, marginTop: 0 }}>
+          {t("dutyRoster.unpublishWarning")}
+        </p>
+        <InputField
+          label={t("dutyRoster.reason")}
+          required
+          type="textarea"
+          value={unpublishReason}
+          onChange={(e) => setUnpublishReason(e.target.value)}
+          placeholder={t("dutyRoster.unpublishReasonPlaceholder")}
           voiceInput
           sinhalaTyping
         />

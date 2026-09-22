@@ -26,30 +26,57 @@
   }
 }
 
+/* A horizontal tab strip, not a stacked list — the previous vertical
+   layout gave each week its own full-width row, which cost a growing
+   chunk of vertical space at the very top of the page (worse the more
+   weeks existed, even capped at 4) before a Duty Officer ever reached
+   the actual roster grid. Wraps to a second line on narrow screens
+   rather than needing its own horizontal scrollbar — there are at most
+   4 of these at once (see DutyRoster.jsx's weeks.slice(0, 4)). */
 .roster-weeks-list {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs, 4px);
   margin-bottom: var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
 }
 
-.roster-week-row {
+.roster-week-tab {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: var(--space-md);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  gap: 8px;
+  padding: 10px 14px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
   cursor: pointer;
+  white-space: nowrap;
+  color: var(--color-text-muted);
 }
 
-.roster-week-row:hover {
-  background: var(--color-surface-muted);
+.roster-week-tab:hover {
+  color: var(--color-text);
 }
 
-.roster-week-row.active {
-  border-color: var(--color-primary);
-  background: var(--color-primary-light);
+.roster-week-tab.active {
+  font-weight: 600;
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+
+.roster-week-tab-delete {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 0 0 2px;
+}
+
+.roster-week-tab-delete:hover {
+  color: var(--color-danger, #dc2626);
 }
 
 .roster-grid-table {
@@ -149,4 +176,40 @@
 .suggestion-item .reason {
   font-size: var(--font-size-sm);
   color: var(--color-text-muted);
+}
+
+/* Completed Roster: All Officers — print isolation. Scoped to the
+   .printing-roster-summary class toggled on <body> right around
+   window.print() (see DutyRoster.jsx's handlePrintRosterSummary), not
+   a blanket @media print rule — this file is bundled into the app's
+   one global stylesheet, so an unscoped rule here would break printing
+   from every other page too. visibility (not display) is used so
+   hidden elements still take no visible ink but don't collapse the
+   print target's own layout; the print target is then pulled out of
+   wherever it sits in the page with position:absolute so it isn't
+   still constrained by the sidebar/topbar layout it was inside of. */
+@media print {
+  body.printing-roster-summary * {
+    visibility: hidden;
+  }
+  body.printing-roster-summary .roster-summary-print-target,
+  body.printing-roster-summary .roster-summary-print-target * {
+    visibility: visible;
+  }
+  body.printing-roster-summary .roster-summary-print-target {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    /* !important because these are overriding an INLINE style
+       (maxHeight/overflowY set on the element itself in DutyRoster.jsx
+       to keep the embedded on-screen card showing only a handful of
+       officer rows before it scrolls internally, so "Full View" means
+       something) — an inline style beats any stylesheet rule, @media
+       print included, regardless of selector specificity, short of
+       !important. Printing should still show every officer, not the
+       same short on-screen preview height. */
+    max-height: none !important;
+    overflow: visible !important;
+  }
 }

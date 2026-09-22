@@ -15,6 +15,7 @@ const STATUS_TONE = {
   rejected: "danger",
   failed: "danger",
   closed: "danger",
+  unpublished: "warning",
    complete: "success",
   archived: "neutral",
   fulfilled: "success",

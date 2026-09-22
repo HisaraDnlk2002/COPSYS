@@ -176,6 +176,20 @@ export async function publishRosterWeek(weekId) {
   return api.patch(`/duty-schedule/weeks/${weekId}/publish`);
 }
 
+// Pulls a live PUBLISHED week back for revision (spec §17) — requires a
+// reason; the client always confirms first (see DutyRoster.jsx).
+export async function unpublishRosterWeek(weekId, reason) {
+  if (USE_DUMMY_DATA) {
+    const week = dummyRosterWeeks.find((w) => w.id === weekId);
+    if (week) {
+      week.status = "unpublished";
+      week.unpublishReason = reason;
+    }
+    return Promise.resolve(week);
+  }
+  return api.patch(`/duty-schedule/weeks/${weekId}/unpublish`, { reason });
+}
+
 export async function listDailyChanges(date) {
   if (USE_DUMMY_DATA) {
     return Promise.resolve([]);

@@ -9,6 +9,25 @@ const branchRequirementSchema = new mongoose.Schema(
   { _id: false }
 );
 
+// One entry per status transition this week has ever gone through —
+// submitted, approved, rejected, published, unpublished. Append-only,
+// never edited or removed, so "what happened to this roster and when"
+// stays answerable without needing a separate document per version
+// (see `version` below for the lighter-weight versioning that pairs
+// with this — a resubmission after rejection bumps `version` rather
+// than forking into a whole new document, but every step along the way
+// is still preserved right here).
+const historyEntrySchema = new mongoose.Schema(
+  {
+    status: { type: String, required: true },
+    version: { type: Number, required: true },
+    by: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    at: { type: Date, default: Date.now },
+    remarks: { type: String, default: "" },
+  },
+  { _id: false }
+);
+
 const dutyRosterWeekSchema = new mongoose.Schema(
   {
     weekStarting: { type: Date, required: true }, // Monday of the week
@@ -19,11 +38,21 @@ const dutyRosterWeekSchema = new mongoose.Schema(
 
     shiftPattern: { type: String, default: "" },
 
+    // "unpublished" behaves like "draft"/"sent_back" for editing
+    // purposes (composition unlocks again) — see the draft/sent_back
+    // checks in dutyScheduleController.js, which now also accept it.
     status: {
       type: String,
-      enum: ["draft", "submitted", "approved", "sent_back", "published"],
+      enum: ["draft", "submitted", "approved", "sent_back", "published", "unpublished"],
       default: "draft",
     },
+
+    // Bumped every time a sent-back week is resubmitted (spec §15) —
+    // "Version 2" is literally "the plan as it stood on this
+    // resubmission", without forking a whole separate document per
+    // attempt. Paired with `history` below for the full timeline.
+    version: { type: Number, default: 1 },
+    history: { type: [historyEntrySchema], default: [] },
 
     // Page 14 footer stats
     scheduledUnits: { type: Number, default: 0 },
@@ -37,6 +66,16 @@ const dutyRosterWeekSchema = new mongoose.Schema(
 
     publishedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     publishedAt: { type: Date, default: null },
+
+    // Set only by unpublishWeek — a published week pulled back for
+    // revision (spec §17). Distinct from sendBackReason: that's the
+    // OIC rejecting a submission; this is the Duty Officer themselves
+    // pulling back something already live, for an operational reason,
+    // not a review verdict.
+    unpublishedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    unpublishedAt: { type: Date, default: null },
+    unpublishReason: { type: String, default: "" },
+
     stationId: { type: String, default: "default-station" },
   },
   { timestamps: true }

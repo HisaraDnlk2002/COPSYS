@@ -117,6 +117,36 @@ function roundRobinByRank(officers) {
  *   rotating them onto the opposite shift this week (see splitByRotationPreference)
  * @returns {{ assignments: Array, unfilledDays: Array, excludedOfficerIds: Array }}
  */
+// Rule: derives one overall "why" for a candidate from their tally
+// across the week (spec §7 — the wizard shows this per officer instead
+// of silently picking or skipping them). Priority order matters: being
+// picked at all beats any exclusion reason: partial coverage still
+// reads as "Suitable", not a caveat.
+function summarizeReason(stat, requiredStaffing) {
+  if (stat.daysSelected >= requiredStaffing && stat.daysSelected === 7) {
+    return { reasonCode: "selected_full_week", reasonLabel: "Suitable — assigned every day" };
+  }
+  if (stat.daysSelected > 0) {
+    return { reasonCode: "selected_partial_week", reasonLabel: `Suitable — assigned ${stat.daysSelected}/7 days` };
+  }
+  if (stat.daysExcludedLeave >= 4) {
+    return { reasonCode: "on_leave", reasonLabel: "Not available — on approved leave most of the week" };
+  }
+  if (stat.daysExcludedLeave > 0) {
+    return { reasonCode: "on_leave_partial", reasonLabel: `Not selected — on leave ${stat.daysExcludedLeave} day(s), and not needed the rest` };
+  }
+  if (stat.daysExcludedRest > 0) {
+    return { reasonCode: "rest_limit", reasonLabel: "Not selected — resting after 6 consecutive days" };
+  }
+  if (stat.daysExcludedTaken > 0) {
+    return { reasonCode: "already_committed", reasonLabel: "Not selected — already covering another branch/shift this week" };
+  }
+  if (stat.rotationDeprioritizedDays > 0) {
+    return { reasonCode: "rotation_deprioritized", reasonLabel: "Not needed — worked this same shift type last week, others prioritized" };
+  }
+  return { reasonCode: "not_needed", reasonLabel: "Available, but not needed — enough other officers already covered every day" };
+}
+
 function generateWeeklyRoster({
   weekStarting,
   department,
@@ -133,12 +163,35 @@ function generateWeeklyRoster({
   const unfilledDays = [];
   const excludedOfficerIdsSet = new Set();
 
+  // Spec §7 — one running tally per candidate officer considered for
+  // THIS (branch, shiftType) pass, across all 7 days, used to build a
+  // human-readable "why" at the end (see summarizeReason) instead of
+  // the wizard only ever showing who got picked.
+  const candidateStats = new Map(); // officerId -> tally
+  function statFor(officer) {
+    if (!candidateStats.has(officer.id)) {
+      candidateStats.set(officer.id, {
+        officerId: officer.id,
+        fullName: officer.fullName,
+        rankAndNumber: officer.rankAndNumber,
+        department: officer.department,
+        daysSelected: 0,
+        daysExcludedLeave: 0,
+        daysExcludedRest: 0,
+        daysExcludedTaken: 0,
+        rotationDeprioritizedDays: 0,
+      });
+    }
+    return candidateStats.get(officer.id);
+  }
+
   const startDate = new Date(weekStarting);
 
   // Rule: eligible pool for this branch's roster is its own permanent
   // officers plus the General Pool branch — nobody else.
   const permanentOfficers = officers.filter((o) => o.department === department);
   const generalPoolOfficers = officers.filter((o) => isGeneralPoolBranch(o.department));
+  for (const officer of [...permanentOfficers, ...generalPoolOfficers]) statFor(officer); // seed a row even for an officer selected/excluded on zero days so far
 
   for (let dayIndex = 0; dayIndex < 7; dayIndex++) {
     const date = new Date(startDate);
@@ -151,10 +204,21 @@ function generateWeeklyRoster({
     // branch/shift that same date, are excluded outright.
     const filterAvailable = (list) =>
       list.filter((officer) => {
-        if (takenToday.has(officer.id)) return false;
+        if (takenToday.has(officer.id)) {
+          statFor(officer).daysExcludedTaken += 1;
+          return false;
+        }
         const onLeave = isOnLeave(officer, date, approvedLeaveRequests);
-        if (onLeave) excludedOfficerIdsSet.add(officer.id);
-        return !onLeave && tracker.canAssign(officer.id);
+        if (onLeave) {
+          excludedOfficerIdsSet.add(officer.id);
+          statFor(officer).daysExcludedLeave += 1;
+          return false;
+        }
+        if (!tracker.canAssign(officer.id)) {
+          statFor(officer).daysExcludedRest += 1;
+          return false;
+        }
+        return true;
       });
 
     const availablePermanent = filterAvailable(permanentOfficers);
@@ -176,6 +240,18 @@ function generateWeeklyRoster({
 
     const chosenToday = [...chosenPermanent, ...chosenGeneralPool];
 
+    // Anyone available-but-not-picked today was either just extra
+    // headcount beyond what was required, or specifically pushed back
+    // by the rotation preference — both are worth surfacing separately.
+    const chosenIdsToday = new Set(chosenToday.map((o) => o.id));
+    const sameAsLastWeekIdsToday = new Set(
+      [...permanentSplit.sameAsLastWeek, ...generalPoolSplit.sameAsLastWeek].map((o) => o.id)
+    );
+    for (const officer of [...availablePermanent, ...availableGeneralPool]) {
+      if (chosenIdsToday.has(officer.id)) continue;
+      if (sameAsLastWeekIdsToday.has(officer.id)) statFor(officer).rotationDeprioritizedDays += 1;
+    }
+
     if (chosenToday.length < requiredStaffing) {
       unfilledDays.push({ day: dayName, date, shiftType, shortfall: requiredStaffing - chosenToday.length });
     }
@@ -185,6 +261,7 @@ function generateWeeklyRoster({
       if (assignedIds.has(officer.id)) {
         tracker.recordAssigned(officer.id);
         takenToday.add(officer.id);
+        statFor(officer).daysSelected += 1;
       } else if (!takenToday.has(officer.id)) {
         tracker.recordDayOff(officer.id);
       }
@@ -219,10 +296,16 @@ function generateWeeklyRoster({
     }
   }
 
+  const candidateNotes = Array.from(candidateStats.values()).map((stat) => ({
+    ...stat,
+    ...summarizeReason(stat, requiredStaffing),
+  }));
+
   return {
     assignments,
     unfilledDays,
     excludedOfficerIds: Array.from(excludedOfficerIdsSet),
+    candidateNotes,
   };
 }
 
