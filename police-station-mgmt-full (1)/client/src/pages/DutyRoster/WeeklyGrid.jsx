@@ -20,7 +20,7 @@ const DUTY_TYPES = [
   "Escort",
 ];
 
-const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 function branchLabel(value) {
   return value ? value.split(" (")[0] : "";

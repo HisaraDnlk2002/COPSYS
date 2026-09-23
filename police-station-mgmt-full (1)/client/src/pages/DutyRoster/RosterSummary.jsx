@@ -1,6 +1,6 @@
 import { useLanguage } from "../../i18n/useLanguage";
 
-const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 function isoDate(date) {
   return new Date(date).toISOString().slice(0, 10);

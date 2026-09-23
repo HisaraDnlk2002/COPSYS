@@ -30,7 +30,7 @@ const historyEntrySchema = new mongoose.Schema(
 
 const dutyRosterWeekSchema = new mongoose.Schema(
   {
-    weekStarting: { type: Date, required: true }, // Monday of the week
+    weekStarting: { type: Date, required: true }, // Sunday of the week
 
     // One week spans every branch being planned together (spec §8) —
     // replaces the old single `department`/`requiredStaffing` fields.

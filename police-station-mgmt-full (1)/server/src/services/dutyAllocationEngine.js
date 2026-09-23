@@ -7,7 +7,7 @@
 const { isGeneralPoolBranch } = require("../config/branches");
 const { SHIFTS } = require("../config/shifts");
 
-const DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const DAYS_OF_WEEK = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 function isoDate(date) {
   return new Date(date).toISOString().slice(0, 10);
@@ -104,7 +104,7 @@ function roundRobinByRank(officers) {
  * target branch nor the General Pool are not touched.
  *
  * @param {Object} params
- * @param {Date|string} params.weekStarting - Monday of the target week
+ * @param {Date|string} params.weekStarting - Sunday of the target week
  * @param {string} params.department - target branch for this roster
  * @param {"day"|"night"} params.shiftType
  * @param {number} params.requiredStaffing - officers needed per day for this shift

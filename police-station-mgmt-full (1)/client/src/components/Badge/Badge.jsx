@@ -13,6 +13,7 @@ const STATUS_TONE = {
   paused: "warning",
   disabled: "danger",
   rejected: "danger",
+  sent_back: "danger",
   failed: "danger",
   closed: "danger",
   unpublished: "warning",

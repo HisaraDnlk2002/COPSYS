@@ -139,7 +139,12 @@ export function DutyRosterPage() {
 
   async function handleDeleteWeek(weekId, status, e) {
     e.stopPropagation(); // don't also trigger selecting the row
-    const confirmMessage = status === "unpublished" ? t("dutyRoster.confirmDeleteUnpublished") : t("dutyRoster.confirmDeleteDraft");
+    const confirmMessage =
+      status === "unpublished"
+        ? t("dutyRoster.confirmDeleteUnpublished")
+        : status === "sent_back"
+        ? t("dutyRoster.confirmDeleteSentBack")
+        : t("dutyRoster.confirmDeleteDraft");
     if (!window.confirm(confirmMessage)) return;
     try {
       await deleteRosterWeek(weekId);
@@ -303,8 +308,8 @@ export function DutyRosterPage() {
               onClick={() => setSelectedWeekId(week.id)}
             >
               <span>{formatDate(week.weekStarting)}</span>
-              <Badge status={week.status === "sent_back" ? "rejected" : week.status === "submitted" ? "pending" : week.status} />
-              {isDutyOfficer && ["draft", "unpublished"].includes(week.status) && (
+              <Badge status={week.status === "submitted" ? "pending" : week.status} />
+              {isDutyOfficer && ["draft", "unpublished", "sent_back"].includes(week.status) && (
                 <button
                   type="button"
                   className="roster-week-tab-delete"

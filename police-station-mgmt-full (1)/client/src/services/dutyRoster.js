@@ -6,7 +6,7 @@ import {
   dummyRosterOfficers,
 } from "./dummyData";
 
-const DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const DAYS_OF_WEEK = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export async function getRosterWeeks() {
   if (USE_DUMMY_DATA) {

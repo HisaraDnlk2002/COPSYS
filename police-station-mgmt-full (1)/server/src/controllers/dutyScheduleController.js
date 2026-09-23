@@ -23,7 +23,7 @@ function isFutureDate(date) {
 
 // GET /api/duty-schedule/mine — any officer, their own shifts for THIS
 // week only. Only the sole caller (Dashboard.jsx's "Weekly Duty
-// Schedule" card) — scoped to whichever published week's Mon-Sun range
+// Schedule" card) — scoped to whichever published week's Sun-Sat range
 // contains today, not every week ever published, which would otherwise
 // only ever grow as more weeks get published over the life of the
 // station. Still only from weeks that have actually been published
@@ -150,6 +150,8 @@ async function getWeek(req, res) {
 // POST /api/duty-schedule/weeks — duty_officer: Step 1 of the wizard.
 // Just picks the week — branch requirements are set separately via
 // updateRequirements once the week exists.
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 async function createWeek(req, res) {
   const { weekStarting } = req.body;
 
@@ -157,7 +159,41 @@ async function createWeek(req, res) {
     return res.status(400).json({ error: "Week starting date is required" });
   }
 
+  // The whole roster grid (WeeklyGrid.jsx, RosterSummary.jsx) assumes
+  // weekStarting is a Sunday and lays out exactly Sun-Sat from it — a
+  // mid-week start would silently mislabel every day of that roster.
+  // weekStarting arrives as a plain "YYYY-MM-DD" string, which Date
+  // parses as UTC midnight, so getUTCDay() (not getDay()) is what
+  // actually matches that instant regardless of the server's own
+  // timezone (Sunday === 0).
+  const start = new Date(weekStarting);
+  if (Number.isNaN(start.getTime())) {
+    return res.status(400).json({ error: "Invalid week starting date" });
+  }
+  if (start.getUTCDay() !== 0) {
+    return res.status(400).json({ error: "Roster weeks must start on a Sunday" });
+  }
+
   try {
+    // Client-side (CreateRosterWizard.jsx) only blocks dates before the
+    // most recently created week — fine for the normal forward-only
+    // flow, but not a real guarantee (a week could be deleted and a new
+    // one created that lands back inside an older week's range). This
+    // checks every existing week's actual 7-day span, not just the
+    // latest one.
+    const end = new Date(start.getTime() + 6 * DAY_MS);
+    const existingWeeks = await DutyRosterWeek.find({ stationId: req.user.stationId }).select("weekStarting");
+    const overlapping = existingWeeks.find((w) => {
+      const existingStart = new Date(w.weekStarting);
+      const existingEnd = new Date(existingStart.getTime() + 6 * DAY_MS);
+      return start <= existingEnd && existingStart <= end;
+    });
+    if (overlapping) {
+      return res.status(409).json({
+        error: `A roster week already exists covering that date range (week of ${new Date(overlapping.weekStarting).toISOString().slice(0, 10)})`,
+      });
+    }
+
     const week = await DutyRosterWeek.create({
       weekStarting,
       requirements: [],
@@ -998,15 +1034,17 @@ async function unpublishWeek(req, res) {
 // deleted outright since they're scratch work; an unpublished week
 // (pulled back from live via unpublishWeek) can be too — once it's
 // been withdrawn there's no live record left depending on it, same as
-// a draft that was never published in the first place. A
+// a draft that was never published in the first place. A week the OIC
+// sent back is effectively handed back to the Duty Officer to fix or
+// scrap, same as a draft — so it's deletable too. A
 // submitted/approved/published week still can't be — those are real
 // records, not scratch work. Clears its DutySchedule rows either way.
 async function deleteWeek(req, res) {
   try {
     const week = await DutyRosterWeek.findById(req.params.weekId);
     if (!week) return res.status(404).json({ error: "Roster week not found" });
-    if (!["draft", "unpublished"].includes(week.status)) {
-      return res.status(400).json({ error: `Cannot delete a week that is ${week.status}, only drafts or unpublished weeks.` });
+    if (!["draft", "unpublished", "sent_back"].includes(week.status)) {
+      return res.status(400).json({ error: `Cannot delete a week that is ${week.status}, only drafts, sent-back, or unpublished weeks.` });
     }
 
     await DutySchedule.deleteMany({ weekId: week._id });
@@ -1016,8 +1054,9 @@ async function deleteWeek(req, res) {
     await DailyDutyChange.deleteMany({ weekId: week._id });
     await DutyRosterWeek.deleteOne({ _id: week._id });
 
+    const STATUS_LABEL = { unpublished: "Unpublished", sent_back: "Sent-Back" };
     logAuditForActor(req, {
-      action: `Deleted ${week.status === "unpublished" ? "Unpublished" : "Draft"} Duty Roster for week of ${new Date(week.weekStarting).toISOString().slice(0, 10)}`,
+      action: `Deleted ${STATUS_LABEL[week.status] || "Draft"} Duty Roster for week of ${new Date(week.weekStarting).toISOString().slice(0, 10)}`,
       module: "Duty Roster",
     });
 

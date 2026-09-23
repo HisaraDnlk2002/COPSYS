@@ -90,6 +90,32 @@ function computeMinWeekStarting(existingWeeks) {
   return min.toISOString().slice(0, 10);
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// The whole grid downstream (WeeklyGrid.jsx, RosterSummary.jsx) lays out
+// exactly Sun-Sat from weekStarting — picking any other day of week would
+// silently mislabel every day of the roster. Parsed as UTC (matching how
+// weekStarting itself is stored/compared) so this agrees with the
+// server's own check in dutyScheduleController.js's createWeek.
+function isSunday(dateStr) {
+  return new Date(dateStr).getUTCDay() === 0;
+}
+
+// computeMinWeekStarting above only blocks picking BEFORE the latest
+// existing week — it doesn't stop picking a date that lands inside an
+// earlier week's own 7-day span (e.g. after an older week was deleted
+// and a new, non-adjacent one created). This checks every existing
+// week's actual range, mirroring the server-side overlap check.
+function overlappingWeek(dateStr, existingWeeks) {
+  const start = new Date(dateStr);
+  const end = new Date(start.getTime() + 6 * DAY_MS);
+  return existingWeeks.find((w) => {
+    const existingStart = new Date(w.weekStarting);
+    const existingEnd = new Date(existingStart.getTime() + 6 * DAY_MS);
+    return start <= existingEnd && existingStart <= end;
+  });
+}
+
 const STEPS = [
   { n: 1, label: "Select Week" },
   { n: 2, label: "Branch Strength & Allocation" },
@@ -104,6 +130,20 @@ export function CreateRosterWizard({ onCancel, onComplete, existingWeek, existin
   const [weekStarting, setWeekStarting] = useState("");
   const [creatingWeek, setCreatingWeek] = useState(false);
   const minWeekStarting = computeMinWeekStarting(existingWeeks);
+
+  // Derived, not stateful — recomputed from weekStarting/existingWeeks
+  // on every render, same as minWeekStarting above.
+  let weekStartValidationError = "";
+  if (weekStarting) {
+    if (!isSunday(weekStarting)) {
+      weekStartValidationError = t("dutyRoster.wizard.mustStartSunday");
+    } else {
+      const conflict = overlappingWeek(weekStarting, existingWeeks);
+      if (conflict) {
+        weekStartValidationError = t("dutyRoster.wizard.overlapsExistingWeek");
+      }
+    }
+  }
 
   const [requirements, setRequirements] = useState(() => buildRequirements(existingWeek));
   const [savingRequirements, setSavingRequirements] = useState(false);
@@ -165,11 +205,12 @@ export function CreateRosterWizard({ onCancel, onComplete, existingWeek, existin
   }
 
   async function handleStep1Next() {
-    // Belt-and-suspenders alongside the date input's own `min` — that
-    // only grays out the calendar widget's cells, it doesn't stop a
-    // date typed directly into the field's segments (bypassing the
-    // popup entirely) from reaching here.
-    if (!weekStarting || weekStarting < minWeekStarting) return;
+    // Belt-and-suspenders alongside the date input's own `min` and the
+    // Sunday/overlap checks below — those only gray out the calendar
+    // widget or disable the button, they don't stop a date typed
+    // directly into the field's segments (bypassing the popup entirely)
+    // from reaching here.
+    if (!weekStarting || weekStarting < minWeekStarting || weekStartValidationError) return;
     setCreatingWeek(true);
     setError("");
     try {
@@ -178,7 +219,7 @@ export function CreateRosterWizard({ onCancel, onComplete, existingWeek, existin
       setStep(2);
     } catch (err) {
       console.error("Could not create roster week:", err);
-      setError(t("dutyRoster.wizard.createWeekFailed"));
+      setError(err.message || t("dutyRoster.wizard.createWeekFailed"));
     } finally {
       setCreatingWeek(false);
     }
@@ -286,11 +327,16 @@ export function CreateRosterWizard({ onCancel, onComplete, existingWeek, existin
             onChange={(e) => setWeekStarting(e.target.value)}
             helperText={t("dutyRoster.wizard.weekStartingHelper")}
           />
+          {weekStartValidationError && (
+            <p style={{ color: "var(--color-danger, #dc2626)", fontSize: 13, marginTop: 4 }}>
+              {weekStartValidationError}
+            </p>
+          )}
           <div className="roster-actions-row" style={{ marginTop: 16 }}>
             <Button
               variant="primary"
               onClick={handleStep1Next}
-              disabled={!weekStarting || weekStarting < minWeekStarting || creatingWeek}
+              disabled={!weekStarting || weekStarting < minWeekStarting || Boolean(weekStartValidationError) || creatingWeek}
             >
               {creatingWeek ? t("dutyRoster.wizard.creating") : t("dutyRoster.wizard.nextStep")}
             </Button>
