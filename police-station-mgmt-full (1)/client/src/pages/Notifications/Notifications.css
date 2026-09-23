@@ -1,0 +1,136 @@
+.notif-page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.notif-page-subtitle {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  margin: 4px 0 0;
+}
+
+.notif-page-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.notif-page-stat {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+}
+
+.notif-page-stat-danger {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+.notif-page-stat-warning {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+
+.notif-page-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-lg);
+}
+
+.notif-page-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.notif-page-tab.active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+
+.notif-page-tab-count {
+  min-width: 20px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--color-danger);
+  color: #fff;
+  font-size: 12px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.notif-page-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-sm) var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.notif-page-filters .field {
+  min-width: 160px;
+}
+
+.notif-page-search {
+  flex: 1;
+  min-width: 220px;
+}
+
+.notif-page-title-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 420px;
+}
+
+.notif-page-title {
+  font-weight: 600;
+}
+
+.notif-page-message {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.notif-page-actions {
+  display: flex;
+  gap: var(--space-xs);
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+
+.notif-page-summary {
+  background: var(--color-surface-muted);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  margin-bottom: var(--space-md);
+  font-size: var(--font-size-sm);
+}
+
+.notif-page-summary p {
+  margin: 0 0 6px;
+}
+
+.notif-page-summary p:last-child {
+  margin-bottom: 0;
+}
+
+.notif-page-error {
+  color: var(--color-danger);
+  margin-top: 12px;
+}

@@ -138,3 +138,14 @@ export async function reportMissing(itemId, remarks) {
   }
   return api.post(`/inventory/${itemId}/report-missing`, { remarks });
 }
+
+// POST /api/inventory/:id/restock — inventory_officer. Adds received
+// stock (mainly ammunition rounds) to an existing line.
+export async function restockItem(itemId, payload) {
+  if (USE_DUMMY_DATA) {
+    const item = dummyInventoryItems.find((i) => i.id === itemId);
+    if (item) item.quantity += payload.quantity;
+    return Promise.resolve(item);
+  }
+  return api.post(`/inventory/${itemId}/restock`, payload);
+}

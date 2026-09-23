@@ -23,7 +23,7 @@ not "above" OIC, just a different concern.
 | Register complaint | Yes | Yes | Yes | No | Yes |
 | View/manage all complaints (registry + log) | No | Yes | Yes (own station) | No | No |
 | Personnel & User Management | Yes | No | No | No | No |
-| Inventory module | No | No | View only | Full access (issue/return/add) | No |
+| Inventory module | No | View only + act on alerts (exception review) | View only | Full access (issue/return/add/restock) | No |
 | My Weapons (own firearm custody, read-only) | No | No | Yes | Yes | Yes |
 | Create/edit weekly duty roster | No | Yes (generate, approve, send-back) | Yes (manual entry / primary author) | No | No |
 | Reports & Analytics | All categories | All categories + station Overview | Duty reports only | Weapons + Ammunition reports only | No |

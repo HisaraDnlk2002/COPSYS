@@ -3,6 +3,7 @@ const Inventory = require("../models/Inventory");
 const Maintenance = require("../models/Maintenance");
 const { INSPECTION_INTERVAL_DAYS } = require("../models/Inventory");
 const { generateAlert } = require("../utils/alerts");
+const { logAuditForActor } = require("../utils/auditLogger");
 
 async function generateRefId() {
   const count = await Inspection.countDocuments();
@@ -139,6 +140,11 @@ async function create(req, res) {
       itemId: item._id,
       inspectionId: record._id,
       stationId: req.user.stationId,
+    });
+
+    logAuditForActor(req, {
+      action: `Inspected ${item.itemId} (${record.refId}) — ${result}${resultingMaintenanceId ? ", sent to maintenance" : ""}`,
+      module: "Inventory",
     });
 
     return res.status(201).json(record.toJSON());

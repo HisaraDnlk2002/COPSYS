@@ -1,6 +1,6 @@
 // Small line icons for the sidebar nav — one per navConfig.js `key`.
 // Matches the inline-SVG convention already used elsewhere in the app
-// (NotificationBell's bell, InputField's mic button): stroke=currentColor,
+// (InputField's mic button): stroke=currentColor,
 // no fill, so each icon just picks up whatever color .sidebar-link's
 // hover/active state sets rather than needing its own color prop.
 const ICONS = {
@@ -72,6 +72,12 @@ const ICONS = {
     <>
       <rect x="4" y="7" width="16" height="13" rx="1.5" />
       <line x1="4" y1="12" x2="20" y2="12" />
+    </>
+  ),
+  notifications: (
+    <>
+      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M13.73 21a2 2 0 0 1-3.46 0" strokeLinecap="round" />
     </>
   ),
 };

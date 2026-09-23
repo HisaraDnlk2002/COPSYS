@@ -36,3 +36,19 @@ export async function updateAlertStatus(id, status, remarks) {
   }
   return api.patch(`/alerts/${id}`, { status, remarks });
 }
+
+// GET /api/alerts/feed — every role. The Notifications page's list:
+// OIC sees everything at the station, inventory/duty officers see all
+// inventory alerts plus their own, everyone else only their own. Each
+// alert carries a `source` ("inventory" | "leave" | "duty" | "complaints").
+export async function getNotificationFeed(filters = {}) {
+  if (USE_DUMMY_DATA) {
+    return Promise.resolve([]);
+  }
+  const query = new URLSearchParams();
+  if (filters.source) query.set("source", filters.source);
+  if (filters.status) query.set("status", filters.status);
+  if (filters.priority) query.set("priority", filters.priority);
+  const qs = query.toString();
+  return api.get(`/alerts/feed${qs ? `?${qs}` : ""}`);
+}

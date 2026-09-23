@@ -3,7 +3,7 @@ import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../auth/useAuth";
 import { useLanguage } from "../i18n/useLanguage";
 import { navItemsByRole } from "../config/navConfig";
-import { NotificationBell, GlobalSearch, NavIcon } from "../components";
+import { GlobalSearch, NavIcon } from "../components";
 import policeLogo from "../assets/Sri_Lanka_Police_logo.svg.png";
 import "./DashboardLayout.css";
 
@@ -72,7 +72,6 @@ export function DashboardLayout() {
                 සිංහල
               </button>
             </div>
-            <NotificationBell />
             <div className="topbar-user">
               <div>
                 <div className="name">{user?.fullName}</div>

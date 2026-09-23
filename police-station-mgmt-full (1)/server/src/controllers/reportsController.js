@@ -4,6 +4,10 @@ const DutySchedule = require("../models/DutySchedule");
 const DutyRosterWeek = require("../models/DutyRosterWeek");
 const InventoryTransaction = require("../models/InventoryTransaction");
 const Inventory = require("../models/Inventory");
+const Maintenance = require("../models/Maintenance");
+const Inspection = require("../models/Inspection");
+const Alert = require("../models/Alert");
+const { AMMUNITION_CATEGORY } = require("../config/weaponCatalog");
 const Complaint = require("../models/Complaint");
 const User = require("../models/User");
 const ReportExport = require("../models/ReportExport");
@@ -26,7 +30,20 @@ function resolveDateRange(query) {
 // The real, selectable report categories — "inventory" is deliberately
 // excluded here: it's the pre-split name for what's now "weapons", kept
 // alive in ReportExport.REPORT_TYPES only so old rows still validate.
-const REPORT_CATEGORY_TYPES = ["duty", "officers", "leave", "crime", "weapons", "ammunition", "station", "performance"];
+const REPORT_CATEGORY_TYPES = [
+  "duty",
+  "officers",
+  "leave",
+  "crime",
+  "weapons",
+  "ammunition",
+  "ammo_stock",
+  "maintenance",
+  "inspections",
+  "exceptions",
+  "station",
+  "performance",
+];
 
 // Which roles can generate/preview/download/see each category. Mirrors
 // the sidebar's own role filtering on the client (Reports.jsx) — that
@@ -41,6 +58,10 @@ const CATEGORY_ROLES = {
   weapons: ["admin", "oic", "inventory_officer"],
   inventory: ["admin", "oic", "inventory_officer"],
   ammunition: ["admin", "oic", "inventory_officer"],
+  ammo_stock: ["admin", "oic", "inventory_officer"],
+  maintenance: ["admin", "oic", "inventory_officer"],
+  inspections: ["admin", "oic", "inventory_officer"],
+  exceptions: ["admin", "oic", "inventory_officer"],
   station: ["admin", "oic"],
   performance: ["admin", "oic"],
 };
@@ -342,6 +363,10 @@ const REPORT_TYPE_LABELS = {
   inventory: "Weapons Issue & Return", // legacy rows only
   weapons: "Weapons Issue & Return",
   ammunition: "Ammunition Usage",
+  ammo_stock: "Ammunition Stock",
+  maintenance: "Weapon Maintenance",
+  inspections: "Inspection History",
+  exceptions: "Overdue & Discrepancies",
   station: "Station Summary",
   performance: "Officer Performance",
 };
@@ -389,6 +414,10 @@ const FILTER_KEYS_BY_TYPE = {
   crime: ["category", "status", "priority", "assignedOfficerId"],
   weapons: ["transactionType", "officerId"],
   ammunition: ["officerId"],
+  ammo_stock: [],
+  maintenance: ["status"],
+  inspections: ["result"],
+  exceptions: ["exceptionType"],
   station: [],
   performance: ["department"],
 };
@@ -420,6 +449,8 @@ const FILTER_LABELS = {
   category: "Category",
   priority: "Priority",
   transactionType: "Transaction Type",
+  result: "Result",
+  exceptionType: "Exception",
 };
 
 // Turns a stored filters object into the "Filters applied: …" line on the
@@ -601,10 +632,9 @@ async function gatherReportData(type, stationId, dateFrom, dateTo, filters = {})
   }
 
   if (type === "ammunition") {
-    // Ammo is only ever reconciled at return/damaged time (see
-    // InventoryTransaction's ammoIssued/ammoReturned/ammoUsed comment) —
-    // there's no separate ammo stock ledger, so this report reads those
-    // fields straight off the weapon transactions that carry them.
+    // Rounds are reconciled at return time: issued (from the issue
+    // record), counted back, used = issued - returned, and what the
+    // officer declared fired. Discrepancy is used - declared.
     const filter = {
       stationId,
       dateTime: { $gte: dateFrom, $lte: dateTo },
@@ -618,7 +648,7 @@ async function gatherReportData(type, stationId, dateFrom, dateTo, filters = {})
       .sort({ dateTime: 1 })
       .lean();
 
-    const itemIds = [...new Set(rows.map((r) => String(r.itemId)))];
+    const itemIds = [...new Set(rows.flatMap((r) => [String(r.itemId), r.ammoItemId && String(r.ammoItemId)]).filter(Boolean))];
     const items = await Inventory.find({ _id: { $in: itemIds } }).lean();
     const itemNameById = new Map(items.map((i) => [String(i._id), `${i.itemName} (${i.itemId})`]));
 
@@ -626,20 +656,196 @@ async function gatherReportData(type, stationId, dateFrom, dateTo, filters = {})
       columns: [
         { key: "date", label: "Date" },
         { key: "item", label: "Weapon" },
+        { key: "ammo", label: "Ammunition" },
         { key: "officer", label: "Officer" },
-        { key: "type", label: "Transaction" },
-        { key: "ammoIssued", label: "Ammo Issued" },
-        { key: "ammoReturned", label: "Ammo Returned" },
-        { key: "ammoUsed", label: "Ammo Used" },
+        { key: "ammoIssued", label: "Issued" },
+        { key: "ammoReturned", label: "Returned" },
+        { key: "ammoUsed", label: "Used" },
+        { key: "ammoDeclaredUsed", label: "Declared Used" },
+        { key: "ammoDiscrepancy", label: "Discrepancy" },
       ],
       rows: rows.map((r) => ({
         date: r.dateTime?.toISOString().slice(0, 10),
         item: itemNameById.get(String(r.itemId)) || String(r.itemId),
+        ammo: r.ammoItemId ? itemNameById.get(String(r.ammoItemId)) || "—" : "—",
         officer: r.officerId?.fullName || r.officerId?.rankAndNumber || "—",
-        type: r.type,
         ammoIssued: r.ammoIssued ?? 0,
         ammoReturned: r.ammoReturned ?? 0,
         ammoUsed: r.ammoUsed ?? 0,
+        ammoDeclaredUsed: r.ammoDeclaredUsed ?? "—",
+        ammoDiscrepancy: r.ammoDiscrepancy ?? "—",
+      })),
+    };
+  }
+
+  if (type === "ammo_stock") {
+    // A snapshot of current stock per ammunition line plus how many
+    // rounds went out / came back in the selected period.
+    const lines = await Inventory.find({ stationId, category: AMMUNITION_CATEGORY }).sort({ itemName: 1 }).lean();
+    const movements = await InventoryTransaction.find({
+      stationId,
+      ammoItemId: { $in: lines.map((l) => l._id) },
+      dateTime: { $gte: dateFrom, $lte: dateTo },
+    }).lean();
+    const issuedBy = new Map();
+    const returnedBy = new Map();
+    for (const m of movements) {
+      const key = String(m.ammoItemId);
+      if (m.type === "issue") issuedBy.set(key, (issuedBy.get(key) || 0) + (m.ammoIssued || 0));
+      else returnedBy.set(key, (returnedBy.get(key) || 0) + (m.ammoReturned || 0));
+    }
+
+    return {
+      columns: [
+        { key: "batch", label: "Batch / Lot" },
+        { key: "type", label: "Ammunition Type" },
+        { key: "location", label: "Storage" },
+        { key: "inStock", label: "In Stock" },
+        { key: "threshold", label: "Low-Stock Threshold" },
+        { key: "issued", label: "Issued (period)" },
+        { key: "returned", label: "Returned (period)" },
+        { key: "state", label: "Status" },
+      ],
+      rows: lines.map((l) => ({
+        batch: l.itemId,
+        type: l.itemName,
+        location: l.storageLocation || "—",
+        inStock: l.quantity,
+        threshold: l.lowStockThreshold ?? "—",
+        issued: issuedBy.get(String(l._id)) || 0,
+        returned: returnedBy.get(String(l._id)) || 0,
+        state: l.lowStockThreshold !== null && l.lowStockThreshold !== undefined && l.quantity <= l.lowStockThreshold ? "LOW" : l.status,
+      })),
+    };
+  }
+
+  if (type === "maintenance") {
+    const filter = { stationId, reportedDate: { $gte: dateFrom, $lte: dateTo } };
+    if (filters.status) filter.status = filters.status;
+    await guardRowCount(Maintenance, filter);
+    const rows = await Maintenance.find(filter)
+      .populate("itemId", "itemId itemName")
+      .populate("reportedBy", "fullName")
+      .sort({ reportedDate: 1 })
+      .lean();
+
+    return {
+      columns: [
+        { key: "refId", label: "Ref ID" },
+        { key: "weapon", label: "Weapon" },
+        { key: "issue", label: "Issue" },
+        { key: "type", label: "Type" },
+        { key: "technician", label: "Assigned To" },
+        { key: "parts", label: "Parts" },
+        { key: "totalCost", label: "Total Cost (LKR)" },
+        { key: "reported", label: "Reported" },
+        { key: "completed", label: "Completed" },
+        { key: "status", label: "Status" },
+        { key: "result", label: "Final Inspection" },
+        { key: "backInStock", label: "Returned to Stock" },
+      ],
+      rows: rows.map((r) => ({
+        refId: r.refId,
+        weapon: r.itemId ? `${r.itemId.itemName} (${r.itemId.itemId})` : "—",
+        issue: r.issueDescription,
+        type: r.maintenanceType,
+        technician: r.assignedTechnician || "—",
+        // "2 × Firing Pin; 1 × Recoil Spring" — falls back to the old
+        // free-text note on records from before the itemised list.
+        parts: r.parts?.length ? r.parts.map((p) => `${p.quantity} × ${p.name}`).join("; ") : r.partsCost || "—",
+        totalCost: r.parts?.length ? (r.totalCost || 0).toFixed(2) : "—",
+        reported: r.reportedDate?.toISOString().slice(0, 10),
+        completed: r.completionDate ? r.completionDate.toISOString().slice(0, 10) : "—",
+        status: r.status,
+        result: r.finalInspectionPassed === null || r.finalInspectionPassed === undefined ? "—" : r.finalInspectionPassed ? "Passed" : "Failed",
+        backInStock: r.returnedToStockAt
+          ? r.returnedToStockAt.toISOString().slice(0, 10)
+          : r.finalInspectionPassed
+            ? "Awaiting"
+            : "—",
+      })),
+    };
+  }
+
+  if (type === "inspections") {
+    const filter = { stationId, inspectionDate: { $gte: dateFrom, $lte: dateTo } };
+    if (filters.result) filter.result = filters.result;
+    await guardRowCount(Inspection, filter);
+    const rows = await Inspection.find(filter)
+      .populate("itemId", "itemId itemName")
+      .populate("inspectedBy", "fullName")
+      .sort({ inspectionDate: 1 })
+      .lean();
+
+    return {
+      columns: [
+        { key: "refId", label: "Ref ID" },
+        { key: "date", label: "Date" },
+        { key: "weapon", label: "Weapon" },
+        { key: "inspector", label: "Inspected By" },
+        { key: "type", label: "Type" },
+        { key: "condition", label: "Condition" },
+        { key: "result", label: "Result" },
+        { key: "next", label: "Next Due" },
+      ],
+      rows: rows.map((r) => ({
+        refId: r.refId,
+        date: r.inspectionDate?.toISOString().slice(0, 10),
+        weapon: r.itemId ? `${r.itemId.itemName} (${r.itemId.itemId})` : "—",
+        inspector: r.inspectedBy?.fullName || "—",
+        type: r.inspectionType,
+        condition: r.condition,
+        result: r.result,
+        next: r.nextInspectionDate ? r.nextInspectionDate.toISOString().slice(0, 10) : "—",
+      })),
+    };
+  }
+
+  if (type === "exceptions") {
+    // Everything that needed someone's review: overdue returns,
+    // unconfirmed transactions, ammo discrepancies, missing weapons,
+    // missing accessories, low ammo stock — read straight off the alert
+    // trail, which already records who handled each one and when.
+    const EXCEPTION_ALERT_TYPES = {
+      return_overdue: "Overdue Return",
+      confirmation_overdue: "Unconfirmed Transaction",
+      ammo_discrepancy: "Ammunition Discrepancy",
+      weapon_missing: "Missing Weapon",
+      accessories_missing: "Missing Accessories",
+      low_ammo_stock: "Low Ammunition Stock",
+    };
+    const types = filters.exceptionType && EXCEPTION_ALERT_TYPES[filters.exceptionType]
+      ? [filters.exceptionType]
+      : Object.keys(EXCEPTION_ALERT_TYPES);
+    const filter = { stationId, alertType: { $in: types }, generatedAt: { $gte: dateFrom, $lte: dateTo } };
+    await guardRowCount(Alert, filter);
+    const rows = await Alert.find(filter)
+      .populate("itemId", "itemId itemName")
+      .populate("recipientId", "fullName")
+      .populate("resolvedBy", "fullName")
+      .sort({ generatedAt: 1 })
+      .lean();
+
+    return {
+      columns: [
+        { key: "refId", label: "Ref ID" },
+        { key: "date", label: "Raised" },
+        { key: "kind", label: "Exception" },
+        { key: "item", label: "Item" },
+        { key: "officer", label: "Officer" },
+        { key: "detail", label: "Detail" },
+        { key: "status", label: "Status" },
+        { key: "resolvedBy", label: "Resolved By" },
+      ],
+      rows: rows.map((r) => ({
+        refId: r.refId,
+        date: r.generatedAt?.toISOString().slice(0, 16).replace("T", " "),
+        kind: EXCEPTION_ALERT_TYPES[r.alertType],
+        item: r.itemId ? `${r.itemId.itemName} (${r.itemId.itemId})` : "—",
+        officer: r.recipientId?.fullName || "—",
+        detail: r.message,
+        status: r.status,
+        resolvedBy: r.resolvedBy?.fullName || "—",
       })),
     };
   }

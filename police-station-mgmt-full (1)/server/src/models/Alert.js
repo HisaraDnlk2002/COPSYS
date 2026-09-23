@@ -31,7 +31,41 @@ const ALERT_TYPES = [
   "roster_published",
   "leave_request_submitted",
   "leave_approved",
+  "low_ammo_stock",
+  "confirmation_overdue",
+  "accessories_missing",
 ];
+
+// Which part of the system each alert type comes from — drives the
+// Notifications page's source filter and who can see what (see feed()
+// in alertsController.js). Every ALERT_TYPES entry must appear here.
+const ALERT_SOURCE_BY_TYPE = {
+  weapon_missing: "inventory",
+  ammo_discrepancy: "inventory",
+  inspection_failed: "inventory",
+  weapon_damage: "inventory",
+  return_overdue: "inventory",
+  inspection_due: "inventory",
+  maintenance_pending: "inventory",
+  return_awaiting_confirmation: "inventory",
+  weapon_issued: "inventory",
+  weapon_returned: "inventory",
+  maintenance_completed: "inventory",
+  inspection_completed: "inventory",
+  low_ammo_stock: "inventory",
+  confirmation_overdue: "inventory",
+  accessories_missing: "inventory",
+  leave_request_submitted: "leave",
+  leave_approved: "leave",
+  leave_rejected: "leave",
+  roster_published: "duty",
+  critical_complaint: "complaints",
+};
+const ALERT_SOURCES = ["inventory", "leave", "duty", "complaints"];
+
+function alertTypesForSource(source) {
+  return Object.keys(ALERT_SOURCE_BY_TYPE).filter((type) => ALERT_SOURCE_BY_TYPE[type] === source);
+}
 
 const ALERT_PRIORITIES = ["critical", "warning", "info"];
 const ALERT_STATUSES = ["new", "acknowledged", "action_taken", "resolved"];
@@ -85,10 +119,14 @@ const alertSchema = new mongoose.Schema(
 alertSchema.methods.toJSON = function () {
   const obj = this.toObject();
   obj.id = obj._id.toString();
+  obj.source = ALERT_SOURCE_BY_TYPE[obj.alertType] || "other";
   return obj;
 };
 
 module.exports = mongoose.model("Alert", alertSchema);
+module.exports.ALERT_SOURCE_BY_TYPE = ALERT_SOURCE_BY_TYPE;
+module.exports.ALERT_SOURCES = ALERT_SOURCES;
+module.exports.alertTypesForSource = alertTypesForSource;
 module.exports.ALERT_TYPES = ALERT_TYPES;
 module.exports.ALERT_PRIORITIES = ALERT_PRIORITIES;
 module.exports.ALERT_STATUSES = ALERT_STATUSES;

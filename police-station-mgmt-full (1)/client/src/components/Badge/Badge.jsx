@@ -26,6 +26,7 @@ const STATUS_TONE = {
   damaged: "danger",
   faulty: "danger",
   missing: "danger",
+  ready_for_stock: "warning",
 
   // Alerts module
   new: "danger",

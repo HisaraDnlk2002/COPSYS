@@ -11,11 +11,19 @@ const inventorySchema = new mongoose.Schema(
   {
     itemId: { type: String, required: true, unique: true }, // "WP-8821" style, human-facing
     itemName: { type: String, required: true },
+    // Manufacturer's serial stamped on the weapon itself, separate from
+    // the station's own itemId. Blank for ammunition (batch = itemId).
+    serialNumber: { type: String, default: "", trim: true },
+    caliber: { type: String, default: "", trim: true },
+    storageLocation: { type: String, default: "", trim: true }, // e.g. "Armory Rack A-3"
     category: { type: String, required: true }, // "Firearms" | "Electronics" | ...
     quantity: { type: Number, required: true, min: 0 },
     // "missing" — set only via POST /inventory/:id/report-missing (see
     // inventoryController.js). Blocked from issue() same as "damaged".
-    status: { type: String, enum: ["available", "issued", "damaged", "missing"], default: "available" },
+    // "ready_for_stock" — repaired and passed its final inspection, but
+    // not yet physically put back in the armory. Set by a completed
+    // maintenance record; cleared by POST /maintenance/:id/return-to-stock.
+    status: { type: String, enum: ["available", "issued", "damaged", "missing", "ready_for_stock"], default: "available" },
     condition: { type: String, default: "good" },
     assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     lastUpdatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
@@ -28,6 +36,13 @@ const inventorySchema = new mongoose.Schema(
     // alertsController.js doesn't create a duplicate on every fetch.
     // Reset to false every time nextInspectionDate is (re)scheduled.
     dueAlertGenerated: { type: Boolean, default: false },
+
+    // Ammunition only: at or below this many rounds raises a "Low
+    // Ammunition Stock" alert (see utils/ammoStock.js). null = no alert.
+    lowStockThreshold: { type: Number, default: null, min: 0 },
+    // Same one-alert-per-dip idea as dueAlertGenerated — cleared once
+    // stock climbs back above the threshold.
+    lowStockAlertGenerated: { type: Boolean, default: false },
 
     stationId: { type: String, required: true, default: "default-station" },
   },

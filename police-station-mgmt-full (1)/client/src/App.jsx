@@ -14,6 +14,7 @@ import { PersonnelPage } from "./pages/Personnel/Personnel";
 import { ReportsPage } from "./pages/Reports/Reports";
 import { SettingsPage } from "./pages/Settings/Settings";
 import { AuditLogPage } from "./pages/AuditLog/AuditLog";
+import { NotificationsPage } from "./pages/Notifications/Notifications";
 
 function App() {
   return (
@@ -36,7 +37,7 @@ function App() {
               <Route
                 path="/inventory"
                 element={
-                  <ProtectedRoute roles={["duty_officer", "inventory_officer"]}>
+                  <ProtectedRoute roles={["duty_officer", "inventory_officer", "oic"]}>
                     <InventoryPage />
                   </ProtectedRoute>
                 }
@@ -90,6 +91,16 @@ function App() {
                   // gated to oic/admin inside SettingsPage itself.
                   <ProtectedRoute>
                     <SettingsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/notifications"
+                element={
+                  // Every role — the server decides what each one sees
+                  // (see feed() in alertsController.js).
+                  <ProtectedRoute>
+                    <NotificationsPage />
                   </ProtectedRoute>
                 }
               />

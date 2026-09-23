@@ -23,3 +23,13 @@ export async function updateMaintenanceRecord(id, payload) {
   }
   return api.patch(`/maintenance/${id}`, payload);
 }
+
+// POST /api/maintenance/:id/return-to-stock — inventory_officer only.
+// Final step after a passed final inspection: puts the weapon back in
+// the armory at payload.storageLocation, making it available again.
+export async function returnMaintenanceToStock(id, payload) {
+  if (USE_DUMMY_DATA) {
+    return Promise.resolve({ id, returnedToStockAt: new Date().toISOString(), ...payload });
+  }
+  return api.post(`/maintenance/${id}/return-to-stock`, payload);
+}

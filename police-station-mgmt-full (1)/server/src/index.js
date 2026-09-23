@@ -33,9 +33,16 @@ const searchRoutes = require("./routes/searchRoutes");
 
 const app = express();
 
+const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:5173").split(",");
+// Vite moves to 5174, 5175… when 5173 is already taken, so any local
+// dev port is accepted alongside the configured origins.
+const LOCAL_DEV_ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1):\d+$/;
+
 app.use(
   cors({
-    origin: (process.env.CORS_ORIGIN || "http://localhost:5173").split(","),
+    origin: (origin, callback) => {
+      callback(null, !origin || allowedOrigins.includes(origin) || LOCAL_DEV_ORIGIN.test(origin));
+    },
   })
 );
 app.use(express.json());

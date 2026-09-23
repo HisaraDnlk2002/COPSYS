@@ -7,6 +7,7 @@ export const navItemsByRole = {
     { key: "complaints", label: "Complaints registry", path: "/complaints" },
     { key: "reports", label: "Reports", path: "/reports" },
     { key: "audit-log", label: "Activity Log", path: "/audit-log" },
+    { key: "notifications", label: "Notifications", path: "/notifications" },
     { key: "settings", label: "Settings", path: "/settings" },
   ],
   oic: [
@@ -14,7 +15,9 @@ export const navItemsByRole = {
     { key: "duty-roster", label: "Duty Roster", path: "/duty-roster" },
     { key: "leave", label: "Leave Requests", path: "/leave" },
     { key: "complaints", label: "Complaints registry", path: "/complaints" },
+    { key: "inventory", label: "Inventory", path: "/inventory" },
     { key: "reports", label: "Reports", path: "/reports" },
+    { key: "notifications", label: "Notifications", path: "/notifications" },
     { key: "settings", label: "Settings", path: "/settings" },
   ],
   duty_officer: [
@@ -25,6 +28,7 @@ export const navItemsByRole = {
     { key: "leave", label: "Leave Requests", path: "/leave" },
     { key: "complaints", label: "Complaints registry", path: "/complaints" },
     { key: "reports", label: "Reports", path: "/reports" },
+    { key: "notifications", label: "Notifications", path: "/notifications" },
     { key: "settings", label: "Settings", path: "/settings" },
   ],
   inventory_officer: [
@@ -34,6 +38,7 @@ export const navItemsByRole = {
     { key: "leave", label: "Leave Requests", path: "/leave" },
     { key: "complaints", label: "Complaints registry", path: "/complaints" },
     { key: "reports", label: "Reports", path: "/reports" },
+    { key: "notifications", label: "Notifications", path: "/notifications" },
     { key: "settings", label: "Settings", path: "/settings" },
   ],
   officer: [
@@ -41,6 +46,7 @@ export const navItemsByRole = {
     { key: "weapon-management", label: "My Weapons", path: "/weapon-management" },
     { key: "leave", label: "Leave Requests", path: "/leave" },
     { key: "complaints", label: "Complaints registry", path: "/complaints" },
+    { key: "notifications", label: "Notifications", path: "/notifications" },
     { key: "settings", label: "Settings", path: "/settings" },
   ],
 };

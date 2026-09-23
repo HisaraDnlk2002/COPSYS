@@ -42,6 +42,10 @@ const CATEGORY_LABEL_KEY = {
   weapons: "catWeaponsTitle",
   inventory: "catWeaponsTitle",
   ammunition: "catAmmunitionTitle",
+  ammo_stock: "catAmmoStockTitle",
+  maintenance: "catMaintenanceTitle",
+  inspections: "catInspectionsTitle",
+  exceptions: "catExceptionsTitle",
   station: "catStationTitle",
   performance: "catPerformanceTitle",
 };
@@ -291,6 +295,47 @@ function getFilterFields(type, t) {
       ];
     case "ammunition":
       return [{ key: "officerId", kind: "officer", label: t("reports.filterOfficer") }];
+    case "maintenance":
+      return [
+        {
+          key: "status",
+          kind: "select",
+          label: t("reports.filterStatus"),
+          options: [
+            { value: "pending", label: t("inventory.maintStatusPending") },
+            { value: "in_progress", label: t("inventory.maintStatusInProgress") },
+            { value: "completed", label: t("inventory.maintStatusCompleted") },
+          ],
+        },
+      ];
+    case "inspections":
+      return [
+        {
+          key: "result",
+          kind: "select",
+          label: t("reports.filterResult"),
+          options: [
+            { value: "passed", label: t("reports.resultPassed") },
+            { value: "failed", label: t("reports.resultFailed") },
+          ],
+        },
+      ];
+    case "exceptions":
+      return [
+        {
+          key: "exceptionType",
+          kind: "select",
+          label: t("reports.filterExceptionType"),
+          options: [
+            { value: "return_overdue", label: t("reports.excOverdueReturn") },
+            { value: "confirmation_overdue", label: t("reports.excUnconfirmed") },
+            { value: "ammo_discrepancy", label: t("reports.excAmmoDiscrepancy") },
+            { value: "weapon_missing", label: t("reports.excMissingWeapon") },
+            { value: "accessories_missing", label: t("reports.excMissingAccessories") },
+            { value: "low_ammo_stock", label: t("reports.excLowAmmo") },
+          ],
+        },
+      ];
     case "performance":
       return [{ key: "department", kind: "text", label: t("reports.filterDepartment"), placeholder: t("reports.filterDepartmentPlaceholder") }];
     default:
@@ -353,6 +398,10 @@ export function ReportsPage() {
       { type: "crime", title: t("reports.catCrimeTitle"), desc: t("reports.catCrimeDesc"), roles: ["admin", "oic"] },
       { type: "weapons", title: t("reports.catWeaponsTitle"), desc: t("reports.catWeaponsDesc"), roles: ["admin", "oic", "inventory_officer"] },
       { type: "ammunition", title: t("reports.catAmmunitionTitle"), desc: t("reports.catAmmunitionDesc"), roles: ["admin", "oic", "inventory_officer"] },
+      { type: "ammo_stock", title: t("reports.catAmmoStockTitle"), desc: t("reports.catAmmoStockDesc"), roles: ["admin", "oic", "inventory_officer"] },
+      { type: "maintenance", title: t("reports.catMaintenanceTitle"), desc: t("reports.catMaintenanceDesc"), roles: ["admin", "oic", "inventory_officer"] },
+      { type: "inspections", title: t("reports.catInspectionsTitle"), desc: t("reports.catInspectionsDesc"), roles: ["admin", "oic", "inventory_officer"] },
+      { type: "exceptions", title: t("reports.catExceptionsTitle"), desc: t("reports.catExceptionsDesc"), roles: ["admin", "oic", "inventory_officer"] },
       { type: "station", title: t("reports.catStationTitle"), desc: t("reports.catStationDesc"), roles: ["admin", "oic"] },
       { type: "performance", title: t("reports.catPerformanceTitle"), desc: t("reports.catPerformanceDesc"), roles: ["admin", "oic"] },
     ],

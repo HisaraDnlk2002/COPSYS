@@ -13,7 +13,6 @@ require("dotenv").config();
 // system-wide, so this forces Node's own resolver to use it directly.
 require("dns").setServers(["8.8.8.8", "8.8.4.4"]);
 
-lName: "PC Nishadi", rankAndNumber: "65521", department: "Crime", role: "officer", password: "officer123", phoneNumber: "0775678901", address: "Police Headquarters, Colombo" },
 const bcrypt = require("bcryptjs");
 const mongoose = require("mongoose");
 const { connectDB } = require("./config/db");

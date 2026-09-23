@@ -1,12 +1,19 @@
 const Alert = require("../models/Alert");
+const { ALERT_SOURCES, alertTypesForSource } = require("../models/Alert");
 const Inventory = require("../models/Inventory");
 const InventoryTransaction = require("../models/InventoryTransaction");
 const { generateAlert } = require("../utils/alerts");
+const { syncLowStockAlert } = require("../utils/ammoStock");
+const { AMMUNITION_CATEGORY } = require("../config/weaponCatalog");
 
 // How soon before nextInspectionDate "Inspection Due" fires — mirrors
 // INSPECTION_DUE_SOON_DAYS in Inventory.jsx, kept in sync manually since
 // there's no shared config module between client and server here.
 const INSPECTION_DUE_SOON_DAYS = 14;
+
+// How long an issue/return can sit unconfirmed by the officer before a
+// "Confirmation Overdue" reminder goes out.
+const CONFIRMATION_REMINDER_HOURS = 2;
 
 // Runs on every GET /api/alerts. return_overdue and inspection_due
 // aren't tied to a single action the way the other 10 alert types are
@@ -77,6 +84,38 @@ async function scanForTimeBasedAlerts(stationId) {
     item.dueAlertGenerated = true;
     await item.save();
   }
+
+  const reminderCutoff = new Date(now.getTime() - CONFIRMATION_REMINDER_HOURS * 60 * 60 * 1000);
+  const unconfirmed = await InventoryTransaction.find({
+    stationId,
+    confirmationStatus: "pending",
+    createdAt: { $lt: reminderCutoff },
+    confirmationReminderGenerated: false,
+  }).populate("itemId", "itemId");
+
+  for (const tx of unconfirmed) {
+    await generateAlert({
+      alertType: "confirmation_overdue",
+      title: tx.type === "issue" ? "Weapon Receipt Not Confirmed" : "Weapon Return Not Confirmed",
+      message: `${tx.itemId?.itemId || "A weapon"} ${tx.type === "issue" ? "issue" : "return"} has been waiting over ${CONFIRMATION_REMINDER_HOURS} hours for the officer's confirmation on My Weapons.`,
+      itemId: tx.itemId?._id || null,
+      transactionId: tx._id,
+      recipientId: tx.officerId,
+      stationId,
+    });
+    tx.confirmationReminderGenerated = true;
+    await tx.save();
+  }
+
+  // Catches ammunition lines that were already at/below threshold
+  // without passing through issue/restock (e.g. threshold raised later).
+  const ammoLines = await Inventory.find({
+    stationId,
+    category: AMMUNITION_CATEGORY,
+    lowStockThreshold: { $ne: null },
+    lowStockAlertGenerated: false,
+  });
+  for (const item of ammoLines) await syncLowStockAlert(item);
 }
 
 // GET /api/alerts — duty_officer, inventory_officer. Station-wide feed
@@ -123,6 +162,54 @@ async function listMine(req, res) {
   }
 }
 
+// GET /api/alerts/feed — every role. Backs the Notifications page.
+// What each role sees:
+//   oic                       -> every alert at the station (reviews all exceptions)
+//   inventory/duty officer    -> all inventory alerts at the station + their own
+//   everyone else             -> only alerts addressed to them
+// Optional ?source=inventory|leave|duty|complaints, ?status=, ?priority=.
+const INVENTORY_ROLES = ["inventory_officer", "duty_officer"];
+
+async function feed(req, res) {
+  try {
+    const { stationId, uid, role } = req.user;
+    await scanForTimeBasedAlerts(stationId);
+
+    let visibility;
+    if (role === "oic") {
+      visibility = {};
+    } else if (INVENTORY_ROLES.includes(role)) {
+      visibility = { $or: [{ alertType: { $in: alertTypesForSource("inventory") } }, { recipientId: uid }] };
+    } else {
+      visibility = { recipientId: uid };
+    }
+
+    const filter = { stationId, ...visibility };
+    if (req.query.source) {
+      if (!ALERT_SOURCES.includes(req.query.source)) {
+        return res.status(400).json({ error: "Unknown alert source" });
+      }
+      filter.alertType = { $in: alertTypesForSource(req.query.source) };
+    }
+    if (req.query.status) filter.status = req.query.status;
+    if (req.query.priority) filter.priority = req.query.priority;
+
+    const alerts = await Alert.find(filter)
+      .sort({ generatedAt: -1 })
+      .limit(500)
+      .populate("itemId", "itemId itemName")
+      .populate("recipientId", "fullName rankAndNumber")
+      .populate("acknowledgedBy", "fullName rankAndNumber")
+      .populate("actionTakenBy", "fullName rankAndNumber")
+      .populate("resolvedBy", "fullName rankAndNumber");
+
+    return res.json(alerts.map((a) => a.toJSON()));
+  } catch (err) {
+    console.error("feed alerts error:", err);
+    return res.status(500).json({ error: "Could not load notifications" });
+  }
+}
+
 const NEXT_STATUS = { new: "acknowledged", acknowledged: "action_taken", action_taken: "resolved" };
 
 // PATCH /api/alerts/:id — inventory_officer (any station alert) OR the
@@ -138,9 +225,13 @@ async function updateStatus(req, res) {
     const alert = await Alert.findOne({ _id: req.params.id, stationId: req.user.stationId });
     if (!alert) return res.status(404).json({ error: "Alert not found" });
 
-    const isInventoryOfficer = req.user.role === "inventory_officer";
+    // OIC reviews exceptions (workflow section 8), so can move any
+    // alert along its lifecycle too, same as the Inventory Officer.
+    const isOic = req.user.role === "oic";
+    const isInventoryAlertForInventoryOfficer =
+      req.user.role === "inventory_officer" && alertTypesForSource("inventory").includes(alert.alertType);
     const isRecipient = alert.recipientId && String(alert.recipientId) === String(req.user.uid);
-    if (!isInventoryOfficer && !isRecipient) {
+    if (!isOic && !isInventoryAlertForInventoryOfficer && !isRecipient) {
       return res.status(403).json({ error: "You do not have permission to update this alert" });
     }
 
@@ -173,4 +264,4 @@ async function updateStatus(req, res) {
   }
 }
 
-module.exports = { list, listMine, updateStatus };
+module.exports = { list, listMine, feed, updateStatus };

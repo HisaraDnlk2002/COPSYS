@@ -288,11 +288,34 @@ export function WeaponManagementPage() {
             <p><strong>{t("weaponManagement.colItemId")}:</strong> {confirmingTx.itemId?.itemId || confirmingTx.itemId?.itemName || "—"}</p>
             <p><strong>{t("weaponManagement.colQuantity")}:</strong> {confirmingTx.quantity}</p>
             {isReturnLike && <p><strong>{t("weaponManagement.colCondition")}:</strong> {confirmingTx.condition || "—"}</p>}
+            {!isReturnLike && confirmingTx.ammoIssued > 0 && (
+              <p>
+                <strong>{t("weaponManagement.ammoIssued")}:</strong> {confirmingTx.ammoIssued}
+                {confirmingTx.ammoItemId?.itemName ? ` × ${confirmingTx.ammoItemId.itemName}` : ""}
+              </p>
+            )}
+            {confirmingTx.accessories && (
+              <p><strong>{t("weaponManagement.accessories")}:</strong> {confirmingTx.accessories}</p>
+            )}
+            {isReturnLike && confirmingTx.accessoriesComplete === false && (
+              <p style={{ color: "var(--color-danger)" }}>
+                <strong>{t("weaponManagement.accessoriesMissing")}:</strong> {confirmingTx.accessoriesRemarks || "—"}
+              </p>
+            )}
             {isReturnLike && (confirmingTx.ammoIssued !== null || confirmingTx.ammoReturned !== null) && (
               <>
                 <p><strong>{t("weaponManagement.ammoIssued")}:</strong> {confirmingTx.ammoIssued ?? "—"}</p>
                 <p><strong>{t("weaponManagement.ammoReturned")}:</strong> {confirmingTx.ammoReturned ?? "—"}</p>
                 <p><strong>{t("weaponManagement.ammoUsed")}:</strong> {confirmingTx.ammoUsed ?? "—"}</p>
+                {confirmingTx.ammoDeclaredUsed !== null && confirmingTx.ammoDeclaredUsed !== undefined && (
+                  <p><strong>{t("weaponManagement.ammoDeclaredUsed")}:</strong> {confirmingTx.ammoDeclaredUsed}</p>
+                )}
+                {confirmingTx.ammoDiscrepancy !== null && confirmingTx.ammoDiscrepancy !== undefined && confirmingTx.ammoDiscrepancy !== 0 && (
+                  <p style={{ color: "var(--color-danger)" }}>
+                    <strong>{t("weaponManagement.ammoDiscrepancy")}:</strong> {Math.abs(confirmingTx.ammoDiscrepancy)}{" "}
+                    {t("weaponManagement.roundsFlagged")}
+                  </p>
+                )}
               </>
             )}
             <p><strong>{t("weaponManagement.colProcessedBy")}:</strong> {confirmingTx.processedBy?.fullName || confirmingTx.processedBy?.rankAndNumber || "—"}</p>

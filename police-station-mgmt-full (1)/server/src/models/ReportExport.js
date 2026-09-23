@@ -12,7 +12,21 @@ const mongoose = require("mongoose");
 // before the Weapons/Ammunition split) still validate and can still be
 // downloaded — new reports are always generated as "weapons" instead.
 // See reportsController's CATEGORY_ROLES / REPORT_TYPE_LABELS.
-const REPORT_TYPES = ["duty", "officers", "leave", "crime", "inventory", "weapons", "ammunition", "station", "performance"];
+const REPORT_TYPES = [
+  "duty",
+  "officers",
+  "leave",
+  "crime",
+  "inventory",
+  "weapons",
+  "ammunition",
+  "ammo_stock",
+  "maintenance",
+  "inspections",
+  "exceptions",
+  "station",
+  "performance",
+];
 const REPORT_FORMATS = ["pdf", "csv"];
 const REPORT_STATUSES = ["Complete", "Archived", "Failed"];
 

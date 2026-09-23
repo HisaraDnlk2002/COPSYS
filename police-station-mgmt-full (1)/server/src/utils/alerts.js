@@ -25,6 +25,9 @@ const ALERT_PRIORITY = {
   roster_published: "info",
   leave_request_submitted: "info",
   leave_approved: "info",
+  low_ammo_stock: "warning",
+  confirmation_overdue: "warning",
+  accessories_missing: "warning",
 };
 
 async function generateRefId() {

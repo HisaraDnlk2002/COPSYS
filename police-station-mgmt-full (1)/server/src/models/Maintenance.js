@@ -26,11 +26,34 @@ const maintenanceSchema = new mongoose.Schema(
     startDate: { type: Date, default: null }, // set when status -> in_progress
     completionDate: { type: Date, default: null }, // set when status -> completed
 
-    partsCost: { type: String, default: "" }, // free text — no currency/accounting system elsewhere to key off
+    // Legacy free-text "Parts / Cost" from before the itemised list below
+    // existed — kept so older records still show what was entered.
+    partsCost: { type: String, default: "" },
+
+    // Itemised parts used in this repair. Costs are in LKR. totalCost is
+    // always recalculated on the server from this list (never trusted
+    // from the client) — see setParts() in maintenanceController.js.
+    parts: {
+      type: [
+        {
+          _id: false,
+          name: { type: String, required: true, trim: true },
+          quantity: { type: Number, required: true, min: 1 },
+          unitCost: { type: Number, required: true, min: 0 },
+        },
+      ],
+      default: [],
+    },
+    totalCost: { type: Number, default: 0, min: 0 },
     remarks: { type: String, default: "" },
 
     finalCondition: { type: String, default: null }, // only set on completion
     finalInspectionPassed: { type: Boolean, default: null }, // only set on completion — see Inventory sync note below
+
+    // Set by the "Return to Stock" step after a passed final inspection —
+    // the weapon only becomes available again once this happens.
+    returnedToStockAt: { type: Date, default: null },
+    returnedToStockBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
 
     status: { type: String, enum: ["pending", "in_progress", "completed"], default: "pending" },
 

@@ -12,6 +12,7 @@ const {
   getStats,
   confirmTransaction,
   reportMissing,
+  restock,
 } = require("../controllers/inventoryController");
 
 const router = express.Router();
@@ -28,7 +29,9 @@ router.use(verifyToken);
 router.get("/my-weapons", getMyWeapons);
 router.patch("/transactions/:id/confirm", confirmTransaction);
 
-router.use(requireRole("duty_officer", "inventory_officer"));
+// OIC gets read-only access to review exceptions (workflow section 8);
+// every write below stays inventory_officer-only.
+router.use(requireRole("duty_officer", "inventory_officer", "oic"));
 
 // Read access — both roles
 router.get("/stats", getStats);
@@ -42,5 +45,6 @@ router.patch("/:id", requireRole("inventory_officer"), update);
 router.post("/:id/issue", requireRole("inventory_officer"), issue);
 router.post("/:id/return", requireRole("inventory_officer"), returnItem);
 router.post("/:id/report-missing", requireRole("inventory_officer"), reportMissing);
+router.post("/:id/restock", requireRole("inventory_officer"), restock);
 
 module.exports = router;

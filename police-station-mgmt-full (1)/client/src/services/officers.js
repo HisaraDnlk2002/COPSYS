@@ -23,5 +23,6 @@ export async function searchOfficers(query) {
     phone: officer.phoneNumber,
     fullName: officer.fullName,
     rankAndNumber: officer.rankAndNumber,
+    department: officer.department,
   }));
 }

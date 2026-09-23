@@ -53,6 +53,22 @@ const inventoryTransactionSchema = new mongoose.Schema(
     ammoIssued: { type: Number, default: null },
     ammoReturned: { type: Number, default: null },
     ammoUsed: { type: Number, default: null },
+    // The Ammunition stock line the rounds were drawn from at issue (and
+    // restored to on a confirmed return). Copied onto the return record
+    // from its issue so confirmTransaction knows where to put them back.
+    ammoItemId: { type: mongoose.Schema.Types.ObjectId, ref: "Inventory", default: null },
+    // Return only: rounds the officer states they fired on duty.
+    // Reconciled against the physical count — ammoDiscrepancy =
+    // ammoUsed (issued - counted returned) - ammoDeclaredUsed. Anything
+    // non-zero is flagged for review.
+    ammoDeclaredUsed: { type: Number, default: null },
+    ammoDiscrepancy: { type: Number, default: null },
+
+    // Issue: what went out with the weapon ("2 magazines, holster").
+    // Return: whether all of it came back, plus notes if not.
+    accessories: { type: String, default: "" },
+    accessoriesComplete: { type: Boolean, default: null },
+    accessoriesRemarks: { type: String, default: "" },
 
     // Two-party confirmation workflow — meaningful for every type
     // (issue AND return/damaged). Set to "pending" the moment an
@@ -70,6 +86,9 @@ const inventoryTransactionSchema = new mongoose.Schema(
     confirmationStatus: { type: String, enum: ["pending", "secured"], default: null },
     confirmedAt: { type: Date, default: null },
     confirmationRemarks: { type: String, default: null },
+    // Set once a "Confirmation Overdue" reminder has gone out for this
+    // still-pending transaction, so the alert scan doesn't repeat it.
+    confirmationReminderGenerated: { type: Boolean, default: false },
 
     stationId: { type: String, default: "default-station" },
   },

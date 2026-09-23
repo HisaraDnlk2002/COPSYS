@@ -152,3 +152,122 @@
   background: var(--color-warning-bg);
   color: var(--color-warning);
 }
+
+.inventory-checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.inventory-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  user-select: none;
+}
+
+.inventory-checkbox.checked {
+  border-color: var(--color-primary);
+  background: var(--color-primary-light);
+}
+
+.inventory-checkbox input {
+  accent-color: var(--color-primary);
+  margin: 0;
+}
+
+.inventory-checkbox-empty {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  margin: 0;
+}
+
+/* Itemised parts list in the Manage Maintenance modal (MaintenancePartsEditor.jsx) */
+.parts-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.parts-row {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(64px, 0.8fr) minmax(90px, 1.3fr) minmax(110px, 1.3fr) 32px;
+  gap: var(--space-xs);
+  align-items: center;
+}
+
+.parts-row-head {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.parts-num {
+  text-align: right;
+}
+
+.parts-line-total {
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
+.parts-remove {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-danger);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.parts-remove:hover {
+  background: var(--color-danger-bg);
+}
+
+.parts-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-top: var(--space-xs);
+}
+
+.parts-grand-total {
+  margin-left: auto;
+  font-size: var(--font-size-base);
+}
+
+.parts-empty {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  margin: 0;
+}
+
+/* Phone width: stack each part's fields instead of squeezing five columns */
+@media (max-width: 600px) {
+  .parts-row {
+    grid-template-columns: 1fr 1fr;
+    padding-bottom: var(--space-xs);
+    border-bottom: 1px solid var(--color-border);
+  }
+  .parts-row > :first-child {
+    grid-column: 1 / -1;
+  }
+  .parts-row-head {
+    display: none;
+  }
+  .parts-num {
+    text-align: left;
+  }
+}
