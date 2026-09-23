@@ -8,9 +8,22 @@ const { isGeneralPoolBranch } = require("../config/branches");
 const { logAuditForActor } = require("../utils/auditLogger");
 const { generateAlert } = require("../utils/alerts");
 
+// Date-only fields (DutySchedule.date) are always stored from a plain
+// "YYYY-MM-DD" string, which Mongo/JS parse as UTC midnight — not local
+// midnight. Comparing against a locally-computed "today" (e.g.
+// setHours(0,0,0,0), which is LOCAL midnight) is wrong on any server
+// whose local timezone isn't UTC: today's own shifts can read as
+// "in the future" and get rejected. Comparing UTC calendar days instead
+// keeps this consistent with how those dates were actually stored.
+function isFutureDate(date) {
+  const now = new Date();
+  const todayUtcMidnight = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  return new Date(date) > todayUtcMidnight;
+}
+
 // GET /api/duty-schedule/mine — any officer, their own shifts for THIS
 // week only. Only the sole caller (Dashboard.jsx's "Weekly Duty
-// Schedule" card) — scoped to whichever published week's Mon-Sun range
+// Schedule" card) — scoped to whichever published week's Sun-Sat range
 // contains today, not every week ever published, which would otherwise
 // only ever grow as more weeks get published over the life of the
 // station. Still only from weeks that have actually been published
@@ -124,6 +137,7 @@ async function getWeek(req, res) {
 
     const shifts = await DutySchedule.find({ weekId: week._id })
       .populate("officerId", "fullName rankAndNumber department")
+      .populate("substituteFor", "fullName rankAndNumber")
       .sort({ date: 1 });
 
     return res.json({ week: week.toJSON(), shifts: shifts.map((s) => s.toJSON()) });
@@ -136,6 +150,8 @@ async function getWeek(req, res) {
 // POST /api/duty-schedule/weeks — duty_officer: Step 1 of the wizard.
 // Just picks the week — branch requirements are set separately via
 // updateRequirements once the week exists.
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 async function createWeek(req, res) {
   const { weekStarting } = req.body;
 
@@ -143,7 +159,41 @@ async function createWeek(req, res) {
     return res.status(400).json({ error: "Week starting date is required" });
   }
 
+  // The whole roster grid (WeeklyGrid.jsx, RosterSummary.jsx) assumes
+  // weekStarting is a Sunday and lays out exactly Sun-Sat from it — a
+  // mid-week start would silently mislabel every day of that roster.
+  // weekStarting arrives as a plain "YYYY-MM-DD" string, which Date
+  // parses as UTC midnight, so getUTCDay() (not getDay()) is what
+  // actually matches that instant regardless of the server's own
+  // timezone (Sunday === 0).
+  const start = new Date(weekStarting);
+  if (Number.isNaN(start.getTime())) {
+    return res.status(400).json({ error: "Invalid week starting date" });
+  }
+  if (start.getUTCDay() !== 0) {
+    return res.status(400).json({ error: "Roster weeks must start on a Sunday" });
+  }
+
   try {
+    // Client-side (CreateRosterWizard.jsx) only blocks dates before the
+    // most recently created week — fine for the normal forward-only
+    // flow, but not a real guarantee (a week could be deleted and a new
+    // one created that lands back inside an older week's range). This
+    // checks every existing week's actual 7-day span, not just the
+    // latest one.
+    const end = new Date(start.getTime() + 6 * DAY_MS);
+    const existingWeeks = await DutyRosterWeek.find({ stationId: req.user.stationId }).select("weekStarting");
+    const overlapping = existingWeeks.find((w) => {
+      const existingStart = new Date(w.weekStarting);
+      const existingEnd = new Date(existingStart.getTime() + 6 * DAY_MS);
+      return start <= existingEnd && existingStart <= end;
+    });
+    if (overlapping) {
+      return res.status(409).json({
+        error: `A roster week already exists covering that date range (week of ${new Date(overlapping.weekStarting).toISOString().slice(0, 10)})`,
+      });
+    }
+
     const week = await DutyRosterWeek.create({
       weekStarting,
       requirements: [],
@@ -171,7 +221,7 @@ async function updateRequirements(req, res) {
   try {
     const week = await DutyRosterWeek.findById(req.params.weekId);
     if (!week) return res.status(404).json({ error: "Roster week not found" });
-    if (!["draft", "sent_back"].includes(week.status)) {
+    if (!["draft", "sent_back", "unpublished"].includes(week.status)) {
       return res.status(403).json({ error: `This week is ${week.status} and locked for editing.` });
     }
 
@@ -228,9 +278,9 @@ async function getStaffingOverview(req, res) {
 }
 
 // POST /api/duty-schedule — duty_officer: add one shift cell to a week.
-// Locked once the week has left draft/sent_back.
+// Locked once the week has left draft/sent_back/unpublished.
 async function create(req, res) {
-  const { weekId, officerId, date, shiftStart, shiftEnd, shiftType, department, status } = req.body;
+  const { weekId, officerId, date, shiftStart, shiftEnd, shiftType, department, dutyType, status } = req.body;
 
   if (!weekId || !officerId || !date || !shiftStart || !shiftEnd || !department) {
     return res.status(400).json({ error: "All fields are required" });
@@ -239,12 +289,28 @@ async function create(req, res) {
   try {
     if (req.user.role === "duty_officer") {
       const week = await DutyRosterWeek.findById(weekId);
-      if (week && !["draft", "sent_back"].includes(week.status)) {
+      if (week && !["draft", "sent_back", "unpublished"].includes(week.status)) {
         return res.status(403).json({
           error: `This week is ${week.status} and locked for editing. It must be sent back for revision first.`,
         });
       }
     }
+
+    // Spec §12 — server-side leave-conflict validation, not just the
+    // client's own candidate-list filtering (WeeklyGrid already hides an
+    // on-leave officer from the assign picker, but this is what actually
+    // stops one from slipping through some other caller).
+    const onLeave = await LeaveRequest.exists({
+      officerId,
+      status: "approved",
+      startDate: { $lte: date },
+      endDate: { $gte: date },
+    });
+    if (onLeave) {
+      return res.status(400).json({ error: "This officer has approved leave covering this date." });
+    }
+
+    const officer = await User.findById(officerId).select("fullName");
 
     const shift = await DutySchedule.create({
       weekId,
@@ -254,10 +320,17 @@ async function create(req, res) {
       shiftEnd,
       shiftType: shiftType || "day",
       department,
+      dutyType: dutyType || "",
       status: status || "pending",
       stationId: req.user.stationId,
       createdBy: req.user.uid,
     });
+
+    logAuditForActor(req, {
+      action: `Assigned ${officer?.fullName || "an officer"} to ${department} on ${new Date(date).toISOString().slice(0, 10)} (${shiftType || "day"})`,
+      module: "Duty Roster",
+    });
+
     return res.status(201).json(shift.toJSON());
   } catch (err) {
     console.error("create duty shift error:", err);
@@ -267,24 +340,40 @@ async function create(req, res) {
 
 // PATCH /api/duty-schedule/:id — duty_officer, admin, oic (oversight override)
 async function update(req, res) {
-  const { shiftStart, shiftEnd, department, status } = req.body;
+  const { shiftStart, shiftEnd, department, dutyType, status, removalReason } = req.body;
 
-  // The draft/sent_back lock below only protects roster *composition*
-  // edits — reassigning or removing a cell in WeeklyGrid. Marking daily
-  // attendance (present/absent) is a different action with a different
-  // lifecycle: the Daily Duty tab only ever shows shifts from an
-  // already-PUBLISHED week (see getTodaysDuty), so if this lock applied
-  // to attendance too, a duty_officer could never mark anyone present —
-  // every published week would 403 unconditionally.
+  // The draft/sent_back/unpublished lock below only protects roster
+  // *composition* edits — reassigning or removing a cell in
+  // WeeklyGrid. Marking daily attendance (present/absent) is a
+  // different action with a different lifecycle: the Daily Duty tab
+  // only ever shows shifts from an already-PUBLISHED week (see
+  // getTodaysDuty), so if this lock applied to attendance too, a
+  // duty_officer could never mark anyone present — every published
+  // week would 403 unconditionally.
   const isAttendanceOnly = ["present", "absent"].includes(status) && !shiftStart && !shiftEnd && !department;
+  const isRemoval = status === "removed";
+
+  // Spec §13 — deassigning must capture a reason, not silently vanish
+  // the row (it doesn't vanish anyway — see removedBy/removedAt below —
+  // but the reason is what makes that history actually mean something).
+  if (isRemoval && !removalReason) {
+    return res.status(400).json({ error: "A reason is required to remove an officer from this assignment" });
+  }
 
   try {
     const existing = await DutySchedule.findById(req.params.id);
     if (!existing) return res.status(404).json({ error: "Roster entry not found" });
 
+    // Attendance can only be recorded for a shift that has already
+    // started — a future-dated shift hasn't happened yet, so there's
+    // nothing to mark present/absent about.
+    if (isAttendanceOnly && isFutureDate(existing.date)) {
+      return res.status(400).json({ error: "Cannot mark attendance for a future date" });
+    }
+
     if (req.user.role === "duty_officer" && !isAttendanceOnly) {
       const week = await DutyRosterWeek.findById(existing.weekId);
-      if (week && !["draft", "sent_back"].includes(week.status)) {
+      if (week && !["draft", "sent_back", "unpublished"].includes(week.status)) {
         return res.status(403).json({
           error: `This week is ${week.status} and locked for editing. It must be sent back for revision first.`,
         });
@@ -297,11 +386,28 @@ async function update(req, res) {
         ...(shiftStart && { shiftStart }),
         ...(shiftEnd && { shiftEnd }),
         ...(department && { department }),
+        ...(dutyType !== undefined && { dutyType }),
         ...(status && { status }),
+        // A plain attendance mark (not the leave-integration or
+        // createDailyChange paths, which set their own more specific
+        // reason) is always an unplanned no-show by definition — there's
+        // no other way to reach "absent" through this branch.
+        ...(isAttendanceOnly && status === "absent" && { absenceReason: "unplanned" }),
+        ...(isAttendanceOnly && status === "present" && { absenceReason: null }),
+        ...(isRemoval && { removalReason, removedBy: req.user.uid, removedAt: new Date() }),
         lastModifiedBy: req.user.uid,
       },
       { new: true }
     );
+
+    if (isRemoval) {
+      const officer = await User.findById(existing.officerId).select("fullName");
+      logAuditForActor(req, {
+        action: `Deassigned ${officer?.fullName || "an officer"} from ${existing.department} on ${new Date(existing.date).toISOString().slice(0, 10)} (reason: ${removalReason})`,
+        module: "Duty Roster",
+      });
+    }
+
     return res.json(shift.toJSON());
   } catch (err) {
     console.error("update duty shift error:", err);
@@ -329,8 +435,8 @@ async function generateRoster(req, res) {
     const week = await DutyRosterWeek.findById(req.params.weekId);
     if (!week) return res.status(404).json({ error: "Roster week not found" });
 
-    if (!["draft", "sent_back"].includes(week.status)) {
-      return res.status(400).json({ error: "Only a draft or sent-back week can be auto-generated." });
+    if (!["draft", "sent_back", "unpublished"].includes(week.status)) {
+      return res.status(400).json({ error: "Only a draft, sent-back, or unpublished week can be auto-generated." });
     }
     if (!week.requirements || week.requirements.length === 0) {
       return res.status(400).json({ error: "Set branch requirements before generating." });
@@ -425,9 +531,13 @@ async function generateRoster(req, res) {
     let allAssignments = [];
     let allUnfilled = [];
     const allExcluded = new Set();
+    // Keyed by "branch::shiftType" — spec §7's "why recommended/excluded"
+    // is only meaningful per (branch, shift) pass, not merged across
+    // every target in one bulk generate.
+    const candidateNotesByTarget = {};
 
     for (const t of targets) {
-      const { assignments, unfilledDays, excludedOfficerIds } = generateWeeklyRoster({
+      const { assignments, unfilledDays, excludedOfficerIds, candidateNotes } = generateWeeklyRoster({
         weekStarting: week.weekStarting,
         department: t.branch,
         shiftType: t.shiftType,
@@ -440,6 +550,7 @@ async function generateRoster(req, res) {
       allAssignments = allAssignments.concat(assignments);
       allUnfilled = allUnfilled.concat(unfilledDays);
       excludedOfficerIds.forEach((id) => allExcluded.add(id));
+      candidateNotesByTarget[`${t.branch}::${t.shiftType}`] = candidateNotes;
     }
 
     const created = await DutySchedule.insertMany(
@@ -462,6 +573,7 @@ async function generateRoster(req, res) {
       shifts: created.map((s) => s.toJSON()),
       unfilledDays: allUnfilled,
       excludedOfficerIds: Array.from(allExcluded),
+      candidateNotesByTarget,
     });
   } catch (err) {
     console.error("generateRoster error:", err);
@@ -537,7 +649,14 @@ async function createDailyChange(req, res) {
     const entry = await DutySchedule.findById(scheduleEntryId);
     if (!entry) return res.status(404).json({ error: "Schedule entry not found" });
 
+    if (isFutureDate(entry.date)) {
+      return res.status(400).json({ error: "Cannot mark attendance for a future date" });
+    }
+
     entry.status = "absent";
+    // Distinguishes an ad-hoc no-show from approved-leave absence (spec
+    // §10) — see DutySchedule.js's absenceReason comment.
+    entry.absenceReason = "unplanned";
     entry.lastModifiedBy = req.user.uid;
     await entry.save();
 
@@ -554,7 +673,9 @@ async function createDailyChange(req, res) {
         shiftStart: entry.shiftStart,
         shiftEnd: entry.shiftEnd,
         department: entry.department,
-        assignmentType: replacementOfficer.department === entry.department ? "PERMANENT" : "GENERAL_POOL",
+        dutyType: entry.dutyType,
+        assignmentType: "SUBSTITUTE",
+        substituteFor: entry.officerId,
         status: "pending",
         stationId: req.user.stationId,
         createdBy: req.user.uid,
@@ -573,6 +694,17 @@ async function createDailyChange(req, res) {
       notifiedOfficer: Boolean(notifyOfficer),
       changedBy: req.user.uid,
       stationId: req.user.stationId,
+    });
+
+    const [absentOfficer, replacementOfficerForLog] = await Promise.all([
+      User.findById(entry.officerId).select("fullName"),
+      replacementOfficerId ? User.findById(replacementOfficerId).select("fullName") : null,
+    ]);
+    logAuditForActor(req, {
+      action: replacementOfficerForLog
+        ? `Marked ${absentOfficer?.fullName || "an officer"} absent on ${new Date(entry.date).toISOString().slice(0, 10)} (${entry.department}) — substituted by ${replacementOfficerForLog.fullName} (reason: ${reason})`
+        : `Marked ${absentOfficer?.fullName || "an officer"} absent on ${new Date(entry.date).toISOString().slice(0, 10)} (${entry.department}) — no replacement assigned (reason: ${reason})`,
+      module: "Duty Roster",
     });
 
     return res.status(201).json(change.toJSON());
@@ -607,6 +739,7 @@ async function getTodaysDuty(req, res) {
       status: { $ne: "removed" },
     })
       .populate("officerId", "fullName rankAndNumber department")
+      .populate("substituteFor", "fullName rankAndNumber")
       .sort({ department: 1, shiftType: 1 });
 
     return res.json(shifts.map((s) => s.toJSON()));
@@ -751,13 +884,23 @@ async function submitWeek(req, res) {
   try {
     const week = await DutyRosterWeek.findById(req.params.weekId);
     if (!week) return res.status(404).json({ error: "Roster week not found" });
-    if (!["draft", "sent_back"].includes(week.status)) {
+    if (!["draft", "sent_back", "unpublished"].includes(week.status)) {
       return res.status(400).json({ error: `Cannot submit a week that is already ${week.status}.` });
     }
 
     const shiftCount = await DutySchedule.countDocuments({ weekId: week._id });
     if (shiftCount === 0) {
       return res.status(400).json({ error: "Generate or add at least one roster entry before submitting." });
+    }
+
+    // Spec §15 — a genuine RE-submission (after the OIC sent it back, or
+    // after the Duty Officer pulled a published week back) bumps the
+    // version; the very first submission from a fresh draft stays
+    // Version 1. Each version's own trail is preserved in `history`
+    // (see setWeekStatus), not overwritten.
+    if (["sent_back", "unpublished"].includes(week.status)) {
+      week.version = (week.version || 1) + 1;
+      await week.save();
     }
 
     return setWeekStatus(req, res, "submitted");
@@ -812,6 +955,7 @@ async function publishWeek(req, res) {
     week.status = "published";
     week.publishedBy = req.user.uid;
     week.publishedAt = new Date();
+    week.history.push({ status: "published", version: week.version, by: req.user.uid, at: new Date() });
     await week.save();
     logAuditForActor(req, {
       action: `Published Duty Roster for week of ${new Date(week.weekStarting).toISOString().slice(0, 10)}`,
@@ -842,22 +986,77 @@ async function publishWeek(req, res) {
   }
 }
 
-// DELETE /api/duty-schedule/weeks/:weekId — duty_officer. Only drafts
-// can be deleted outright (a submitted/approved/published week is a
-// real record, not scratch work) — clears its DutySchedule rows too.
+// PATCH /api/duty-schedule/weeks/:weekId/unpublish — duty_officer only.
+// Pulls a live PUBLISHED week back for revision (spec §17) — a
+// deliberate operational decision by the Duty Officer themselves, not a
+// review verdict (that's sendBackWeek/the OIC's job). Requires a reason
+// the same way sendBackWeek does; unlike sendBackWeek, this never
+// silently happens — the client always confirms first (see
+// DutyRoster.jsx's confirmation modal) since pulling something already
+// live is a bigger deal than rejecting a draft. The week re-enters the
+// same draft/sent_back/unpublished composition-editing pool everywhere
+// else in this file, and must go through submit → approve → publish
+// again before it's live once more — this never lets an already-live
+// roster be edited in place.
+async function unpublishWeek(req, res) {
+  const reason = (req.body.reason || "").trim();
+  if (!reason) {
+    return res.status(400).json({ error: "A reason is required to unpublish this roster" });
+  }
+
+  try {
+    const week = await DutyRosterWeek.findById(req.params.weekId);
+    if (!week) return res.status(404).json({ error: "Roster week not found" });
+    if (week.status !== "published") {
+      return res.status(400).json({ error: `Cannot unpublish a week that is ${week.status}, not published.` });
+    }
+
+    week.status = "unpublished";
+    week.unpublishedBy = req.user.uid;
+    week.unpublishedAt = new Date();
+    week.unpublishReason = reason;
+    week.history.push({ status: "unpublished", version: week.version, by: req.user.uid, at: new Date(), remarks: reason });
+    await week.save();
+
+    logAuditForActor(req, {
+      action: `Unpublished Duty Roster for week of ${new Date(week.weekStarting).toISOString().slice(0, 10)} (reason: ${reason})`,
+      module: "Duty Roster",
+    });
+
+    return res.json(week.toJSON());
+  } catch (err) {
+    console.error("unpublishWeek error:", err);
+    return res.status(500).json({ error: "Could not unpublish roster week" });
+  }
+}
+
+// DELETE /api/duty-schedule/weeks/:weekId — duty_officer. Drafts can be
+// deleted outright since they're scratch work; an unpublished week
+// (pulled back from live via unpublishWeek) can be too — once it's
+// been withdrawn there's no live record left depending on it, same as
+// a draft that was never published in the first place. A week the OIC
+// sent back is effectively handed back to the Duty Officer to fix or
+// scrap, same as a draft — so it's deletable too. A
+// submitted/approved/published week still can't be — those are real
+// records, not scratch work. Clears its DutySchedule rows either way.
 async function deleteWeek(req, res) {
   try {
     const week = await DutyRosterWeek.findById(req.params.weekId);
     if (!week) return res.status(404).json({ error: "Roster week not found" });
-    if (week.status !== "draft") {
-      return res.status(400).json({ error: `Cannot delete a week that is ${week.status}, only drafts.` });
+    if (!["draft", "unpublished", "sent_back"].includes(week.status)) {
+      return res.status(400).json({ error: `Cannot delete a week that is ${week.status}, only drafts, sent-back, or unpublished weeks.` });
     }
 
     await DutySchedule.deleteMany({ weekId: week._id });
+    // An unpublished week (unlike a draft) may have real daily-change
+    // history from while it was live — clear that too rather than
+    // leaving it pointing at a week/shifts that no longer exist.
+    await DailyDutyChange.deleteMany({ weekId: week._id });
     await DutyRosterWeek.deleteOne({ _id: week._id });
 
+    const STATUS_LABEL = { unpublished: "Unpublished", sent_back: "Sent-Back" };
     logAuditForActor(req, {
-      action: `Deleted Draft Duty Roster for week of ${new Date(week.weekStarting).toISOString().slice(0, 10)}`,
+      action: `Deleted ${STATUS_LABEL[week.status] || "Draft"} Duty Roster for week of ${new Date(week.weekStarting).toISOString().slice(0, 10)}`,
       module: "Duty Roster",
     });
 
@@ -881,6 +1080,7 @@ async function setWeekStatus(req, res, status, reason) {
     if (status === "sent_back") {
       week.sendBackReason = reason || "";
     }
+    week.history.push({ status, version: week.version, by: req.user.uid, at: new Date(), remarks: reason || "" });
     await week.save();
 
     const STATUS_LABEL = { submitted: "Submitted", approved: "Approved", sent_back: "Sent Back" };
@@ -914,6 +1114,7 @@ module.exports = {
   approveWeek,
   sendBackWeek,
   publishWeek,
+  unpublishWeek,
   deleteWeek,
   getTodaysDuty,
   getBriefing,

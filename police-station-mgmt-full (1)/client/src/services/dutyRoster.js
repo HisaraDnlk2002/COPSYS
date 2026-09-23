@@ -6,7 +6,7 @@ import {
   dummyRosterOfficers,
 } from "./dummyData";
 
-const DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const DAYS_OF_WEEK = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export async function getRosterWeeks() {
   if (USE_DUMMY_DATA) {
@@ -174,6 +174,20 @@ export async function publishRosterWeek(weekId) {
     return Promise.resolve(week);
   }
   return api.patch(`/duty-schedule/weeks/${weekId}/publish`);
+}
+
+// Pulls a live PUBLISHED week back for revision (spec §17) — requires a
+// reason; the client always confirms first (see DutyRoster.jsx).
+export async function unpublishRosterWeek(weekId, reason) {
+  if (USE_DUMMY_DATA) {
+    const week = dummyRosterWeeks.find((w) => w.id === weekId);
+    if (week) {
+      week.status = "unpublished";
+      week.unpublishReason = reason;
+    }
+    return Promise.resolve(week);
+  }
+  return api.patch(`/duty-schedule/weeks/${weekId}/unpublish`, { reason });
 }
 
 export async function listDailyChanges(date) {

@@ -4,6 +4,7 @@ import { useAuth } from "../../auth/useAuth";
 import { useLanguage } from "../../i18n/useLanguage";
 import { getSettings, updateSettings } from "../../services/settings";
 import { updateMyProfile, changeMyPassword } from "../../services/users";
+import { BranchShiftSettings } from "./BranchShiftSettings";
 import "./Settings.css";
 
 const ACCOUNT_FIELDS = ["phoneNumber", "email", "address", "emergencyContactName", "emergencyContactPhone"];
@@ -312,6 +313,8 @@ export function SettingsPage() {
 
       {canManageSystemSettings && settings && (
         <>
+          <BranchShiftSettings />
+
           <Card variant="panel" style={{ marginBottom: 24 }}>
             <div className="settings-section-title">{t("settings.communicationProtocols")}</div>
             <p style={{ fontSize: 13, color: "var(--color-text-muted)", marginBottom: 16 }}>

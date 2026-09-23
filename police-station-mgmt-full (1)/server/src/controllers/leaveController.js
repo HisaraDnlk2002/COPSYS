@@ -285,6 +285,10 @@ async function autoSubstituteForApprovedLeave(leaveRequest) {
 
     for (const shift of affectedShifts) {
       shift.status = "absent";
+      // Distinguishes this from a genuine unplanned no-show (spec §10) —
+      // see DutySchedule.js's absenceReason comment for why this lives
+      // as its own field rather than a new top-level status.
+      shift.absenceReason = "leave";
       await shift.save();
 
       let replacementOfficerId = null;
@@ -350,7 +354,6 @@ async function autoSubstituteForApprovedLeave(leaveRequest) {
 
       let replacementEntry = null;
       if (replacementOfficerId) {
-        const replacementOfficer = await User.findById(replacementOfficerId);
         replacementEntry = await DutySchedule.create({
           weekId: shift.weekId,
           officerId: replacementOfficerId,
@@ -359,7 +362,14 @@ async function autoSubstituteForApprovedLeave(leaveRequest) {
           shiftStart: shift.shiftStart,
           shiftEnd: shift.shiftEnd,
           department: shift.department,
-          assignmentType: replacementOfficer.department === shift.department ? "PERMANENT" : "GENERAL_POOL",
+          dutyType: shift.dutyType,
+          // SUBSTITUTE, not PERMANENT/GENERAL_POOL — this row exists
+          // specifically to cover leaveRequest.officerId, regardless of
+          // which branch the replacement's own home department is (spec
+          // §10/§23's substituteFor is what actually answers "who was
+          // originally assigned vs who covered it", not assignmentType).
+          assignmentType: "SUBSTITUTE",
+          substituteFor: shift.officerId,
           status: "pending",
           stationId: shift.stationId,
           createdBy: leaveRequest.reviewedBy,

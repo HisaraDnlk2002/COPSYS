@@ -30,6 +30,8 @@ const dashboardRoutes = require("./routes/dashboardRoutes");
 const passwordResetRequestRoutes = require("./routes/passwordResetRequestRoutes");
 const notificationStreamRoutes = require("./routes/notificationStreamRoutes");
 const searchRoutes = require("./routes/searchRoutes");
+const branchRoutes = require("./routes/branchRoutes");
+const shiftRoutes = require("./routes/shiftRoutes");
 
 const app = express();
 
@@ -69,6 +71,8 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/password-reset-requests", passwordResetRequestRoutes);
 app.use("/api/notifications", notificationStreamRoutes);
 app.use("/api/search", searchRoutes);
+app.use("/api/branches", branchRoutes);
+app.use("/api/shifts", shiftRoutes);
 
 app.use("/api", (req, res) => {
   res.status(404).json({ error: "Not found" });
@@ -76,7 +80,22 @@ app.use("/api", (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 
-connectDB().then(() => {
+connectDB().then(async () => {
+  // Spec §23 — Branch/Shift moved from hardcoded config to real,
+  // admin-editable collections. Seeding is idempotent (a no-op once
+  // anything exists — see seedDefaultBranches/seedDefaultShifts), and
+  // priming the in-memory cache here is what makes every existing
+  // isGeneralPoolBranch()/SHIFTS call site correct from the very first
+  // request rather than only after the first Branches/Shifts API call.
+  const { seedDefaultBranches } = require("./controllers/branchController");
+  const { seedDefaultShifts } = require("./controllers/shiftController");
+  const { refreshBranchCache } = require("./config/branches");
+  const { refreshShiftCache } = require("./config/shifts");
+  await seedDefaultBranches();
+  await seedDefaultShifts();
+  await refreshBranchCache();
+  await refreshShiftCache();
+
   app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });

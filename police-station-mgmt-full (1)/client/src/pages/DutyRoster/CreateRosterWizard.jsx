@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Button, InputField, Card, Badge, Loader } from "../../components";
 import {
   createRosterWeek,
@@ -31,6 +31,37 @@ function shortBranchLabel(value) {
   return value.split(" (")[0];
 }
 
+// Spec §7 — turns one candidateNotes entry (see dutyAllocationEngine.js's
+// summarizeReason) into a translated label. The server sends reasonCode
+// as the canonical value and an English reasonLabel as a fallback for
+// any code this client build doesn't recognize yet; the two dynamic
+// codes (partial-week ones) compose their day counts client-side rather
+// than needing string interpolation inside t() (this app's t() only
+// ever takes a plain path — see other "compose around t()" call sites
+// like Inventory.jsx's issue-record prefill caption).
+function translateReasonNote(t, note) {
+  switch (note.reasonCode) {
+    case "selected_full_week":
+      return t("dutyRoster.wizard.reasonSelectedFullWeek");
+    case "selected_partial_week":
+      return `${t("dutyRoster.wizard.reasonSelectedPartialWeekPrefix")} ${note.daysSelected}/7 ${t("dutyRoster.wizard.reasonDaysSuffix")}`;
+    case "on_leave":
+      return t("dutyRoster.wizard.reasonOnLeave");
+    case "on_leave_partial":
+      return `${t("dutyRoster.wizard.reasonOnLeavePartialPrefix")} ${note.daysExcludedLeave} ${t("dutyRoster.wizard.reasonOnLeavePartialSuffix")}`;
+    case "rest_limit":
+      return t("dutyRoster.wizard.reasonRestLimit");
+    case "already_committed":
+      return t("dutyRoster.wizard.reasonAlreadyCommitted");
+    case "rotation_deprioritized":
+      return t("dutyRoster.wizard.reasonRotationDeprioritized");
+    case "not_needed":
+      return t("dutyRoster.wizard.reasonNotNeeded");
+    default:
+      return note.reasonLabel;
+  }
+}
+
 // Earliest date "Select Week" will let the Duty Officer pick — the later
 // of today and the day right after the most recently created roster
 // week's own start. Stops the calendar from being clickable on a week
@@ -59,6 +90,32 @@ function computeMinWeekStarting(existingWeeks) {
   return min.toISOString().slice(0, 10);
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// The whole grid downstream (WeeklyGrid.jsx, RosterSummary.jsx) lays out
+// exactly Sun-Sat from weekStarting — picking any other day of week would
+// silently mislabel every day of the roster. Parsed as UTC (matching how
+// weekStarting itself is stored/compared) so this agrees with the
+// server's own check in dutyScheduleController.js's createWeek.
+function isSunday(dateStr) {
+  return new Date(dateStr).getUTCDay() === 0;
+}
+
+// computeMinWeekStarting above only blocks picking BEFORE the latest
+// existing week — it doesn't stop picking a date that lands inside an
+// earlier week's own 7-day span (e.g. after an older week was deleted
+// and a new, non-adjacent one created). This checks every existing
+// week's actual range, mirroring the server-side overlap check.
+function overlappingWeek(dateStr, existingWeeks) {
+  const start = new Date(dateStr);
+  const end = new Date(start.getTime() + 6 * DAY_MS);
+  return existingWeeks.find((w) => {
+    const existingStart = new Date(w.weekStarting);
+    const existingEnd = new Date(existingStart.getTime() + 6 * DAY_MS);
+    return start <= existingEnd && existingStart <= end;
+  });
+}
+
 const STEPS = [
   { n: 1, label: "Select Week" },
   { n: 2, label: "Branch Strength & Allocation" },
@@ -74,6 +131,20 @@ export function CreateRosterWizard({ onCancel, onComplete, existingWeek, existin
   const [creatingWeek, setCreatingWeek] = useState(false);
   const minWeekStarting = computeMinWeekStarting(existingWeeks);
 
+  // Derived, not stateful — recomputed from weekStarting/existingWeeks
+  // on every render, same as minWeekStarting above.
+  let weekStartValidationError = "";
+  if (weekStarting) {
+    if (!isSunday(weekStarting)) {
+      weekStartValidationError = t("dutyRoster.wizard.mustStartSunday");
+    } else {
+      const conflict = overlappingWeek(weekStarting, existingWeeks);
+      if (conflict) {
+        weekStartValidationError = t("dutyRoster.wizard.overlapsExistingWeek");
+      }
+    }
+  }
+
   const [requirements, setRequirements] = useState(() => buildRequirements(existingWeek));
   const [savingRequirements, setSavingRequirements] = useState(false);
   const [overview, setOverview] = useState(null);
@@ -81,8 +152,12 @@ export function CreateRosterWizard({ onCancel, onComplete, existingWeek, existin
 
   const [allocatingKey, setAllocatingKey] = useState(null); // "branch::shiftType" currently running
   const [allocatedKeys, setAllocatedKeys] = useState(new Set());
-  const [warnings, setWarnings] = useState([]); // unfilledDays across all runs this session
   const [error, setError] = useState("");
+  // Spec §7 — "why recommended/excluded", keyed the same way as
+  // allocatedKeys ("branch::shiftType"); populated once that row's own
+  // Smart Allocation (or Generate All) has actually run.
+  const [candidateNotesByTarget, setCandidateNotesByTarget] = useState({});
+  const [expandedNotesKey, setExpandedNotesKey] = useState(null);
 
   // Re-opening an existing draft: load what's already generated so the
   // staffing table and "Allocated" badges reflect reality immediately,
@@ -109,18 +184,33 @@ export function CreateRosterWizard({ onCancel, onComplete, existingWeek, existin
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [existingWeek?.id]);
 
+  // Clearing a number input to type a fresh value fires onChange with
+  // "" first — Number("") is 0 (a real JS quirk, not NaN), so the old
+  // `Math.max(0, Number(value) || 0)` immediately forced the field back
+  // to a displayed "0" the instant it went empty, before the next digit
+  // even landed. The field could never actually go empty, so typing
+  // over the existing value looked like it was permanently stuck at 0.
+  // Letting "" pass through as its own state (not coerced to 0) keeps
+  // the field genuinely empty while typing; the server already
+  // defaults a blank/non-numeric value to 0 on save either way (see
+  // updateRequirements in dutyScheduleController.js), so nothing downstream needs to change.
   function updateRequirement(branch, field, value) {
     setRequirements((prev) =>
-      prev.map((r) => (r.branch === branch ? { ...r, [field]: Math.max(0, Number(value) || 0) } : r))
+      prev.map((r) => {
+        if (r.branch !== branch) return r;
+        if (value === "") return { ...r, [field]: "" };
+        return { ...r, [field]: Math.max(0, Number(value) || 0) };
+      })
     );
   }
 
   async function handleStep1Next() {
-    // Belt-and-suspenders alongside the date input's own `min` — that
-    // only grays out the calendar widget's cells, it doesn't stop a
-    // date typed directly into the field's segments (bypassing the
-    // popup entirely) from reaching here.
-    if (!weekStarting || weekStarting < minWeekStarting) return;
+    // Belt-and-suspenders alongside the date input's own `min` and the
+    // Sunday/overlap checks below — those only gray out the calendar
+    // widget or disable the button, they don't stop a date typed
+    // directly into the field's segments (bypassing the popup entirely)
+    // from reaching here.
+    if (!weekStarting || weekStarting < minWeekStarting || weekStartValidationError) return;
     setCreatingWeek(true);
     setError("");
     try {
@@ -129,7 +219,7 @@ export function CreateRosterWizard({ onCancel, onComplete, existingWeek, existin
       setStep(2);
     } catch (err) {
       console.error("Could not create roster week:", err);
-      setError(t("dutyRoster.wizard.createWeekFailed"));
+      setError(err.message || t("dutyRoster.wizard.createWeekFailed"));
     } finally {
       setCreatingWeek(false);
     }
@@ -160,11 +250,8 @@ export function CreateRosterWizard({ onCancel, onComplete, existingWeek, existin
     try {
       const result = await generateRoster(weekId, { branch, shiftType });
       setAllocatedKeys((prev) => new Set(prev).add(key));
-      if (result.unfilledDays?.length) {
-        setWarnings((prev) => [
-          ...prev,
-          ...result.unfilledDays.map((d) => ({ branch, shiftType, ...d })),
-        ]);
+      if (result.candidateNotesByTarget) {
+        setCandidateNotesByTarget((prev) => ({ ...prev, ...result.candidateNotesByTarget }));
       }
     } catch (err) {
       console.error("Smart Allocation failed:", err);
@@ -185,8 +272,8 @@ export function CreateRosterWizard({ onCancel, onComplete, existingWeek, existin
         if (r.nightRequired > 0) allKeys.add(`${r.branch}::night`);
       });
       setAllocatedKeys(allKeys);
-      if (result.unfilledDays?.length) {
-        setWarnings((prev) => [...prev, ...result.unfilledDays.map((d) => ({ ...d }))]);
+      if (result.candidateNotesByTarget) {
+        setCandidateNotesByTarget((prev) => ({ ...prev, ...result.candidateNotesByTarget }));
       }
       setStep(3);
     } catch (err) {
@@ -240,11 +327,16 @@ export function CreateRosterWizard({ onCancel, onComplete, existingWeek, existin
             onChange={(e) => setWeekStarting(e.target.value)}
             helperText={t("dutyRoster.wizard.weekStartingHelper")}
           />
+          {weekStartValidationError && (
+            <p style={{ color: "var(--color-danger, #dc2626)", fontSize: 13, marginTop: 4 }}>
+              {weekStartValidationError}
+            </p>
+          )}
           <div className="roster-actions-row" style={{ marginTop: 16 }}>
             <Button
               variant="primary"
               onClick={handleStep1Next}
-              disabled={!weekStarting || weekStarting < minWeekStarting || creatingWeek}
+              disabled={!weekStarting || weekStarting < minWeekStarting || Boolean(weekStartValidationError) || creatingWeek}
             >
               {creatingWeek ? t("dutyRoster.wizard.creating") : t("dutyRoster.wizard.nextStep")}
             </Button>
@@ -330,31 +422,62 @@ export function CreateRosterWizard({ onCancel, onComplete, existingWeek, existin
                         const key = `${row.branch}::${shiftType}`;
                         const isAllocating = allocatingKey === key;
                         const isDone = allocatedKeys.has(key);
+                        const notes = candidateNotesByTarget[key];
+                        const isExpanded = expandedNotesKey === key;
                         return (
-                          <tr key={shiftType}>
-                            <td>{shiftType === "day" ? t("dutyRoster.wizard.dayShift") : t("dutyRoster.wizard.nightShift")}</td>
-                            <td>{shiftRow.required}</td>
-                            <td>{shiftRow.permAvailable}</td>
-                            <td style={{ color: shiftRow.shortage > 0 ? "var(--color-danger, #dc2626)" : "inherit" }}>
-                              {shiftRow.shortage}
-                            </td>
-                                                      <td>
-                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                {isDone && <Badge status="approved" label={t("dutyRoster.wizard.allocated")} />}
-                                <Button
-                                  variant="outline"
-                                  onClick={() => runSmartAllocation(row.branch, shiftType)}
-                                  disabled={isAllocating}
-                                >
-                                  {isAllocating
-                                    ? t("dutyRoster.wizard.allocating")
-                                    : isDone
-                                    ? t("dutyRoster.wizard.reallocate")
-                                    : t("dutyRoster.wizard.smartAllocation")}
-                                </Button>
-                              </div>
-                            </td>
-                          </tr>
+                          <Fragment key={shiftType}>
+                            <tr>
+                              <td>{shiftType === "day" ? t("dutyRoster.wizard.dayShift") : t("dutyRoster.wizard.nightShift")}</td>
+                              <td>{shiftRow.required}</td>
+                              <td>{shiftRow.permAvailable}</td>
+                              <td style={{ color: shiftRow.shortage > 0 ? "var(--color-danger, #dc2626)" : "inherit" }}>
+                                {shiftRow.shortage}
+                              </td>
+                                                        <td>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                  {isDone && <Badge status="approved" label={t("dutyRoster.wizard.allocated")} />}
+                                  <Button
+                                    variant="outline"
+                                    onClick={() => runSmartAllocation(row.branch, shiftType)}
+                                    disabled={isAllocating}
+                                  >
+                                    {isAllocating
+                                      ? t("dutyRoster.wizard.allocating")
+                                      : isDone
+                                      ? t("dutyRoster.wizard.reallocate")
+                                      : t("dutyRoster.wizard.smartAllocation")}
+                                  </Button>
+                                  {notes?.length > 0 && (
+                                    <Button variant="ghost" onClick={() => setExpandedNotesKey(isExpanded ? null : key)}>
+                                      {isExpanded ? t("dutyRoster.wizard.hideWhy") : t("dutyRoster.wizard.showWhy")}
+                                    </Button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                            {isExpanded && notes?.length > 0 && (
+                              <tr>
+                                <td colSpan={5} style={{ background: "var(--color-bg-subtle, #f9fafb)" }}>
+                                  <ul style={{ listStyle: "none", margin: 0, padding: "8px 4px", display: "grid", gap: 4 }}>
+                                    {notes.map((note) => (
+                                      <li key={note.officerId} style={{ fontSize: 12, display: "flex", gap: 8 }}>
+                                        <span style={{ fontWeight: 600, minWidth: 140 }}>
+                                          {note.fullName} <span style={{ fontWeight: 400, color: "var(--color-text-muted)" }}>{note.rankAndNumber}</span>
+                                        </span>
+                                        <span
+                                          style={{
+                                            color: note.daysSelected > 0 ? "var(--color-success, #16a34a)" : "var(--color-text-muted)",
+                                          }}
+                                        >
+                                          {translateReasonNote(t, note)}
+                                        </span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
                         );
                       })}
                     </tbody>
@@ -385,16 +508,6 @@ export function CreateRosterWizard({ onCancel, onComplete, existingWeek, existin
       {step === 3 && (
         <div>
           <h3 style={{ marginTop: 0 }}>{t("dutyRoster.wizard.reviewTitle")}</h3>
-
-          {warnings.length > 0 && (
-            <div className="unfilled-warning" style={{ marginBottom: 16 }}>
-              {t("dutyRoster.couldNotFullyStaff")}{" "}
-              {warnings
-                .map((w) => `${shortBranchLabel(w.branch || "")} ${w.shiftType || ""} ${w.day} (${t("dutyRoster.short")} ${w.shortfall})`)
-                .join(", ")}
-              . {t("dutyRoster.reviewAdjust")}
-            </div>
-          )}
 
           <ul style={{ listStyle: "none", padding: 0 }}>
             {activeRequirements.map((r) => (

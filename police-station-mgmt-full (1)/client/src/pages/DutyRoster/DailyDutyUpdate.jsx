@@ -16,10 +16,18 @@ function branchLabel(value) {
   return value ? value.split(" (")[0] : "";
 }
 
-function statusBadge(status) {
-  if (status === "present") return "approved";
-  if (status === "absent") return "rejected";
+function statusBadge(shift) {
+  if (shift.status === "present") return "approved";
+  // Spec §10 — an approved-leave absence reads as "On Leave", distinct
+  // from a genuine unplanned no-show ("Absent"), same status value
+  // underneath (see WeeklyGrid.jsx's ShiftChip for the same split).
+  if (shift.status === "absent") return shift.absenceReason === "leave" ? "on_leave" : "rejected";
   return "pending";
+}
+
+function statusLabelKey(shift) {
+  if (shift.status === "absent" && shift.absenceReason === "leave") return "status.on_leave";
+  return `dutyRoster.daily.status.${shift.status}`;
 }
 
 export function DailyDutyUpdate() {
@@ -105,6 +113,8 @@ export function DailyDutyUpdate() {
 
   if (loading && shifts.length === 0) return <Loader label={t("dutyRoster.daily.loading")} />;
 
+  const isFutureDate = date > todayIso();
+
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
@@ -113,6 +123,7 @@ export function DailyDutyUpdate() {
           type="date"
           className="field-control"
           value={date}
+          max={todayIso()}
           onChange={(e) => setDate(e.target.value)}
         />
       </div>
@@ -152,12 +163,20 @@ export function DailyDutyUpdate() {
                         {shift.shiftType === "night" ? t("dutyRoster.wizard.nightShift") : t("dutyRoster.wizard.dayShift")}
                       </td>
                       <td>
-                        <Badge status={statusBadge(shift.status)} label={t(`dutyRoster.daily.status.${shift.status}`)} />
+                        <Badge status={statusBadge(shift)} label={t(statusLabelKey(shift))} />
                       </td>
                       <td>
-                        {shift.status === "absent" ? (
+                        {shift.status === "present" ? (
+                          <span style={{ color: "var(--color-success, #16a34a)", fontSize: 13 }}>
+                            {t("dutyRoster.daily.alreadyMarkedPresent")}
+                          </span>
+                        ) : shift.status === "absent" ? (
                           <span style={{ color: "var(--color-text-muted)", fontSize: 13 }}>
                             {t("dutyRoster.daily.alreadyMarkedAbsent")}
+                          </span>
+                        ) : isFutureDate ? (
+                          <span style={{ color: "var(--color-text-muted)", fontSize: 13 }}>
+                            {t("dutyRoster.daily.futureDateNotice")}
                           </span>
                         ) : (
                           <div style={{ display: "flex", gap: 8 }}>

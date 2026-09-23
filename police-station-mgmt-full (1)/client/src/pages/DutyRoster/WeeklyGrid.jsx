@@ -1,10 +1,26 @@
 import { useState } from "react";
-import { Button, Modal, Loader } from "../../components";
+import { Button, Modal, Loader, InputField } from "../../components";
 import { isGeneralPoolBranch } from "../../config/branches";
 import { createDutyShift, updateDutyShift } from "../../services/dutyRoster";
 import { useLanguage } from "../../i18n/useLanguage";
 
-const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+// Spec §8 — what the shift's actual task is, distinct from which branch
+// it's under. Free text on the model, but offered as a short pick-list
+// here so it stays consistent rather than every Duty Officer typing
+// their own phrasing; "Other" (left as a blank custom entry) covers
+// anything not on the list.
+const DUTY_TYPES = [
+  "Traffic Control",
+  "Traffic Patrol",
+  "Station Duty",
+  "Front Desk",
+  "Investigation",
+  "Patrol",
+  "Night Watch",
+  "Escort",
+];
+
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 function branchLabel(value) {
   return value ? value.split(" (")[0] : "";
@@ -39,19 +55,30 @@ function officerOnLeave(officerId, date, leaveRequests) {
 
 function ShiftChip({ shift, hasDoubleShift, onLeave, editable, onRemove, t }) {
   const isPool = shift.assignmentType === "GENERAL_POOL";
+  const isSubstitute = shift.assignmentType === "SUBSTITUTE";
   const isAbsent = shift.status === "absent";
+  // Spec §10 — an absence caused by approved leave reads as "On Leave",
+  // distinct from a genuine unplanned no-show ("Absent"), even though
+  // both share the same underlying status — see DutySchedule.js's
+  // absenceReason comment for why they're still one status value.
+  const isOnLeaveAbsence = isAbsent && shift.absenceReason === "leave";
   const officer = typeof shift.officerId === "object" ? shift.officerId : null;
+  const substituteForOfficer = typeof shift.substituteFor === "object" ? shift.substituteFor : null;
 
   return (
     <div
       title={
-        isAbsent
+        isOnLeaveAbsence
+          ? t("dutyRoster.grid.onLeaveTooltip")
+          : isAbsent
           ? t("dutyRoster.grid.absentTooltip")
           : onLeave
           ? t("dutyRoster.grid.leaveConflictTooltip")
           : hasDoubleShift
           ? t("dutyRoster.grid.doubleShiftTooltip")
-          : `${officer?.fullName || ""} · ${shift.shiftStart}-${shift.shiftEnd}`
+          : isSubstitute && substituteForOfficer
+          ? `${officer?.fullName || ""} ${t("dutyRoster.grid.substituteForPrefix")} ${substituteForOfficer.fullName}`
+          : `${officer?.fullName || ""} · ${shift.shiftStart}-${shift.shiftEnd}${shift.dutyType ? ` · ${shift.dutyType}` : ""}`
       }
       style={{
         display: "flex",
@@ -61,18 +88,22 @@ function ShiftChip({ shift, hasDoubleShift, onLeave, editable, onRemove, t }) {
         padding: "2px 6px",
         borderRadius: 4,
         marginBottom: 3,
-        background: isAbsent
+        background: isOnLeaveAbsence
+          ? "var(--color-warning-bg, #fef3c7)"
+          : isAbsent
           ? "var(--color-danger-bg, #fee2e2)"
           : onLeave || hasDoubleShift
           ? "var(--color-warning-bg, #fef3c7)"
-          : isPool
+          : isPool || isSubstitute
           ? "var(--color-info-bg, #dbeafe)"
           : "var(--color-success-bg, #dcfce7)",
-        color: isAbsent
+        color: isOnLeaveAbsence
+          ? "var(--color-warning, #d97706)"
+          : isAbsent
           ? "var(--color-danger, #dc2626)"
           : onLeave || hasDoubleShift
           ? "var(--color-warning, #d97706)"
-          : isPool
+          : isPool || isSubstitute
           ? "var(--color-info, #2563eb)"
           : "var(--color-success, #16a34a)",
         cursor: editable && !isAbsent ? "pointer" : "default",
@@ -84,7 +115,15 @@ function ShiftChip({ shift, hasDoubleShift, onLeave, editable, onRemove, t }) {
         {shortOfficerName(officer?.fullName)}
       </span>
       <span style={{ opacity: 0.75, textTransform: "uppercase", fontSize: 9 }}>
-        {isAbsent ? t("dutyRoster.grid.absentTag") : isPool ? t("dutyRoster.grid.poolTag") : t("dutyRoster.grid.permTag")}
+        {isOnLeaveAbsence
+          ? t("status.on_leave")
+          : isAbsent
+          ? t("dutyRoster.grid.absentTag")
+          : isSubstitute
+          ? t("dutyRoster.grid.substituteTag")
+          : isPool
+          ? t("dutyRoster.grid.poolTag")
+          : t("dutyRoster.grid.permTag")}
       </span>
     </div>
   );
@@ -163,7 +202,11 @@ function ShiftBlock({
 export function WeeklyGrid({ week, shifts, officers, leaveRequests, editable, onChanged }) {
   const { t } = useLanguage();
   const [assignTarget, setAssignTarget] = useState(null); // { branch, shiftType, date }
+  const [assignDutyType, setAssignDutyType] = useState("");
   const [assigning, setAssigning] = useState(false);
+  const [removeTarget, setRemoveTarget] = useState(null); // the shift pending removal (spec §13 — reason required)
+  const [removeReason, setRemoveReason] = useState("");
+  const [removing, setRemoving] = useState(false);
 
   const requirements = week.requirements || [];
 
@@ -190,12 +233,26 @@ export function WeeklyGrid({ week, shifts, officers, leaveRequests, editable, on
     return result;
   }
 
-  async function handleRemove(shift) {
+  // Spec §13 — opens the confirm-with-reason modal rather than removing
+  // immediately; handleConfirmRemove below is what actually calls the
+  // API once a reason's been given.
+  function handleRemove(shift) {
+    setRemoveTarget(shift);
+    setRemoveReason("");
+  }
+
+  async function handleConfirmRemove() {
+    if (!removeTarget || !removeReason.trim()) return;
+    setRemoving(true);
     try {
-      await updateDutyShift(shift.id, { status: "removed" });
+      await updateDutyShift(removeTarget.id, { status: "removed", removalReason: removeReason.trim() });
+      setRemoveTarget(null);
+      setRemoveReason("");
       onChanged();
     } catch (err) {
       console.error("Could not remove assignment:", err);
+    } finally {
+      setRemoving(false);
     }
   }
 
@@ -214,8 +271,10 @@ export function WeeklyGrid({ week, shifts, officers, leaveRequests, editable, on
         shiftEnd,
         shiftType: assignTarget.shiftType,
         department: assignTarget.branch,
+        dutyType: assignDutyType,
       });
       setAssignTarget(null);
+      setAssignDutyType("");
       onChanged();
     } catch (err) {
       console.error("Could not assign officer:", err);
@@ -332,6 +391,15 @@ export function WeeklyGrid({ week, shifts, officers, leaveRequests, editable, on
               {assignTarget.shiftType === "night" ? t("dutyRoster.wizard.nightShift") : t("dutyRoster.wizard.dayShift")} ·{" "}
               {new Date(assignTarget.date).toLocaleDateString()}
             </p>
+            <InputField
+              label={t("dutyRoster.grid.dutyType")}
+              type="select"
+              value={assignDutyType}
+              onChange={(e) => setAssignDutyType(e.target.value)}
+              placeholder={t("dutyRoster.grid.dutyTypeUnspecified")}
+              options={DUTY_TYPES.map((v) => ({ value: v, label: v }))}
+              helperText={t("dutyRoster.grid.dutyTypeHelper")}
+            />
             {assigning ? (
               <Loader label={t("dutyRoster.grid.assigning")} />
             ) : (
@@ -368,6 +436,44 @@ export function WeeklyGrid({ week, shifts, officers, leaveRequests, editable, on
                 );
               })()
             )}
+          </>
+        )}
+      </Modal>
+
+      <Modal
+        open={Boolean(removeTarget)}
+        onClose={() => setRemoveTarget(null)}
+        title={t("dutyRoster.grid.removeModalTitle")}
+        footer={
+          <Button variant="primary" onClick={handleConfirmRemove} disabled={!removeReason.trim() || removing}>
+            {removing ? t("dutyRoster.grid.removing") : t("dutyRoster.grid.removeConfirm")}
+          </Button>
+        }
+      >
+        {removeTarget && (
+          <>
+            <p style={{ fontSize: 13, color: "var(--color-text-muted)", marginTop: 0 }}>
+              {shortOfficerName(
+                typeof removeTarget.officerId === "object" ? removeTarget.officerId.fullName : ""
+              )}{" "}
+              · {branchLabel(removeTarget.department)} · {new Date(removeTarget.date).toLocaleDateString()}
+            </p>
+            <InputField
+              label={t("dutyRoster.grid.removalReasonLabel")}
+              required
+              type="select"
+              value={removeReason}
+              onChange={(e) => setRemoveReason(e.target.value)}
+              placeholder={t("dutyRoster.grid.selectReason")}
+              options={[
+                "Leave",
+                "Replacement",
+                "Operational Change",
+                "Shift Change",
+                "OIC Instruction",
+                "Other",
+              ].map((v) => ({ value: v, label: t(`dutyRoster.grid.removalReasonOptions.${v.replace(/\s+/g, "")}`) }))}
+            />
           </>
         )}
       </Modal>
