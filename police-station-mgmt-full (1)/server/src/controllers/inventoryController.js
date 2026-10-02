@@ -52,12 +52,38 @@ async function list(req, res) {
 }
 
 // POST /api/inventory — inventory_officer
-// Weapon registration (workflow step 1): Weapon ID (-> itemId), serial
-// number, category + type (-> itemName), caliber, storage location,
-// condition, optional last inspection date. For ammunition the itemId is
-// the batch/lot ID, quantity is rounds, and lowStockThreshold drives the
-// "Low Ammunition Stock" alert.
+// Weapon registration (workflow step 1): category + type (-> itemName),
+// caliber, storage location, condition, optional last inspection date.
+// A weapon's Item ID is assigned automatically (see
+// generateNextWeaponItemId) — the officer never types one, so it can't
+// collide or drift from the 5-digit format by hand. Ammunition is the
+// one exception: its itemId IS a free-format batch/lot ID, still typed
+// in by the inventory officer, since that's how the physical batch is
+// actually labeled when it arrives.
 const WEAPON_ID_PATTERN = /^\d{5}$/;
+
+// Next 5-digit Item ID after whatever's already in use, scanning only
+// well-formed 5-digit weapon IDs so old/irregular legacy data (a stray
+// 4- or 6-digit itemId from before this was auto-generated) can't skew
+// the sequence. Starts at 10001 if nothing matches. Re-checked for
+// uniqueness in a loop (not just trusted) in case a legacy ID happens to
+// already occupy the next slot.
+async function generateNextWeaponItemId() {
+  const weaponItems = await Inventory.find({
+    category: { $in: WEAPON_CATEGORIES },
+    itemId: { $regex: WEAPON_ID_PATTERN },
+  }).select("itemId");
+  let max = 10000;
+  for (const item of weaponItems) {
+    const n = Number(item.itemId);
+    if (n > max) max = n;
+  }
+  let next = max + 1;
+  while (await Inventory.exists({ itemId: String(next).padStart(5, "0") })) {
+    next += 1;
+  }
+  return String(next).padStart(5, "0");
+}
 
 async function create(req, res) {
   const {
@@ -66,22 +92,18 @@ async function create(req, res) {
     category,
     quantity,
     condition,
-    serialNumber,
     caliber,
     storageLocation,
     lastInspectionDate,
     lowStockThreshold,
   } = req.body;
 
-  if (!itemId || !itemName || !category || quantity === undefined) {
+  const isAmmunition = category === AMMUNITION_CATEGORY;
+  if (!itemName || !category || quantity === undefined || (isAmmunition && !itemId)) {
     return res.status(400).json({ error: "Item ID, name, category and quantity are required" });
   }
   if (!isValidCatalogEntry(category, itemName)) {
     return res.status(400).json({ error: "Unknown weapon category or type" });
-  }
-  const isAmmunition = category === AMMUNITION_CATEGORY;
-  if (!isAmmunition && !serialNumber?.trim()) {
-    return res.status(400).json({ error: "Item ID is required for a weapon" });
   }
   // Firearms only. One possible caliber for the type -> set it here; more
   // than one -> the form must say which this particular weapon takes.
@@ -98,25 +120,14 @@ async function create(req, res) {
   if (storageLocation && !STORAGE_LOCATIONS.includes(storageLocation)) {
     return res.status(400).json({ error: "Unknown storage location" });
   }
-  // Weapons use fixed-format IDs: Weapon ID and Item ID are exactly 5
-  // digits each. (Ammunition batch IDs keep their free format.)
-  if (!isAmmunition) {
-    if (!WEAPON_ID_PATTERN.test(String(itemId))) {
-      return res.status(400).json({ error: "Weapon ID must be exactly 5 digits" });
-    }
-    if (!WEAPON_ID_PATTERN.test(String(serialNumber).trim())) {
-      return res.status(400).json({ error: "Item ID must be exactly 5 digits" });
-    }
-  }
 
   try {
-    const existing = await Inventory.findOne({ itemId });
-    if (existing) {
-      return res.status(409).json({ error: "An item with that ID already exists" });
-    }
-    if (serialNumber?.trim()) {
-      const serialTaken = await Inventory.exists({ serialNumber: serialNumber.trim() });
-      if (serialTaken) return res.status(409).json({ error: "A weapon with that Item ID is already registered" });
+    const resolvedItemId = isAmmunition ? itemId : await generateNextWeaponItemId();
+    if (isAmmunition) {
+      const existing = await Inventory.findOne({ itemId: resolvedItemId });
+      if (existing) {
+        return res.status(409).json({ error: "An item with that ID already exists" });
+      }
     }
 
     // A brand-new weapon goes on the periodic inspection schedule
@@ -125,12 +136,11 @@ async function create(req, res) {
     const lastInspected = lastInspectionDate ? new Date(lastInspectionDate) : null;
     const scheduleFrom = lastInspected || new Date();
     const item = await Inventory.create({
-      itemId,
+      itemId: resolvedItemId,
       itemName,
       category,
       quantity,
       condition: condition || "good",
-      serialNumber: serialNumber?.trim() || "",
       caliber: resolvedCaliber,
       storageLocation: storageLocation?.trim() || "",
       status: "available",

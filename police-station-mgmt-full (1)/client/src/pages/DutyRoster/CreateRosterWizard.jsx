@@ -7,7 +7,8 @@ import {
   getRosterWeek,
   generateRoster,
 } from "../../services/dutyRoster";
-import { BRANCHES } from "../../config/branches";
+import { listUsers } from "../../services/users";
+import { BRANCHES, isGeneralPoolBranch } from "../../config/branches";
 import { useLanguage } from "../../i18n/useLanguage";
 
 const PLANNABLE_BRANCHES = BRANCHES.filter((b) => !b.isGeneralPool);
@@ -149,6 +150,37 @@ export function CreateRosterWizard({ onCancel, onComplete, existingWeek, existin
   const [savingRequirements, setSavingRequirements] = useState(false);
   const [overview, setOverview] = useState(null);
   const [loadingOverview, setLoadingOverview] = useState(false);
+  const [officers, setOfficers] = useState([]);
+  const [officersLoaded, setOfficersLoaded] = useState(false);
+
+  // Fetched once up front (not only after "Save & Preview Staffing",
+  // which already shows this same math server-side via
+  // getStaffingOverview) so the Day/Night inputs can be capped live
+  // while typing — entering a headcount no station-wide combination of
+  // active officers could ever fill was previously accepted silently.
+  useEffect(() => {
+    listUsers()
+      .then((res) => setOfficers(res.filter((o) => o.status === "active")))
+      .catch((err) => console.error("Could not load officers for staffing caps:", err))
+      .finally(() => setOfficersLoaded(true));
+  }, []);
+
+  // A branch's realistic ceiling for one shift: its own permanent
+  // officers plus every active General Pool officer — the same
+  // eligible-pool definition dutyAllocationEngine.js and
+  // WeeklyGrid.jsx's eligibleOfficersFor use elsewhere. Not a per-day
+  // figure (requirements are one flat number for the whole week) and
+  // not a true multi-branch guarantee (the General Pool is shared
+  // across every branch's requirement, not reserved per branch) — just
+  // a sanity ceiling against requiring more people for a single shift
+  // than could ever physically fill it. Returns Infinity until the
+  // officer list has actually loaded, so a value typed in that brief
+  // window isn't clamped down to 0 before there's real data to clamp
+  // against.
+  function maxForBranch(branch) {
+    if (!officersLoaded) return Infinity;
+    return officers.filter((o) => o.department === branch || isGeneralPoolBranch(o.department)).length;
+  }
 
   const [allocatingKey, setAllocatingKey] = useState(null); // "branch::shiftType" currently running
   const [allocatedKeys, setAllocatedKeys] = useState(new Set());
@@ -199,7 +231,8 @@ export function CreateRosterWizard({ onCancel, onComplete, existingWeek, existin
       prev.map((r) => {
         if (r.branch !== branch) return r;
         if (value === "") return { ...r, [field]: "" };
-        return { ...r, [field]: Math.max(0, Number(value) || 0) };
+        const clamped = Math.min(maxForBranch(branch), Math.max(0, Number(value) || 0));
+        return { ...r, [field]: clamped };
       })
     );
   }
@@ -357,31 +390,46 @@ export function CreateRosterWizard({ onCancel, onComplete, existingWeek, existin
                 </tr>
               </thead>
               <tbody>
-                {requirements.map((r) => (
-                  <tr key={r.branch}>
-                    <td>{shortBranchLabel(r.branch)}</td>
-                    <td>
-                      <input
-                        type="number"
-                        min={0}
-                        className="field-control"
-                        style={{ width: 80 }}
-                        value={r.dayRequired}
-                        onChange={(e) => updateRequirement(r.branch, "dayRequired", e.target.value)}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="number"
-                        min={0}
-                        className="field-control"
-                        style={{ width: 80 }}
-                        value={r.nightRequired}
-                        onChange={(e) => updateRequirement(r.branch, "nightRequired", e.target.value)}
-                      />
-                    </td>
-                  </tr>
-                ))}
+                {requirements.map((r) => {
+                  const branchMax = maxForBranch(r.branch);
+                  return (
+                    <tr key={r.branch}>
+                      <td>{shortBranchLabel(r.branch)}</td>
+                      <td>
+                        <input
+                          type="number"
+                          min={0}
+                          max={Number.isFinite(branchMax) ? branchMax : undefined}
+                          className="field-control"
+                          style={{ width: 80 }}
+                          value={r.dayRequired}
+                          onChange={(e) => updateRequirement(r.branch, "dayRequired", e.target.value)}
+                        />
+                        {Number.isFinite(branchMax) && (
+                          <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
+                            {t("dutyRoster.wizard.maxActiveOfficers")} {branchMax}
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        <input
+                          type="number"
+                          min={0}
+                          max={Number.isFinite(branchMax) ? branchMax : undefined}
+                          className="field-control"
+                          style={{ width: 80 }}
+                          value={r.nightRequired}
+                          onChange={(e) => updateRequirement(r.branch, "nightRequired", e.target.value)}
+                        />
+                        {Number.isFinite(branchMax) && (
+                          <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
+                            {t("dutyRoster.wizard.maxActiveOfficers")} {branchMax}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

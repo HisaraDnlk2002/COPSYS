@@ -225,11 +225,28 @@ async function updateRequirements(req, res) {
       return res.status(403).json({ error: `This week is ${week.status} and locked for editing.` });
     }
 
-    week.requirements = requirements.map((r) => ({
-      branch: r.branch,
-      dayRequired: Number(r.dayRequired) || 0,
-      nightRequired: Number(r.nightRequired) || 0,
-    }));
+    // Belt-and-suspenders alongside the client's own cap
+    // (CreateRosterWizard.jsx's maxForBranch) — a direct API call could
+    // otherwise still save a headcount no station-wide combination of
+    // active officers could ever fill for a single shift. Same eligible
+    // pool definition as dutyAllocationEngine.js: a branch's own
+    // permanent officers plus every active General Pool officer.
+    const activeOfficers = await User.find({ stationId: req.user.stationId, status: "active" }).select("department");
+    const generalPoolCount = activeOfficers.filter((o) => isGeneralPoolBranch(o.department)).length;
+    const permanentCountByBranch = new Map();
+    for (const o of activeOfficers) {
+      permanentCountByBranch.set(o.department, (permanentCountByBranch.get(o.department) || 0) + 1);
+    }
+    const maxForBranch = (branch) => (permanentCountByBranch.get(branch) || 0) + generalPoolCount;
+
+    week.requirements = requirements.map((r) => {
+      const max = maxForBranch(r.branch);
+      return {
+        branch: r.branch,
+        dayRequired: Math.min(max, Number(r.dayRequired) || 0),
+        nightRequired: Math.min(max, Number(r.nightRequired) || 0),
+      };
+    });
     await week.save();
     return res.json(week.toJSON());
   } catch (err) {

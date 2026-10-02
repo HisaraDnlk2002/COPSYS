@@ -10,6 +10,7 @@ import {
   getReturnTransactions,
   getDamagedRecords,
   addInventoryItem,
+  updateInventoryItem,
   issueItem,
   returnItem as returnItemRequest,
   reportMissing,
@@ -95,13 +96,6 @@ function paginate(list, pageNum) {
   return { items: list.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE), totalPages, safePage };
 }
 
-// Weapon ID and Item ID are exactly 5 digits. toFiveDigits drops
-// anything that isn't a digit and stops at 5 as you type.
-const FIVE_DIGITS = /^\d{5}$/;
-function toFiveDigits(value) {
-  return value.replace(/\D/g, "").slice(0, 5);
-}
-
 // Keeps a typed round count within 0..max (whole numbers only), so the
 // form can't hold more rounds than were issued / are in stock. Empty
 // stays empty so the field can be cleared while typing.
@@ -148,7 +142,6 @@ const EMPTY_RETURN_FORM = {
 };
 const EMPTY_ADD_FORM = {
   weaponSerialId: "",
-  serialNumber: "",
   quantity: "",
   weaponType: "",
   category: "",
@@ -247,6 +240,16 @@ export function InventoryPage() {
   const [missingRemarks, setMissingRemarks] = useState("");
   const [missingSubmitting, setMissingSubmitting] = useState(false);
   const [missingError, setMissingError] = useState("");
+
+  // The Inventory item currently open in the Edit modal, or null. Only
+  // covers an item's own descriptive details (storage location,
+  // condition, quantity) — who holds it / its availability still only
+  // ever change through issue, return, report-missing, and restock,
+  // each with their own audit trail; this isn't a back door around that.
+  const [editingItem, setEditingItem] = useState(null);
+  const [editForm, setEditForm] = useState({ storageLocation: "", condition: "", quantity: "", lowStockThreshold: "" });
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [editError, setEditError] = useState("");
 
   function loadAll() {
     return Promise.all([
@@ -400,12 +403,28 @@ export function InventoryPage() {
     );
   }
 
+  // Reused from the Return form's own officer-scoping (searchOfficerIssuedItems
+  // above) so the Issue form can warn before submit instead of only after
+  // the server's own checkIssueEligibility rejects it — same rule
+  // (inventoryController.js: one weapon per officer at a time), surfaced
+  // earlier.
+  function issueOfficerAlreadyHolding(officerValue) {
+    if (!officerValue) return null;
+    const outstandingIds = getOutstandingItemIds(officerValue);
+    if (outstandingIds.size === 0) return null;
+    return items.find((i) => outstandingIds.has(i.id)) || null;
+  }
+
   async function handleIssueSubmit(e) {
     e.preventDefault();
     setModalError("");
 
     if (!issueForm.item || !issueForm.officer) {
       setModalError(t("inventory.errRequiredFields"));
+      return;
+    }
+    if (issueOfficerAlreadyHolding(issueForm.officer.value)) {
+      setModalError(t("inventory.errOfficerAlreadyHoldsWeapon"));
       return;
     }
     const rounds = issueForm.ammoIssued === "" ? 0 : Number(issueForm.ammoIssued);
@@ -501,29 +520,26 @@ export function InventoryPage() {
 
     const addingAmmunition = addForm.category === AMMUNITION_CATEGORY;
     if (
-      !addForm.weaponSerialId ||
+      (addingAmmunition && !addForm.weaponSerialId) ||
       !addForm.weaponType ||
       !addForm.category ||
       !addForm.quantity ||
-      (!addingAmmunition && !addForm.serialNumber.trim()) ||
       (addForm.category === "Firearms" && calibersForType(addForm.weaponType).length > 1 && !addForm.caliber)
     ) {
       setModalError(t("inventory.errRequiredFields"));
-      return;
-    }
-    if (!addingAmmunition && (!FIVE_DIGITS.test(addForm.weaponSerialId) || !FIVE_DIGITS.test(addForm.serialNumber))) {
-      setModalError(t("inventory.errFiveDigits"));
       return;
     }
 
     setSubmitting(true);
     try {
       await addInventoryItem({
-        itemId: addForm.weaponSerialId,
+        // A weapon's Item ID is assigned by the server (see
+        // generateNextWeaponItemId in inventoryController.js); only
+        // ammunition's free-format batch ID is still typed in here.
+        itemId: addingAmmunition ? addForm.weaponSerialId : undefined,
         itemName: addForm.weaponType,
         category: addForm.category,
         quantity: Number(addForm.quantity) || 0,
-        serialNumber: addingAmmunition ? undefined : addForm.serialNumber,
         caliber: addForm.caliber || undefined,
         storageLocation: addForm.storageLocation || undefined,
         condition: addForm.condition,
@@ -723,6 +739,47 @@ export function InventoryPage() {
     }
   }
 
+  function openEditItem(item) {
+    setEditingItem(item);
+    setEditForm({
+      storageLocation: item.storageLocation || "",
+      condition: ["good", "fair"].includes(item.condition) ? item.condition : "good",
+      quantity: String(item.quantity),
+      lowStockThreshold: item.lowStockThreshold != null ? String(item.lowStockThreshold) : "",
+    });
+    setEditError("");
+  }
+
+  function closeEditItem() {
+    setEditingItem(null);
+    setEditError("");
+  }
+
+  async function handleEditSubmit() {
+    if (editForm.quantity === "" || Number(editForm.quantity) < 0) {
+      setEditError(t("inventory.errRestockQuantity"));
+      return;
+    }
+    const editingAmmunition = editingItem.category === AMMUNITION_CATEGORY;
+    setEditSubmitting(true);
+    setEditError("");
+    try {
+      await updateInventoryItem(editingItem.id, {
+        storageLocation: editForm.storageLocation,
+        quantity: Number(editForm.quantity),
+        ...(editingAmmunition
+          ? { lowStockThreshold: editForm.lowStockThreshold === "" ? null : Number(editForm.lowStockThreshold) }
+          : { condition: editForm.condition }),
+      });
+      await loadAll();
+      closeEditItem();
+    } catch (err) {
+      setEditError(err.message || t("inventory.errEditFailed"));
+    } finally {
+      setEditSubmitting(false);
+    }
+  }
+
   if (loading) return <Loader label={t("inventory.loading")} />;
 
   // The date range only applies to transaction tabs (issue/return/damaged)
@@ -867,7 +924,6 @@ export function InventoryPage() {
 
   const ledgerColumns = [
     { key: "itemId", label: t("inventory.colItemId") },
-    { key: "serialNumber", label: t("inventory.colSerialNumber"), render: (row) => row.serialNumber || "—" },
     { key: "itemName", label: t("inventory.colItemName") },
     { key: "category", label: t("inventory.colCategory") },
     { key: "caliber", label: t("inventory.colCaliber"), render: (row) => row.caliber || "—" },
@@ -879,12 +935,18 @@ export function InventoryPage() {
           {
             key: "actions",
             label: "",
-            render: (row) =>
-              row.status === "issued" ? (
-                <Button variant="ghost" onClick={() => openReportMissing(row)}>
-                  {t("inventory.reportMissing")}
+            render: (row) => (
+              <div style={{ display: "flex", gap: 4 }}>
+                <Button variant="ghost" onClick={() => openEditItem(row)}>
+                  {t("common.edit")}
                 </Button>
-              ) : null,
+                {row.status === "issued" && (
+                  <Button variant="ghost" onClick={() => openReportMissing(row)}>
+                    {t("inventory.reportMissing")}
+                  </Button>
+                )}
+              </div>
+            ),
           },
         ]
       : []),
@@ -911,9 +973,14 @@ export function InventoryPage() {
             key: "actions",
             label: "",
             render: (row) => (
-              <Button variant="ghost" onClick={() => setRestockingItem(row)}>
-                {t("inventory.restock")}
-              </Button>
+              <div style={{ display: "flex", gap: 4 }}>
+                <Button variant="ghost" onClick={() => openEditItem(row)}>
+                  {t("common.edit")}
+                </Button>
+                <Button variant="ghost" onClick={() => setRestockingItem(row)}>
+                  {t("inventory.restock")}
+                </Button>
+              </div>
             ),
           },
         ]
@@ -1109,6 +1176,11 @@ export function InventoryPage() {
     { key: "nextInspectionDate", label: t("inventory.colNextInspection"), render: (row) => (row.nextInspectionDate ? formatDate(row.nextInspectionDate) : "—") },
   ];
 
+  // Surfaces the server's one-weapon-per-officer rule (checkIssueEligibility
+  // in inventoryController.js) in the Issue form BEFORE submit, not just
+  // as a rejection after — see issueOfficerAlreadyHolding above.
+  const issueHeldWeapon = issueForm.officer ? issueOfficerAlreadyHolding(issueForm.officer.value) : null;
+
   return (
     <div>
       <div className="inventory-header">
@@ -1282,7 +1354,7 @@ export function InventoryPage() {
         onClose={closeModal}
         title={t("inventory.issueItemForm")}
         footer={
-          <Button variant="primary" fullWidth onClick={handleIssueSubmit} disabled={submitting}>
+          <Button variant="primary" fullWidth onClick={handleIssueSubmit} disabled={submitting || Boolean(issueHeldWeapon)}>
             {submitting ? t("inventory.processing") : t("inventory.confirmIssueTransaction")}
           </Button>
         }
@@ -1306,12 +1378,12 @@ export function InventoryPage() {
             placeholder={t("inventory.departmentAuto")}
           />
           <SearchableSelect
-            label={t("inventory.weaponSerialId")}
+            label={t("inventory.colItemId")}
             required
             value={issueForm.item}
             onChange={(opt) => setIssueForm((f) => ({ ...f, item: opt, accessories: [] }))}
             searchFn={searchIssuableItems}
-            placeholder={t("inventory.weaponSerialId")}
+            placeholder={t("inventory.colItemId")}
           />
           {/* Shown for reference only — the server stamps the real time
               when Confirm is pressed (see issue() in inventoryController.js). */}
@@ -1329,6 +1401,11 @@ export function InventoryPage() {
             helperText={t("inventory.expectedReturnDateHelper")}
           />
         </div>
+        {issueHeldWeapon && (
+          <p style={{ color: "var(--color-danger, #dc2626)", fontSize: 13, marginTop: -8, marginBottom: 12 }}>
+            {t("inventory.errOfficerAlreadyHoldsWeapon")} ({issueHeldWeapon.itemId} — {issueHeldWeapon.itemName})
+          </p>
+        )}
         {issueForm.item && (
           <CheckboxGroup
             label={t("inventory.accessories")}
@@ -1398,7 +1475,7 @@ export function InventoryPage() {
             placeholder={t("inventory.departmentAuto")}
           />
           <SearchableSelect
-            label={t("inventory.weaponSerialId")}
+            label={t("inventory.colItemId")}
             required
             minChars={0}
             value={returnForm.item}
@@ -1417,7 +1494,7 @@ export function InventoryPage() {
               }));
             }}
             searchFn={searchOfficerIssuedItems}
-            placeholder={returnForm.officer ? t("inventory.weaponSerialId") : t("inventory.selectOfficerFirst")}
+            placeholder={returnForm.officer ? t("inventory.colItemId") : t("inventory.selectOfficerFirst")}
             helperText={
               returnSourceIssue
                 ? `${t("inventory.prefilledFromIssue")} ${formatDate(returnSourceIssue.dateTime)} (${returnSourceIssue.dutyType || "—"})`
@@ -1598,27 +1675,19 @@ export function InventoryPage() {
             placeholder={addForm.category ? t("inventory.selectType") : t("inventory.selectCategoryFirst")}
             options={typesForCategory(addForm.category).map((type) => ({ value: type, label: type }))}
           />
-          <InputField
-            label={isAddingAmmunition ? t("inventory.ammunitionBatchId") : t("inventory.weaponId")}
-            required
-            value={addForm.weaponSerialId}
-            placeholder={isAddingAmmunition ? undefined : "12345"}
-            helperText={isAddingAmmunition ? undefined : t("inventory.fiveDigitsHelper")}
-            onChange={(e) =>
-              setAddForm((f) => ({
-                ...f,
-                weaponSerialId: f.category === AMMUNITION_CATEGORY ? e.target.value : toFiveDigits(e.target.value),
-              }))
-            }
-          />
-          {!isAddingAmmunition && (
+          {isAddingAmmunition ? (
             <InputField
-              label={t("inventory.colSerialNumber")}
+              label={t("inventory.ammunitionBatchId")}
               required
-              value={addForm.serialNumber}
-              placeholder="12345"
-              helperText={t("inventory.fiveDigitsHelper")}
-              onChange={(e) => setAddForm((f) => ({ ...f, serialNumber: toFiveDigits(e.target.value) }))}
+              value={addForm.weaponSerialId}
+              onChange={(e) => setAddForm((f) => ({ ...f, weaponSerialId: e.target.value }))}
+            />
+          ) : (
+            <InputField
+              label={t("inventory.colItemId")}
+              readOnly
+              value={t("inventory.itemIdAutoAssigned")}
+              helperText={t("inventory.itemIdAutoAssignedHelper")}
             />
           )}
           <InputField
@@ -1992,6 +2061,57 @@ export function InventoryPage() {
           sinhalaTyping
         />
         {missingError && <p style={{ color: "var(--color-danger)", marginTop: 12 }}>{missingError}</p>}
+      </Modal>
+
+      <Modal
+        open={Boolean(editingItem)}
+        onClose={closeEditItem}
+        title={editingItem ? `${t("common.edit")} — ${editingItem.itemId}` : ""}
+        footer={
+          <Button variant="primary" fullWidth onClick={handleEditSubmit} disabled={editSubmitting}>
+            {editSubmitting ? t("inventory.processing") : t("common.save")}
+          </Button>
+        }
+      >
+        <div className="modal-form-grid">
+          <InputField
+            label={t("inventory.colStorageLocation")}
+            type="select"
+            value={editForm.storageLocation}
+            placeholder={t("inventory.selectStorageLocation")}
+            onChange={(e) => setEditForm((f) => ({ ...f, storageLocation: e.target.value }))}
+            options={STORAGE_LOCATIONS.map((loc) => ({ value: loc, label: loc }))}
+          />
+          {editingItem?.category === AMMUNITION_CATEGORY ? (
+            <InputField
+              label={t("inventory.lowStockThreshold")}
+              type="number"
+              min="0"
+              value={editForm.lowStockThreshold}
+              onChange={(e) => setEditForm((f) => ({ ...f, lowStockThreshold: e.target.value }))}
+              helperText={t("inventory.lowStockThresholdHelper")}
+            />
+          ) : (
+            <InputField
+              label={t("inventory.colCondition")}
+              type="select"
+              value={editForm.condition}
+              onChange={(e) => setEditForm((f) => ({ ...f, condition: e.target.value }))}
+              options={[
+                { value: "good", label: t("status.good") },
+                { value: "fair", label: t("inventory.conditionFair") },
+              ]}
+            />
+          )}
+          <InputField
+            label={editingItem?.category === AMMUNITION_CATEGORY ? t("inventory.roundsInStock") : t("inventory.colQuantity")}
+            type="number"
+            min="0"
+            value={editForm.quantity}
+            onChange={(e) => setEditForm((f) => ({ ...f, quantity: e.target.value }))}
+          />
+        </div>
+        {editError && <p style={{ color: "var(--color-danger)", marginTop: 12 }}>{editError}</p>}
       </Modal>
     </div>
   );

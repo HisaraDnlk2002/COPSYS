@@ -11,9 +11,6 @@ const inventorySchema = new mongoose.Schema(
   {
     itemId: { type: String, required: true, unique: true }, // "WP-8821" style, human-facing
     itemName: { type: String, required: true },
-    // Manufacturer's serial stamped on the weapon itself, separate from
-    // the station's own itemId. Blank for ammunition (batch = itemId).
-    serialNumber: { type: String, default: "", trim: true },
     caliber: { type: String, default: "", trim: true },
     storageLocation: { type: String, default: "", trim: true }, // e.g. "Armory Rack A-3"
     category: { type: String, required: true }, // "Firearms" | "Electronics" | ...

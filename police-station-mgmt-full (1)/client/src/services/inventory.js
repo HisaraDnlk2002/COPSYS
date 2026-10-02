@@ -102,6 +102,20 @@ export async function addInventoryItem(payload) {
   return api.post("/inventory", payload);
 }
 
+// PATCH /api/inventory/:id — inventory_officer. Edits an already-added
+// item's own details (storage location, condition, quantity) — distinct
+// from issue/return/report-missing/restock, which each change a more
+// specific thing (who holds it, stock count, availability) through their
+// own dedicated audit trail.
+export async function updateInventoryItem(itemId, payload) {
+  if (USE_DUMMY_DATA) {
+    const item = dummyInventoryItems.find((i) => i.id === itemId);
+    if (item) Object.assign(item, payload);
+    return Promise.resolve(item);
+  }
+  return api.patch(`/inventory/${itemId}`, payload);
+}
+
 export async function issueItem(itemId, payload) {
   if (USE_DUMMY_DATA) {
     const newTransaction = {

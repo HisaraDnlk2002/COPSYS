@@ -30,9 +30,28 @@ const ALERT_PRIORITY = {
   accessories_missing: "warning",
 };
 
+// Next ref ID after whatever's already in use. Deliberately NOT based on
+// Alert.countDocuments() + 1 — that scheme breaks the moment any alert is
+// ever deleted (the count drops, so the "next" id it computes can land on
+// one that's still sitting there from before the deletion, e.g. an older
+// alert whose own higher-numbered id survived while newer ones in
+// between were removed), causing a duplicate-key crash on refId's unique
+// index. Scanning for the actual max existing number, then re-checking
+// uniqueness in a loop, is immune to that regardless of what's been
+// deleted — same pattern as generateNextWeaponItemId in
+// inventoryController.js.
 async function generateRefId() {
-  const count = await Alert.countDocuments();
-  return `ALT-${String(count + 1).padStart(4, "0")}`;
+  const alerts = await Alert.find({ refId: /^ALT-\d+$/ }).select("refId");
+  let max = 0;
+  for (const a of alerts) {
+    const n = Number(a.refId.slice(4));
+    if (n > max) max = n;
+  }
+  let next = max + 1;
+  while (await Alert.exists({ refId: `ALT-${String(next).padStart(4, "0")}` })) {
+    next += 1;
+  }
+  return `ALT-${String(next).padStart(4, "0")}`;
 }
 
 // Never called from a route handler directly — always as a side effect
