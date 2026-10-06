@@ -102,6 +102,10 @@ async function create(req, res) {
   if (!itemName || !category || quantity === undefined || (isAmmunition && !itemId)) {
     return res.status(400).json({ error: "Item ID, name, category and quantity are required" });
   }
+  const resolvedQuantity = Number(quantity);
+  if (!Number.isInteger(resolvedQuantity) || resolvedQuantity < 0) {
+    return res.status(400).json({ error: "Quantity must be a whole number, zero or above" });
+  }
   if (!isValidCatalogEntry(category, itemName)) {
     return res.status(400).json({ error: "Unknown weapon category or type" });
   }
@@ -139,7 +143,7 @@ async function create(req, res) {
       itemId: resolvedItemId,
       itemName,
       category,
-      quantity,
+      quantity: resolvedQuantity,
       condition: condition || "good",
       caliber: resolvedCaliber,
       storageLocation: storageLocation?.trim() || "",
@@ -170,12 +174,15 @@ async function update(req, res) {
   if (storageLocation && !STORAGE_LOCATIONS.includes(storageLocation)) {
     return res.status(400).json({ error: "Unknown storage location" });
   }
+  if (quantity !== undefined && (!Number.isInteger(Number(quantity)) || Number(quantity) < 0)) {
+    return res.status(400).json({ error: "Quantity must be a whole number, zero or above" });
+  }
 
   try {
     const item = await Inventory.findByIdAndUpdate(
       req.params.id,
       {
-        ...(quantity !== undefined && { quantity }),
+        ...(quantity !== undefined && { quantity: Number(quantity) }),
         ...(condition && { condition }),
         ...(status && { status }),
         ...(assignedTo !== undefined && { assignedTo }),
@@ -185,7 +192,7 @@ async function update(req, res) {
         }),
         lastUpdatedBy: req.user.uid,
       },
-      { new: true }
+      { new: true, runValidators: true }
     );
     if (!item) return res.status(404).json({ error: "Item not found" });
     await syncLowStockAlert(item);

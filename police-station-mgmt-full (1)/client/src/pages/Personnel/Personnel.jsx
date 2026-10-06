@@ -71,6 +71,7 @@ export function PersonnelPage() {
     { value: "inventory_officer", label: t("personnel.roleInventoryOfficer") },
     { value: "officer", label: t("personnel.roleOfficer") },
   ];
+  const ROLE_LABELS = Object.fromEntries(ROLE_OPTIONS.map((o) => [o.value, o.label]));
 
   const [view, setView] = useState("list"); // "list" | "register" | "resetRequests"
   const [loading, setLoading] = useState(true);
@@ -312,7 +313,7 @@ export function PersonnelPage() {
     { key: "fullName", label: t("personnel.colOfficerName") },
     { key: "rank", label: t("personnel.colRank"), render: (r) => r.rank || "—" },
     { key: "rankAndNumber", label: t("personnel.colRankNo") },
-    { key: "role", label: t("personnel.colSystemRoles"), render: (r) => <span style={{ textTransform: "capitalize" }}>{r.role?.replace("_", " ")}</span> },
+    { key: "role", label: t("personnel.colSystemRoles"), render: (r) => <span>{ROLE_LABELS[r.role] || r.role}</span> },
     { key: "department", label: t("personnel.colDepartment") },
     { key: "status", label: t("common.status"), render: (r) => <Badge status={r.status} /> },
     {
@@ -554,7 +555,7 @@ export function PersonnelPage() {
             </div>
             <div>
               <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("personnel.role")}</p>
-              <p style={{ textTransform: "capitalize" }}>{viewUser.role?.replace("_", " ")}</p>
+              <p>{ROLE_LABELS[viewUser.role] || viewUser.role}</p>
             </div>
             <div>
               <p style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>{t("personnel.colDepartment")}</p>

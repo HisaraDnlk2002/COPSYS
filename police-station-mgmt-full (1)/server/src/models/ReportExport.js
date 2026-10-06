@@ -26,8 +26,9 @@ const REPORT_TYPES = [
   "exceptions",
   "station",
   "performance",
+  "audit",
 ];
-const REPORT_FORMATS = ["pdf", "csv"];
+const REPORT_FORMATS = ["pdf", "csv", "xlsx"];
 const REPORT_STATUSES = ["Complete", "Archived", "Failed"];
 
 const reportExportSchema = new mongoose.Schema(

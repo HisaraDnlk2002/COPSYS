@@ -26,6 +26,15 @@ const STATION_VIEW_ROLES = ["oic", "inventory_officer", "duty_officer"];
 
 const PAGE_SIZE = 15;
 
+// Item ID alone ("10016") doesn't say what the item actually is —
+// show the weapon/item name alongside it so an inventory alert is
+// identifiable at a glance, same as weaponManagement.jsx's itemLabel.
+function itemLabel(item) {
+  if (!item) return "—";
+  if (item.itemId && item.itemName) return `${item.itemId} — ${item.itemName}`;
+  return item.itemId || item.itemName || "—";
+}
+
 // Alerts are precise moments, so show them in the viewer's local time.
 function formatDateTime(value) {
   const d = new Date(value);
@@ -34,11 +43,21 @@ function formatDateTime(value) {
   return `${formatDate(value)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-// The page each source's alerts relate to, for the "Open" button.
+// The page each source's alerts relate to — only offered as a jump-to
+// link when the viewer can actually do something there, not just load
+// a page that happens to let them in. /inventory and /duty-roster are
+// both role-guarded (see App.jsx) but NOT every role on their allow
+// list can act once they arrive: Inventory.jsx's own `canManage` is
+// true only for inventory_officer, so an oic or duty_officer landing
+// there from a notification got a full read-only dashboard dump with
+// nothing to do — confusing, not an error, but not useful either. The
+// alert's own details (title/message/item) are always shown inline in
+// the modal below regardless of role; this only decides whether a
+// "Go to…" shortcut on top of that is worth offering.
 function relatedPath(source, role) {
-  if (source === "inventory") return ["inventory_officer", "duty_officer", "oic"].includes(role) ? "/inventory" : "/weapon-management";
+  if (source === "inventory") return role === "inventory_officer" ? "/inventory" : role === "officer" ? "/weapon-management" : null;
   if (source === "leave") return "/leave";
-  if (source === "duty") return ["oic", "duty_officer"].includes(role) ? "/duty-roster" : "/dashboard";
+  if (source === "duty") return ["oic", "duty_officer"].includes(role) ? "/duty-roster" : null;
   if (source === "complaints") return "/complaints";
   return null;
 }
@@ -151,6 +170,7 @@ export function NotificationsPage() {
       a.message?.toLowerCase().includes(q) ||
       a.refId?.toLowerCase().includes(q) ||
       a.itemId?.itemId?.toLowerCase().includes(q) ||
+      a.itemId?.itemName?.toLowerCase().includes(q) ||
       a.recipientId?.fullName?.toLowerCase().includes(q)
     );
   });
@@ -193,23 +213,18 @@ export function NotificationsPage() {
     {
       key: "actions",
       label: "",
-      render: (row) => {
-        const path = relatedPath(row.source, user?.role);
-        return (
-          <div className="notif-page-actions">
-            {canAct(row) && (
-              <Button variant="ghost" onClick={() => openAction(row)}>
-                {t(`notifications.${ACTION_LABEL_KEY[NEXT_STATUS[row.status]]}`)}
-              </Button>
-            )}
-            {path && (
-              <Button variant="outline" onClick={() => navigate(path)}>
-                {t("notifications.open")}
-              </Button>
-            )}
-          </div>
-        );
-      },
+      render: (row) => (
+        <div className="notif-page-actions">
+          <Button variant="outline" onClick={() => openAction(row)}>
+            {t("notifications.view")}
+          </Button>
+          {canAct(row) && (
+            <Button variant="ghost" onClick={() => openAction(row)}>
+              {t(`notifications.${ACTION_LABEL_KEY[NEXT_STATUS[row.status]]}`)}
+            </Button>
+          )}
+        </div>
+      ),
     },
   ];
 
@@ -311,11 +326,26 @@ export function NotificationsPage() {
         onClose={closeAction}
         title={actingAlert ? `${actingAlert.title} — ${actingAlert.refId}` : ""}
         footer={
-          actingAlert &&
-          NEXT_STATUS[actingAlert.status] && (
-            <Button variant="primary" fullWidth onClick={handleAction} disabled={submitting}>
-              {submitting ? t("notifications.saving") : t(`notifications.${ACTION_LABEL_KEY[NEXT_STATUS[actingAlert.status]]}`)}
-            </Button>
+          actingAlert && (
+            <div className="notif-page-modal-footer">
+              {relatedPath(actingAlert.source, user?.role) && (
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    const path = relatedPath(actingAlert.source, user?.role);
+                    closeAction();
+                    navigate(path);
+                  }}
+                >
+                  {t("notifications.open")}
+                </Button>
+              )}
+              {canAct(actingAlert) && NEXT_STATUS[actingAlert.status] && (
+                <Button variant="primary" onClick={handleAction} disabled={submitting}>
+                  {submitting ? t("notifications.saving") : t(`notifications.${ACTION_LABEL_KEY[NEXT_STATUS[actingAlert.status]]}`)}
+                </Button>
+              )}
+            </div>
           )
         }
       >
@@ -329,9 +359,9 @@ export function NotificationsPage() {
                 <strong>{t("notifications.colMessage")}:</strong> {actingAlert.message}
               </p>
             )}
-            {(actingAlert.itemId?.itemId || actingAlert.itemId?.itemName) && (
+            {actingAlert.itemId && (
               <p>
-                <strong>{t("notifications.colItem")}:</strong> {actingAlert.itemId?.itemId || actingAlert.itemId?.itemName}
+                <strong>{t("notifications.colItem")}:</strong> {itemLabel(actingAlert.itemId)}
               </p>
             )}
             <p>

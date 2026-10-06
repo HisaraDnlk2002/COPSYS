@@ -23,6 +23,27 @@ import { WeeklyGrid } from "./WeeklyGrid";
 import { RosterSummary } from "./RosterSummary";
 import "./DutyRoster.css";
 
+const DELETE_CONFIRM_KEY = {
+  unpublished: "confirmDeleteUnpublished",
+  sent_back: "confirmDeleteSentBack",
+  submitted: "confirmDeleteSubmitted",
+  approved: "confirmDeleteApproved",
+  published: "confirmDeletePublished",
+};
+
+// Mirrors the server's deleteWeek rule (dutyScheduleController.js): a
+// draft/sent-back/unpublished week is still scratch work, deletable by
+// the Duty Officer same as before; a submitted/approved/published
+// week is a real record whose deletion also wipes any attendance
+// already taken against it, so only an admin can delete those — the
+// OIC has no delete access at all.
+function canDeleteWeek(status, { isDutyOfficer, isAdmin }) {
+  if (["draft", "unpublished", "sent_back"].includes(status)) {
+    return isDutyOfficer || isAdmin;
+  }
+  return isAdmin;
+}
+
 function overlapsWeek(leave, weekStarting) {
   const weekStart = new Date(weekStarting).setHours(0, 0, 0, 0);
   const weekEnd = new Date(weekStarting);
@@ -39,6 +60,7 @@ export function DutyRosterPage() {
   const location = useLocation();
   const isDutyOfficer = user?.role === "duty_officer";
   const isOic = user?.role === "oic";
+  const isAdmin = user?.role === "admin";
 
   const [activeTab, setActiveTab] = useState(location.state?.tab === "daily" ? "daily" : "weekly");
   const [loading, setLoading] = useState(true);
@@ -139,12 +161,7 @@ export function DutyRosterPage() {
 
   async function handleDeleteWeek(weekId, status, e) {
     e.stopPropagation(); // don't also trigger selecting the row
-    const confirmMessage =
-      status === "unpublished"
-        ? t("dutyRoster.confirmDeleteUnpublished")
-        : status === "sent_back"
-        ? t("dutyRoster.confirmDeleteSentBack")
-        : t("dutyRoster.confirmDeleteDraft");
+    const confirmMessage = t(`dutyRoster.${DELETE_CONFIRM_KEY[status] || "confirmDeleteDraft"}`);
     if (!window.confirm(confirmMessage)) return;
     try {
       await deleteRosterWeek(weekId);
@@ -309,7 +326,7 @@ export function DutyRosterPage() {
             >
               <span>{formatDate(week.weekStarting)}</span>
               <Badge status={week.status === "submitted" ? "pending" : week.status} />
-              {isDutyOfficer && ["draft", "unpublished", "sent_back"].includes(week.status) && (
+              {canDeleteWeek(week.status, { isDutyOfficer, isAdmin }) && (
                 <button
                   type="button"
                   className="roster-week-tab-delete"

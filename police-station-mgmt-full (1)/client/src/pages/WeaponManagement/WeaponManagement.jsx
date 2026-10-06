@@ -15,6 +15,15 @@ const TRANSACTION_TYPE = {
   damaged: { labelKey: "typeDamaged", tone: "danger", actionKey: "confirmReturn", titleKey: "confirmReturnTitle", textKey: "confirmReturnText" },
 };
 
+// Item ID alone ("10016") doesn't say what the item actually is —
+// show the weapon name alongside it wherever an officer has to
+// recognize which weapon a transaction/alert is about.
+function itemLabel(item) {
+  if (!item) return "—";
+  if (item.itemId && item.itemName) return `${item.itemId} — ${item.itemName}`;
+  return item.itemId || item.itemName || "—";
+}
+
 const ALERT_PRIORITY_TONE = { critical: "danger", warning: "warning", info: "info" };
 const ALERT_PRIORITY_LABEL_KEY = { critical: "priorityCritical", warning: "priorityWarning", info: "priorityInfo" };
 const ALERT_STATUS_LABEL_KEY = { new: "alertStatusNew", acknowledged: "alertStatusAcknowledged", action_taken: "alertStatusActionTaken", resolved: "alertStatusResolved" };
@@ -137,7 +146,7 @@ export function WeaponManagementPage() {
   const isReturnLike = confirmingTx?.type === "return" || confirmingTx?.type === "damaged";
 
   const pendingColumns = [
-    { key: "itemId", label: t("weaponManagement.colItemId"), render: (row) => row.itemId?.itemId || row.itemId?.itemName || "—" },
+    { key: "itemId", label: t("weaponManagement.colItemId"), render: (row) => itemLabel(row.itemId) },
     {
       key: "type",
       label: t("weaponManagement.colTransactionType"),
@@ -172,7 +181,7 @@ export function WeaponManagementPage() {
 
   const historyColumns = [
     { key: "dateTime", label: t("weaponManagement.colDateTime"), render: (row) => formatDateAndTime(row.dateTime) },
-    { key: "itemId", label: t("weaponManagement.colItemId"), render: (row) => row.itemId?.itemId || row.itemId?.itemName || "—" },
+    { key: "itemId", label: t("weaponManagement.colItemId"), render: (row) => itemLabel(row.itemId) },
     {
       key: "type",
       label: t("weaponManagement.colTransactionType"),
@@ -206,7 +215,7 @@ export function WeaponManagementPage() {
       render: (row) => <Badge tone={ALERT_PRIORITY_TONE[row.priority]}>{t(`weaponManagement.${ALERT_PRIORITY_LABEL_KEY[row.priority]}`)}</Badge>,
     },
     { key: "title", label: t("weaponManagement.colAlertTitle"), render: (row) => (<span title={row.message || undefined}>{row.title}</span>) },
-    { key: "itemId", label: t("weaponManagement.colItemId"), render: (row) => row.itemId?.itemId || row.itemId?.itemName || "—" },
+    { key: "itemId", label: t("weaponManagement.colItemId"), render: (row) => itemLabel(row.itemId) },
     { key: "generatedAt", label: t("weaponManagement.colDateTime"), render: (row) => formatDateAndTime(row.generatedAt) },
     {
       key: "status",
@@ -285,7 +294,7 @@ export function WeaponManagementPage() {
         </p>
         {confirmingTx && (
           <div className="weapon-mgmt-confirm-details">
-            <p><strong>{t("weaponManagement.colItemId")}:</strong> {confirmingTx.itemId?.itemId || confirmingTx.itemId?.itemName || "—"}</p>
+            <p><strong>{t("weaponManagement.colItemId")}:</strong> {itemLabel(confirmingTx.itemId)}</p>
             <p><strong>{t("weaponManagement.colQuantity")}:</strong> {confirmingTx.quantity}</p>
             {isReturnLike && <p><strong>{t("weaponManagement.colCondition")}:</strong> {confirmingTx.condition || "—"}</p>}
             {!isReturnLike && confirmingTx.ammoIssued > 0 && (
@@ -358,7 +367,7 @@ export function WeaponManagementPage() {
         {actingAlert && (
           <div className="weapon-mgmt-confirm-details">
             {actingAlert.message && <p><strong>{t("weaponManagement.colMessage")}:</strong> {actingAlert.message}</p>}
-            <p><strong>{t("weaponManagement.colItemId")}:</strong> {actingAlert.itemId?.itemId || actingAlert.itemId?.itemName || "—"}</p>
+            <p><strong>{t("weaponManagement.colItemId")}:</strong> {itemLabel(actingAlert.itemId)}</p>
             <p><strong>{t("weaponManagement.colDateTime")}:</strong> {formatDateAndTime(actingAlert.generatedAt)}</p>
           </div>
         )}

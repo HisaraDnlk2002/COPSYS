@@ -11,6 +11,13 @@ export function DashboardLayout() {
   const { user, logout } = useAuth();
   const { language, setLanguage, t } = useLanguage();
   const navItems = navItemsByRole[user?.role] || [];
+  const ROLE_LABELS = {
+    admin: t("personnel.roleAdmin"),
+    oic: t("personnel.roleOic"),
+    duty_officer: t("personnel.roleDutyOfficer"),
+    inventory_officer: t("personnel.roleInventoryOfficer"),
+    officer: t("personnel.roleOfficer"),
+  };
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
@@ -75,7 +82,7 @@ export function DashboardLayout() {
             <div className="topbar-user">
               <div>
                 <div className="name">{user?.fullName}</div>
-                <div className="role">{user?.role}</div>
+                <div className="role">{ROLE_LABELS[user?.role] || user?.role}</div>
               </div>
             </div>
           </div>

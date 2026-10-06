@@ -165,9 +165,23 @@ async function listMine(req, res) {
 // GET /api/alerts/feed — every role. Backs the Notifications page.
 // What each role sees:
 //   oic                       -> every alert at the station (reviews all exceptions)
-//   inventory/duty officer    -> all inventory alerts at the station + their own
+//   inventory/duty officer    -> station-wide inventory HOUSEKEEPING alerts (no
+//                                specific owner — weapon_missing, low_ammo_stock,
+//                                maintenance_pending, inspection_due, ...) + their own
 //   everyone else             -> only alerts addressed to them
 // Optional ?source=inventory|leave|duty|complaints, ?status=, ?priority=.
+//
+// Inventory-sourced alert types split into two shapes (see Alert.js's
+// recipientId comment): some are genuinely station-wide armory upkeep
+// with no owner (recipientId: null) — those are fair game for every
+// inventory/duty officer to see and act on. Others are about one named
+// officer's own weapon activity (return_overdue, weapon_issued,
+// confirmation_overdue, ...) — those used to match on alertType alone,
+// which let every inventory/duty officer see every OTHER officer's
+// personal weapon notifications station-wide, not just the recipient and
+// the OIC. Requiring recipientId to be null for the alertType-based match
+// keeps the housekeeping alerts visible as before while routing personal
+// ones back through the `recipientId: uid` branch like any other role.
 const INVENTORY_ROLES = ["inventory_officer", "duty_officer"];
 
 async function feed(req, res) {
@@ -179,7 +193,12 @@ async function feed(req, res) {
     if (role === "oic") {
       visibility = {};
     } else if (INVENTORY_ROLES.includes(role)) {
-      visibility = { $or: [{ alertType: { $in: alertTypesForSource("inventory") } }, { recipientId: uid }] };
+      visibility = {
+        $or: [
+          { alertType: { $in: alertTypesForSource("inventory") }, recipientId: null },
+          { recipientId: uid },
+        ],
+      };
     } else {
       visibility = { recipientId: uid };
     }

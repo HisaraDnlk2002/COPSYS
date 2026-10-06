@@ -12,6 +12,13 @@ const ACCOUNT_FIELDS = ["phoneNumber", "email", "address", "emergencyContactName
 export function SettingsPage() {
   const { t } = useLanguage();
   const { user, refreshProfile } = useAuth();
+  const ROLE_LABELS = {
+    admin: t("personnel.roleAdmin"),
+    oic: t("personnel.roleOic"),
+    duty_officer: t("personnel.roleDutyOfficer"),
+    inventory_officer: t("personnel.roleInventoryOfficer"),
+    officer: t("personnel.roleOfficer"),
+  };
   // The Communication Protocols + RBAC sections are station-wide config,
   // not personal — same oic/admin boundary the backend enforces on
   // GET/PATCH /api/settings. "My Account" below, on the other hand, is
@@ -225,7 +232,7 @@ export function SettingsPage() {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, marginBottom: 12 }}>
           <InputField label={t("settings.fullNameLabel")} value={user?.fullName || ""} readOnly />
           <InputField label={t("settings.rankNumberLabel")} value={user?.rankAndNumber || ""} readOnly />
-          <InputField label={t("settings.roleLabel")} value={user?.role || ""} readOnly />
+          <InputField label={t("settings.roleLabel")} value={ROLE_LABELS[user?.role] || user?.role || ""} readOnly />
           <InputField label={t("settings.departmentLabel")} value={user?.department || ""} readOnly />
         </div>
 

@@ -73,7 +73,7 @@ export function DutyOfficerBriefingPage() {
             {t("briefing.updateDailyAttendance")}
           </Button>
           <Button variant="outline" onClick={() => navigate("/leave")}>
-            {t("briefing.manageLeave")}
+            {t("briefing.applyLeave")}
           </Button>
         </div>
       </div>

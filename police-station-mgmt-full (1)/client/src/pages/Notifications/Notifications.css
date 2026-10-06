@@ -134,3 +134,13 @@
   color: var(--color-danger);
   margin-top: 12px;
 }
+
+.notif-page-modal-footer {
+  display: flex;
+  gap: var(--space-sm);
+  width: 100%;
+}
+
+.notif-page-modal-footer .btn {
+  flex: 1;
+}

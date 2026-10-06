@@ -11,7 +11,8 @@ const { AMMUNITION_CATEGORY } = require("../config/weaponCatalog");
 const Complaint = require("../models/Complaint");
 const User = require("../models/User");
 const ReportExport = require("../models/ReportExport");
-const { buildCsv, buildPdf } = require("../utils/reportFileBuilder");
+const AuditLog = require("../models/AuditLog");
+const { writeCsvToResponse, streamPdfToResponse, streamXlsxToResponse } = require("../utils/reportFileBuilder");
 
 // GET /api/reports/summary and /crime-distribution both take optional
 // ?dateFrom&dateTo (YYYY-MM-DD) — defaulting to the current calendar
@@ -43,6 +44,7 @@ const REPORT_CATEGORY_TYPES = [
   "exceptions",
   "station",
   "performance",
+  "audit",
 ];
 
 // Which roles can generate/preview/download/see each category. Mirrors
@@ -64,6 +66,11 @@ const CATEGORY_ROLES = {
   exceptions: ["admin", "oic", "inventory_officer"],
   station: ["admin", "oic"],
   performance: ["admin", "oic"],
+  // System Activity reads from the same AuditLog collection the Activity
+  // Log page does (auditLogController.js), which is admin-only there too
+  // — kept consistent rather than opening audit data to a wider audience
+  // just because it's reachable through Reports.
+  audit: ["admin"],
 };
 
 function canAccessCategory(role, type) {
@@ -369,13 +376,22 @@ const REPORT_TYPE_LABELS = {
   exceptions: "Overdue & Discrepancies",
   station: "Station Summary",
   performance: "Officer Performance",
+  audit: "System Activity",
 };
 
 // Ceiling on how many rows a single report is allowed to pull into memory.
 // Generous enough that normal usage (even a full year for one station)
 // stays well under it, but it keeps worst-case request time and memory use
-// predictable. Adjust here if it turns out to be too tight or too loose.
-const MAX_REPORT_ROWS = 5000;
+// predictable. Raised from the original 5000 now that downloadReport
+// streams the CSV/PDF straight to the response (see reportFileBuilder.js)
+// instead of building the whole file as one in-memory string/buffer first —
+// the remaining memory cost at this ceiling is just ~20k plain row objects
+// from the DB query, not a second full copy of the rendered file. Still a
+// real ceiling, not "unlimited": gatherReportData's per-type queries pull
+// every matching row into memory in one go rather than streaming from
+// MongoDB via a cursor, so this number is what keeps that step bounded.
+// Adjust here if it turns out to be too tight or too loose.
+const MAX_REPORT_ROWS = 20000;
 
 class ReportRowLimitError extends Error {
   constructor(count) {
@@ -420,8 +436,9 @@ const FILTER_KEYS_BY_TYPE = {
   exceptions: ["exceptionType"],
   station: [],
   performance: ["department"],
+  audit: ["module", "status", "userId"],
 };
-const OBJECT_ID_FILTER_KEYS = new Set(["officerId", "assignedOfficerId"]);
+const OBJECT_ID_FILTER_KEYS = new Set(["officerId", "assignedOfficerId", "userId"]);
 
 // Drops anything not on this type's whitelist and any officer id that
 // isn't a valid ObjectId, rather than letting a bad value reach Mongoose
@@ -451,6 +468,8 @@ const FILTER_LABELS = {
   transactionType: "Transaction Type",
   result: "Result",
   exceptionType: "Exception",
+  module: "Module",
+  userId: "User",
 };
 
 // Turns a stored filters object into the "Filters applied: …" line on the
@@ -994,6 +1013,35 @@ async function gatherReportData(type, stationId, dateFrom, dateTo, filters = {})
     };
   }
 
+  if (type === "audit") {
+    // Reuses the exact same AuditLog collection the Activity Log page
+    // reads from (auditLogController.js) — a report over system activity
+    // should show the real audit trail, not a second parallel copy of it.
+    const filter = { stationId, createdAt: { $gte: dateFrom, $lte: dateTo } };
+    if (filters.module) filter.module = filters.module;
+    if (filters.status) filter.status = filters.status;
+    if (filters.userId) filter.userId = filters.userId;
+    await guardRowCount(AuditLog, filter);
+    const rows = await AuditLog.find(filter).sort({ createdAt: 1 }).lean();
+
+    return {
+      columns: [
+        { key: "dateTime", label: "Date & Time" },
+        { key: "user", label: "User" },
+        { key: "action", label: "Action" },
+        { key: "module", label: "Module" },
+        { key: "status", label: "Status" },
+      ],
+      rows: rows.map((r) => ({
+        dateTime: r.createdAt ? new Date(r.createdAt).toISOString().replace("T", " ").slice(0, 19) : "—",
+        user: r.userName || "—",
+        action: r.action || "—",
+        module: r.module || "—",
+        status: r.status || "—",
+      })),
+    };
+  }
+
   throw new Error(`Unknown report type: ${type}`);
 }
 
@@ -1037,6 +1085,11 @@ function computeSummary(type, rows) {
         "Total Complaints Assigned": rows.reduce((sum, r) => sum + (r.complaintsAssigned || 0), 0),
       };
     }
+    case "audit":
+      return {
+        "Total Actions": rows.length,
+        "Failed": rows.filter((r) => r.status === "failed").length,
+      };
     default:
       return {};
   }
@@ -1113,7 +1166,7 @@ async function generateReport(req, res) {
     return res.status(403).json({ error: "You do not have permission to generate this report" });
   }
   if (!ReportExport.REPORT_FORMATS.includes(format)) {
-    return res.status(400).json({ error: "Format must be pdf or csv" });
+    return res.status(400).json({ error: "Format must be pdf, csv, or xlsx" });
   }
   if (!range) {
     return res.status(400).json({ error: "A valid dateFrom and dateTo are required" });
@@ -1172,15 +1225,18 @@ async function downloadReport(req, res) {
     const safeName = record.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
 
     if (record.format === "csv") {
-      const csv = buildCsv(columns, rows);
       res.setHeader("Content-Type", "text/csv");
       res.setHeader("Content-Disposition", `attachment; filename="${safeName}.csv"`);
-      return res.send(csv);
+      writeCsvToResponse(res, columns, rows);
+      return;
     }
 
+    // PDF and Excel share the same letterhead/meta/summary/signature
+    // shape — only CSV is a bare table, since a spreadsheet import is the
+    // one format where that letterhead/signature block would just get in
+    // the way of using the data.
     const filterSummary = await describeFilters(record.filters);
-
-    const pdfBuffer = await buildPdf({
+    const reportMeta = {
       title: record.title,
       subtitle: REPORT_TYPE_LABELS[record.type],
       reportRef: `RPT-${record.id.slice(-6).toUpperCase()}`,
@@ -1190,13 +1246,34 @@ async function downloadReport(req, res) {
         ["Generated by", record.generatedByName],
         ["Generated on", record.createdAt.toISOString().slice(0, 10)],
       ],
+      summary: computeSummary(record.type, rows),
       columns,
       rows,
-    });
+    };
+
+    if (record.format === "xlsx") {
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="${safeName}.xlsx"`);
+      await streamXlsxToResponse(res, reportMeta);
+      return;
+    }
+
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${safeName}.pdf"`);
-    return res.send(pdfBuffer);
+    await streamPdfToResponse(res, reportMeta);
+    return;
   } catch (err) {
+    // gatherReportData (and the row-limit check) always runs before either
+    // writeCsvToResponse/streamPdfToResponse touch `res`, so a
+    // ReportRowLimitError can never reach here with headers already sent.
+    // A failure from the streaming writers themselves (e.g. the client
+    // disconnecting mid-download) is a different story — by then the
+    // response has already started, so there's no sending a JSON error
+    // body over it; just stop.
+    if (res.headersSent) {
+      console.error("downloadReport error (after response started):", err);
+      return res.end();
+    }
     if (err instanceof ReportRowLimitError) {
       return res.status(400).json({ error: err.message });
     }

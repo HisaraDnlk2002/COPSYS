@@ -1,9 +1,14 @@
-// Turns a {columns, rows} shape into a downloadable CSV string or PDF
-// buffer. Kept deliberately generic — every report type in
-// reportsController.js funnels through the same two builders so a new
-// report type only has to produce {columns, rows}, not its own file logic.
+// Turns a {columns, rows} shape into a downloadable CSV, PDF, or Excel
+// file, written directly to the HTTP response as it's generated rather
+// than fully buffered in memory first — a large report no longer has to
+// exist twice over (once as row objects, once as a complete rendered
+// string/buffer/workbook) before the client sees a single byte. Kept
+// deliberately generic — every report type in reportsController.js
+// funnels through the same three writers so a new report type only has
+// to produce {columns, rows}, not its own file logic.
 
 const PDFDocument = require("pdfkit");
+const ExcelJS = require("exceljs");
 const path = require("path");
 const fs = require("fs");
 
@@ -21,26 +26,42 @@ function escapeCsvValue(value) {
 }
 
 // columns: [{ key, label }]  rows: [{ [key]: value }]
-function buildCsv(columns, rows) {
-  const header = columns.map((c) => escapeCsvValue(c.label)).join(",");
-  const lines = rows.map((row) => columns.map((c) => escapeCsvValue(row[c.key])).join(","));
-  return [header, ...lines].join("\n");
+// Writes the header line then one line per row directly to `res` (the
+// caller sets Content-Type/Content-Disposition first, same as before —
+// this only replaces how the body gets there), instead of joining every
+// row into one giant string before anything is sent. Ends the response
+// itself once the last row is written.
+function writeCsvToResponse(res, columns, rows) {
+  res.write(columns.map((c) => escapeCsvValue(c.label)).join(",") + "\n");
+  for (const row of rows) {
+    res.write(columns.map((c) => escapeCsvValue(row[c.key])).join(",") + "\n");
+  }
+  res.end();
 }
 
 // title/subtitle: header text. meta: [[label, value], ...] printed under
-// the title (date range, filters applied, generated-by/on). columns/rows:
-// same shape as buildCsv. reportRef: short human-facing id printed in the
+// the title (date range, filters applied, generated-by/on). summary: a
+// flat { label: value } object (from reportsController's computeSummary)
+// printed as a highlighted line below meta — the same at-a-glance numbers
+// shown on the preview panel's stat cards, carried into the file itself
+// rather than only ever existing on screen. columns/rows: same shape as
+// writeCsvToResponse. reportRef: short human-facing id printed in the
 // footer next to the signature block (e.g. "RPT-4F91A2") — purely
-// cosmetic, not a persisted sequential counter. Resolves to a Buffer once
-// the document finishes streaming internally.
-function buildPdf({ title, subtitle, meta = [], columns, rows, reportRef }) {
+// cosmetic, not a persisted sequential counter. Piped straight to `res`
+// (the caller sets Content-Type/Content-Disposition first) instead of
+// being built into one complete in-memory Buffer before anything is sent
+// — PDFKit still renders page-by-page internally either way, but the
+// client now starts receiving bytes as soon as the first page is ready
+// rather than waiting for the whole document. Resolves once `res` has
+// finished receiving everything.
+function streamPdfToResponse(res, { title, subtitle, meta = [], summary = {}, columns, rows, reportRef }) {
   return new Promise((resolve, reject) => {
     try {
       const doc = new PDFDocument({ margin: 40, size: "A4" });
-      const chunks = [];
-      doc.on("data", (chunk) => chunks.push(chunk));
-      doc.on("end", () => resolve(Buffer.concat(chunks)));
       doc.on("error", reject);
+      res.on("finish", resolve);
+      res.on("error", reject);
+      doc.pipe(res);
 
       const left = doc.page.margins.left;
       const usableWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
@@ -91,6 +112,29 @@ function buildPdf({ title, subtitle, meta = [], columns, rows, reportRef }) {
       if (meta.length) {
         doc.fontSize(9).font("Helvetica").fillColor("#333");
         meta.forEach(([label, value]) => doc.text(`${label}: ${value}`));
+        doc.moveDown(0.8);
+      }
+
+      const summaryEntries = Object.entries(summary);
+      if (summaryEntries.length) {
+        doc.fontSize(10).font("Helvetica-Bold").fillColor("#111").text("SUMMARY");
+        doc.moveDown(0.2);
+        const summaryY = doc.y;
+        doc.rect(left, summaryY, usableWidth, 26).fill("#f4f6f9");
+        const entryWidth = usableWidth / summaryEntries.length;
+        summaryEntries.forEach(([label, value], i) => {
+          doc
+            .fontSize(8)
+            .font("Helvetica")
+            .fillColor("#666")
+            .text(label, left + i * entryWidth + 8, summaryY + 4, { width: entryWidth - 16 });
+          doc
+            .fontSize(11)
+            .font("Helvetica-Bold")
+            .fillColor("#111")
+            .text(String(value), left + i * entryWidth + 8, summaryY + 14, { width: entryWidth - 16 });
+        });
+        doc.y = summaryY + 26;
         doc.moveDown(0.8);
       }
 
@@ -165,4 +209,125 @@ function buildPdf({ title, subtitle, meta = [], columns, rows, reportRef }) {
   });
 }
 
-module.exports = { buildCsv, buildPdf };
+// A, B, ..., Z, AA, AB, ... — exceljs wants column letters, not indexes,
+// for the merged title/meta rows below (the table itself just uses
+// addRow(), which doesn't need this).
+function columnLetter(oneBasedIndex) {
+  let n = oneBasedIndex;
+  let letters = "";
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    letters = String.fromCharCode(65 + rem) + letters;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letters;
+}
+
+// Same letterhead/meta/summary/signature shape as streamPdfToResponse,
+// laid out as plain top-to-bottom rows instead of PDFKit's absolute
+// x/y positioning — exceljs's streaming WorkbookWriter (used here, same
+// "don't buffer the whole file in memory" reasoning as the CSV/PDF
+// writers above) commits one row at a time, so there's no going back to
+// redraw an earlier row once written. useStyles:true is required for any
+// per-cell font/fill formatting to actually apply in streaming mode.
+function streamXlsxToResponse(res, { title, subtitle, meta = [], summary = {}, columns, rows, reportRef }) {
+  return new Promise((resolve, reject) => {
+    try {
+      const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: res, useStyles: true });
+      res.on("finish", resolve);
+      res.on("error", reject);
+
+      const sheet = workbook.addWorksheet(String(title).slice(0, 31) || "Report");
+      const numCols = Math.max(columns.length, 3);
+      sheet.columns = columns.map((c) => ({ key: c.key, width: 22 }));
+
+      function addTextRow(text, { bold = false, size = 10, color = "FF111111", align = "left" } = {}) {
+        const row = sheet.addRow([text]);
+        const cell = row.getCell(1);
+        cell.font = { bold, size, color: { argb: color } };
+        cell.alignment = { horizontal: align };
+        row.commit();
+      }
+
+      addTextRow("SRI LANKA POLICE", { bold: true, size: 14, align: "center" });
+      addTextRow("POLICE STATION MANAGEMENT SYSTEM", { size: 9, color: "FF666666", align: "center" });
+      sheet.addRow([]).commit();
+      addTextRow(String(title).toUpperCase(), { bold: true, size: 13, align: "center" });
+      if (subtitle) addTextRow(subtitle, { size: 10, color: "FF666666", align: "center" });
+      sheet.addRow([]).commit();
+
+      meta.forEach(([label, value]) => {
+        const row = sheet.addRow([`${label}:`, String(value)]);
+        row.getCell(1).font = { bold: true, size: 9, color: { argb: "FF333333" } };
+        row.getCell(2).font = { size: 9, color: { argb: "FF333333" } };
+        row.commit();
+      });
+      sheet.addRow([]).commit();
+
+      const summaryEntries = Object.entries(summary);
+      if (summaryEntries.length) {
+        addTextRow("SUMMARY", { bold: true, size: 10 });
+        const labelRow = sheet.addRow(summaryEntries.map(([label]) => label));
+        labelRow.eachCell((cell) => {
+          cell.font = { size: 8, color: { argb: "FF666666" } };
+        });
+        labelRow.commit();
+        const valueRow = sheet.addRow(summaryEntries.map(([, value]) => value));
+        valueRow.eachCell((cell) => {
+          cell.font = { bold: true, size: 11, color: { argb: "FF111111" } };
+        });
+        valueRow.commit();
+        sheet.addRow([]).commit();
+      }
+
+      const headerRow = sheet.addRow(columns.map((c) => c.label));
+      headerRow.eachCell((cell) => {
+        cell.font = { bold: true, size: 9, color: { argb: "FFFFFFFF" } };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF2B4C7E" } };
+      });
+      headerRow.commit();
+
+      for (const row of rows) {
+        const dataRow = sheet.addRow(columns.map((c) => (row[c.key] === null || row[c.key] === undefined ? "" : row[c.key])));
+        dataRow.eachCell((cell) => {
+          cell.font = { size: 9 };
+        });
+        dataRow.commit();
+      }
+
+      if (rows.length === 0) {
+        addTextRow("No records found for this date range.", { size: 10, color: "FF888888" });
+      }
+
+      sheet.addRow([]).commit();
+      addTextRow(`Report ID: ${reportRef || "—"}`, { size: 8, color: "FF888888" });
+
+      sheet.addRow([]).commit();
+      const sigLabels = ["Prepared By", "Checked By", "Approved By"];
+      const sigLine = sheet.addRow(sigLabels.map(() => "_______________________"));
+      sigLine.eachCell((cell) => {
+        cell.font = { size: 9, color: { argb: "FF999999" } };
+      });
+      sigLine.commit();
+      const sigLabelsRow = sheet.addRow(sigLabels);
+      sigLabelsRow.eachCell((cell) => {
+        cell.font = { size: 9, color: { argb: "FF333333" } };
+      });
+      sigLabelsRow.commit();
+
+      // Column widths beyond the data columns (for the wider letterhead
+      // text rows above) — exceljs only sized the ones addressed via
+      // sheet.columns, so pad out to at least numCols.
+      for (let i = columns.length + 1; i <= numCols; i++) {
+        sheet.getColumn(i).width = 22;
+      }
+
+      sheet.commit();
+      workbook.commit().catch(reject);
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+module.exports = { writeCsvToResponse, streamPdfToResponse, streamXlsxToResponse };

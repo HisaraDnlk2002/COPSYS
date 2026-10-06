@@ -11,7 +11,6 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-sm);
-  margin-bottom: var(--space-lg);
 }
 
 .reports-subtitle {
@@ -23,7 +22,6 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--space-lg);
-  margin: var(--space-lg) 0;
 }
 
 @media (max-width: 900px) {
@@ -52,6 +50,15 @@
   gap: 2px;
   position: sticky;
   top: var(--space-md);
+  /* A sticky element doesn't scroll on its own — once it's "stuck", the
+     page's own scroll no longer moves it, so without its own scroll
+     region any content taller than the viewport is simply unreachable.
+     Capping its height to the viewport (minus its own top offset, times
+     2 so it doesn't run flush to the bottom edge either) and letting it
+     scroll internally keeps every category reachable regardless of how
+     many groups/items end up in the tree. */
+  max-height: calc(100vh - (var(--space-md) * 2));
+  overflow-y: auto;
 }
 
 .reports-sidenav-heading {
@@ -86,9 +93,59 @@
   font-weight: 600;
 }
 
+.reports-sidenav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 22px;
+}
+
+.reports-sidenav-group:first-of-type {
+  margin-top: 0;
+}
+
+.reports-sidenav-group-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  padding: 6px 10px 2px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.reports-sidenav-group-title:hover {
+  color: var(--color-text);
+}
+
+.reports-sidenav-chevron {
+  display: inline-flex;
+  font-size: 9px;
+  transition: transform 0.15s ease;
+  color: var(--color-text-muted);
+}
+
+.reports-sidenav-chevron.open {
+  transform: rotate(90deg);
+}
+
+.reports-sidenav-subitem {
+  padding-left: 20px;
+}
+
 .reports-content {
   flex: 1 1 auto;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
 }
 
 @media (max-width: 800px) {

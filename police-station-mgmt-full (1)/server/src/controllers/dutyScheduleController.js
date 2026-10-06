@@ -1047,31 +1047,46 @@ async function unpublishWeek(req, res) {
   }
 }
 
-// DELETE /api/duty-schedule/weeks/:weekId — duty_officer. Drafts can be
-// deleted outright since they're scratch work; an unpublished week
-// (pulled back from live via unpublishWeek) can be too — once it's
-// been withdrawn there's no live record left depending on it, same as
-// a draft that was never published in the first place. A week the OIC
-// sent back is effectively handed back to the Duty Officer to fix or
-// scrap, same as a draft — so it's deletable too. A
-// submitted/approved/published week still can't be — those are real
-// records, not scratch work. Clears its DutySchedule rows either way.
+// DELETE /api/duty-schedule/weeks/:weekId — duty_officer or admin.
+// Drafts can be deleted outright since they're scratch work; an
+// unpublished week (pulled back from live via unpublishWeek) can be
+// too — once it's been withdrawn there's no live record left
+// depending on it, same as a draft that was never published in the
+// first place. A week the OIC sent back is effectively handed back to
+// the Duty Officer to fix or scrap, same as a draft — so it's
+// deletable too. A submitted/approved/published week is a real
+// record — deleting it also wipes any attendance already recorded
+// against it and leaves any alerts that were sent about it pointing
+// at nothing — so that's restricted to admin only; the duty_officer
+// who authored the roster can't delete it once it's past that point,
+// and the OIC (a party to approving/reviewing it) has no delete
+// access at all.
 async function deleteWeek(req, res) {
   try {
     const week = await DutyRosterWeek.findById(req.params.weekId);
     if (!week) return res.status(404).json({ error: "Roster week not found" });
-    if (!["draft", "unpublished", "sent_back"].includes(week.status)) {
-      return res.status(400).json({ error: `Cannot delete a week that is ${week.status}, only drafts, sent-back, or unpublished weeks.` });
+
+    const isScratchStatus = ["draft", "unpublished", "sent_back"].includes(week.status);
+    const isAdmin = req.user.role === "admin";
+    if (!isScratchStatus && !isAdmin) {
+      return res.status(403).json({ error: `Only an admin can delete a week that is ${week.status}.` });
     }
 
     await DutySchedule.deleteMany({ weekId: week._id });
-    // An unpublished week (unlike a draft) may have real daily-change
-    // history from while it was live — clear that too rather than
-    // leaving it pointing at a week/shifts that no longer exist.
+    // An unpublished/published week (unlike a draft) may have real
+    // daily-change history from while it was live — clear that too
+    // rather than leaving it pointing at a week/shifts that no longer
+    // exist.
     await DailyDutyChange.deleteMany({ weekId: week._id });
     await DutyRosterWeek.deleteOne({ _id: week._id });
 
-    const STATUS_LABEL = { unpublished: "Unpublished", sent_back: "Sent-Back" };
+    const STATUS_LABEL = {
+      unpublished: "Unpublished",
+      sent_back: "Sent-Back",
+      submitted: "Submitted",
+      approved: "Approved",
+      published: "Published",
+    };
     logAuditForActor(req, {
       action: `Deleted ${STATUS_LABEL[week.status] || "Draft"} Duty Roster for week of ${new Date(week.weekStarting).toISOString().slice(0, 10)}`,
       module: "Duty Roster",

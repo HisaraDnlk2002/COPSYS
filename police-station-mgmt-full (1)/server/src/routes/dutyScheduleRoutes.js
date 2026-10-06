@@ -41,7 +41,7 @@ router.patch("/weeks/:weekId/approve", requireRole("oic"), approveWeek);
 router.patch("/weeks/:weekId/send-back", requireRole("oic"), sendBackWeek);
 router.patch("/weeks/:weekId/publish", requireRole("duty_officer"), publishWeek);
 router.patch("/weeks/:weekId/unpublish", requireRole("duty_officer"), unpublishWeek);
-router.delete("/weeks/:weekId", requireRole("duty_officer"), deleteWeek);
+router.delete("/weeks/:weekId", requireRole("duty_officer", "admin"), deleteWeek);
 
 router.get("/replacement-suggestions", requireRole("duty_officer"), getReplacementSuggestions);
 

@@ -530,6 +530,12 @@ export function InventoryPage() {
       return;
     }
 
+    const quantity = Number(addForm.quantity);
+    if (!Number.isInteger(quantity) || quantity < 0) {
+      setModalError(t("inventory.errQuantityInvalid"));
+      return;
+    }
+
     setSubmitting(true);
     try {
       await addInventoryItem({
@@ -539,7 +545,7 @@ export function InventoryPage() {
         itemId: addingAmmunition ? addForm.weaponSerialId : undefined,
         itemName: addForm.weaponType,
         category: addForm.category,
-        quantity: Number(addForm.quantity) || 0,
+        quantity,
         caliber: addForm.caliber || undefined,
         storageLocation: addForm.storageLocation || undefined,
         condition: addForm.condition,
@@ -756,8 +762,9 @@ export function InventoryPage() {
   }
 
   async function handleEditSubmit() {
-    if (editForm.quantity === "" || Number(editForm.quantity) < 0) {
-      setEditError(t("inventory.errRestockQuantity"));
+    const quantity = Number(editForm.quantity);
+    if (editForm.quantity === "" || !Number.isInteger(quantity) || quantity < 0) {
+      setEditError(t("inventory.errQuantityInvalid"));
       return;
     }
     const editingAmmunition = editingItem.category === AMMUNITION_CATEGORY;
@@ -766,7 +773,7 @@ export function InventoryPage() {
     try {
       await updateInventoryItem(editingItem.id, {
         storageLocation: editForm.storageLocation,
-        quantity: Number(editForm.quantity),
+        quantity,
         ...(editingAmmunition
           ? { lowStockThreshold: editForm.lowStockThreshold === "" ? null : Number(editForm.lowStockThreshold) }
           : { condition: editForm.condition }),
@@ -1696,7 +1703,7 @@ export function InventoryPage() {
             type="number"
             min="0"
             value={addForm.quantity}
-            onChange={(e) => setAddForm((f) => ({ ...f, quantity: e.target.value }))}
+            onChange={(e) => setAddForm((f) => ({ ...f, quantity: capRounds(e.target.value) }))}
           />
           {addForm.category === "Firearms" &&
             addForm.weaponType &&
@@ -2108,7 +2115,7 @@ export function InventoryPage() {
             type="number"
             min="0"
             value={editForm.quantity}
-            onChange={(e) => setEditForm((f) => ({ ...f, quantity: e.target.value }))}
+            onChange={(e) => setEditForm((f) => ({ ...f, quantity: capRounds(e.target.value) }))}
           />
         </div>
         {editError && <p style={{ color: "var(--color-danger)", marginTop: 12 }}>{editError}</p>}

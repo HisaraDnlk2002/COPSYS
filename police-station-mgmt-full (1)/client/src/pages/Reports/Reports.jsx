@@ -7,6 +7,7 @@ import { Button, Card, StatCard, Table, Loader, InputField, Badge, SearchableSel
 import { useLanguage } from "../../i18n/useLanguage";
 import { useAuth } from "../../auth/useAuth";
 import { searchOfficers } from "../../services/officers";
+import { getBranchList } from "../../services/branchesAndShifts";
 import {
   getReportsSummary,
   getCrimeDistribution,
@@ -48,12 +49,37 @@ const CATEGORY_LABEL_KEY = {
   exceptions: "catExceptionsTitle",
   station: "catStationTitle",
   performance: "catPerformanceTitle",
+  audit: "catAuditTitle",
 };
 
 function categoryLabelFor(type, t) {
   const key = CATEGORY_LABEL_KEY[type];
   return key ? t(`reports.${key}`) : type;
 }
+
+// Categories that don't fit the requested Inventory/Personnel/Audit tree
+// shape, shown under their own plain "Other Reports" header instead.
+// Duty and Complaints/Crime specifically aren't grouped into a
+// Daily/Weekly/Monthly tree of their own — the Reporting Period buttons
+// on the workbench itself (Today/This Week/This Month/...) already do
+// that same job, so a sidebar sub-tree mirroring it would just be the
+// same choice offered twice.
+const UNGROUPED_TYPES = ["duty", "crime", "officers", "maintenance", "inspections", "exceptions", "station"];
+
+// Every distinct `module` string any controller actually passes to
+// logAuditForActor/logAudit (server/src/utils/auditLogger.js) — AuditLog
+// has no enum for this field, so the filter's option list is this
+// hand-kept match of what's really out there rather than a schema-driven
+// one. Add to both places together if a new module string ever appears.
+const AUDIT_MODULE_OPTIONS = [
+  { value: "Authentication", label: "Authentication" },
+  { value: "Personnel", label: "Personnel" },
+  { value: "Settings", label: "Settings" },
+  { value: "Inventory", label: "Inventory" },
+  { value: "Duty Roster", label: "Duty Roster" },
+  { value: "Leave Requests", label: "Leave Requests" },
+  { value: "Complaints", label: "Complaints" },
+];
 
 // yyyy-mm-dd for date inputs / API payloads
 function toDateInput(date) {
@@ -186,7 +212,16 @@ function complaintCategoryOptions(t) {
 // in sync with FILTER_KEYS_BY_TYPE on the server (reportsController.js) —
 // a key sent here that the server doesn't whitelist for this type is
 // silently dropped there, not rejected.
-function getFilterFields(type, t) {
+function getFilterFields(type, t, branchOptions = []) {
+  // "department" stores a branch name (see Branch.js) — a plain dropdown
+  // sourced from the real branch list (GET /api/branches) instead of a
+  // free-text field the officer has to type/spell correctly.
+  const branchField = {
+    key: "department",
+    kind: "select",
+    label: t("reports.filterBranch"),
+    options: branchOptions.map((b) => ({ value: b.name, label: b.name })),
+  };
   switch (type) {
     case "duty":
       return [
@@ -200,7 +235,7 @@ function getFilterFields(type, t) {
             { value: "night", label: t("status.night") },
           ],
         },
-        { key: "department", kind: "text", label: t("reports.filterDepartment"), placeholder: t("reports.filterDepartmentPlaceholder") },
+        branchField,
       ];
     case "officers":
       return [
@@ -226,7 +261,7 @@ function getFilterFields(type, t) {
             { value: "pending", label: t("status.pending") },
           ],
         },
-        { key: "department", kind: "text", label: t("reports.filterDepartment"), placeholder: t("reports.filterDepartmentPlaceholder") },
+        branchField,
       ];
     case "leave":
       return [
@@ -337,7 +372,26 @@ function getFilterFields(type, t) {
         },
       ];
     case "performance":
-      return [{ key: "department", kind: "text", label: t("reports.filterDepartment"), placeholder: t("reports.filterDepartmentPlaceholder") }];
+      return [branchField];
+    case "audit":
+      return [
+        {
+          key: "module",
+          kind: "select",
+          label: t("reports.filterModule"),
+          options: AUDIT_MODULE_OPTIONS,
+        },
+        {
+          key: "status",
+          kind: "select",
+          label: t("reports.filterStatus"),
+          options: [
+            { value: "success", label: t("reports.auditStatusSuccess") },
+            { value: "failed", label: t("reports.auditStatusFailed") },
+          ],
+        },
+        { key: "userId", kind: "officer", label: t("reports.filterUser") },
+      ];
     default:
       return [];
   }
@@ -349,6 +403,16 @@ export function ReportsPage() {
   const { type: urlType } = useParams();
   const navigate = useNavigate();
   const isOverviewRole = OVERVIEW_ROLES.includes(user.role);
+
+  // Options for the Branch filter (duty/officers/performance) — fetched
+  // once, not per-category, since the branch list is small and shared
+  // app-wide (GET /api/branches is open to any authenticated role).
+  const [branchOptions, setBranchOptions] = useState([]);
+  useEffect(() => {
+    getBranchList()
+      .then((list) => setBranchOptions(list.filter((b) => b.status === "active")))
+      .catch((err) => console.error("Could not load branches for report filter:", err));
+  }, []);
 
   // Only admin/oic ever fetch the Overview (stat cards + charts) — every
   // other role skips that request entirely (see the effect below), so
@@ -387,8 +451,34 @@ export function ReportsPage() {
 
   const [previewData, setPreviewData] = useState(null);
   const [previewing, setPreviewing] = useState(false);
-  const [exporting, setExporting] = useState(null); // "pdf" | "csv" | null
+  const [exporting, setExporting] = useState(null); // "pdf" | "csv" | "xlsx" | null
   const [rowActionId, setRowActionId] = useState(null);
+
+  // Sidebar group headers are collapsible — keeps the tree short by
+  // default instead of always listing every category. A group's default
+  // open/closed state isn't stored here at all: it's just "does this
+  // group contain the active category" (computed in isGroupExpanded
+  // below), so navigating into a category always reveals it without the
+  // sidebar remembering anything. This set only records which groups the
+  // officer has manually clicked — toggling flips that group away from
+  // whatever its default would otherwise be, in either direction (close
+  // the group holding your own active item, or open one that doesn't);
+  // clicking the same header again flips it back to the default.
+  const [toggledGroupKeys, setToggledGroupKeys] = useState(() => new Set());
+
+  function toggleGroup(key) {
+    setToggledGroupKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function isGroupExpanded(group) {
+    const defaultExpanded = group.children.some((c) => c.type === view);
+    return toggledGroupKeys.has(group.key) ? !defaultExpanded : defaultExpanded;
+  }
 
   const CATEGORY_DEFS = useMemo(
     () => [
@@ -404,6 +494,7 @@ export function ReportsPage() {
       { type: "exceptions", title: t("reports.catExceptionsTitle"), desc: t("reports.catExceptionsDesc"), roles: ["admin", "oic", "inventory_officer"] },
       { type: "station", title: t("reports.catStationTitle"), desc: t("reports.catStationDesc"), roles: ["admin", "oic"] },
       { type: "performance", title: t("reports.catPerformanceTitle"), desc: t("reports.catPerformanceDesc"), roles: ["admin", "oic"] },
+      { type: "audit", title: t("reports.catAuditTitle"), desc: t("reports.catAuditDesc"), roles: ["admin"] },
     ],
     [t]
   );
@@ -412,11 +503,61 @@ export function ReportsPage() {
     () => CATEGORY_DEFS.filter((c) => c.roles.includes(user.role)),
     [CATEGORY_DEFS, user.role]
   );
+
+  // Sidebar tree — grouping/labelling only, layered on top of
+  // CATEGORY_DEFS above (which stays the flat source of truth for
+  // role-gating and activeCategory lookup; a type can appear as a leaf
+  // under more than one group here, e.g. "duty" appears both plainly in
+  // UNGROUPED_TYPES below and again under Personnel, without being
+  // defined twice in CATEGORY_DEFS). A group renders only if at least one
+  // of its children's own CATEGORY_DEFS roles includes the signed-in user
+  // — same per-leaf role check as the old flat list, just applied before
+  // deciding whether to show the group header too.
+  const NAV_GROUPS = useMemo(() => {
+    const rolesFor = (type) => CATEGORY_DEFS.find((c) => c.type === type)?.roles || [];
+    return [
+      {
+        key: "inventory-group",
+        title: t("reports.groupInventoryTitle"),
+        children: [
+          { type: "weapons", title: t("reports.catWeaponsTitle"), roles: rolesFor("weapons") },
+          { type: "ammunition", title: t("reports.catAmmunitionTitle"), roles: rolesFor("ammunition") },
+          { type: "ammo_stock", title: t("reports.catAmmoStockTitle"), roles: rolesFor("ammo_stock") },
+        ],
+      },
+      {
+        key: "personnel-group",
+        title: t("reports.groupPersonnelTitle"),
+        children: [
+          { type: "performance", title: t("reports.subAttendance"), roles: rolesFor("performance") },
+          { type: "leave", title: t("reports.catLeaveTitle"), roles: rolesFor("leave") },
+          { type: "duty", title: t("reports.subDuty"), roles: rolesFor("duty") },
+        ],
+      },
+      {
+        key: "audit-group",
+        title: t("reports.groupAuditTitle"),
+        children: [{ type: "audit", title: t("reports.subSystemActivity"), roles: rolesFor("audit") }],
+      },
+    ]
+      .map((group) => ({ ...group, children: group.children.filter((c) => c.roles.includes(user.role)) }))
+      .filter((group) => group.children.length > 0);
+  }, [CATEGORY_DEFS, t, user.role]);
+
+  const ungroupedCategories = useMemo(
+    () => visibleCategories.filter((c) => UNGROUPED_TYPES.includes(c.type)),
+    [visibleCategories]
+  );
+  // Shaped like a NAV_GROUPS entry purely so isGroupExpanded/toggleGroup
+  // (which only look at `.key` and `.children[].type`) work the same way
+  // for the "Other Reports" section as for every real group, without a
+  // separate code path.
+  const otherGroup = useMemo(() => ({ key: "other-group", children: ungroupedCategories }), [ungroupedCategories]);
   const activeCategory = CATEGORY_DEFS.find((c) => c.type === view);
   const categoryAllowed = Boolean(activeCategory && activeCategory.roles.includes(user.role));
   const filterFields = useMemo(
-    () => getFilterFields(activeCategory?.type, t),
-    [activeCategory, t]
+    () => getFilterFields(activeCategory?.type, t, branchOptions),
+    [activeCategory, t, branchOptions]
   );
 
   // Loads one page of the ledger, scoped to `type` when given. Used for
@@ -528,6 +669,12 @@ export function ReportsPage() {
   function applyPreset(p) {
     setPreset(p.key);
     if (p.range) setRange((r) => ({ ...r, ...p.range() }));
+  }
+
+  // Sidebar tree leaf click.
+  function selectCategory(type) {
+    if (type === view) return;
+    navigate(`/reports/${type}`);
   }
 
   function applyHubPreset(p) {
@@ -712,16 +859,60 @@ export function ReportsPage() {
           {t("reports.overview")}
         </button>
       )}
-      {visibleCategories.map((cat) => (
-        <button
-          key={cat.type}
-          type="button"
-          className={`reports-sidenav-item${view === cat.type ? " active" : ""}`}
-          onClick={() => navigate(`/reports/${cat.type}`)}
-        >
-          {cat.title}
-        </button>
-      ))}
+      {NAV_GROUPS.map((group) => {
+        const expanded = isGroupExpanded(group);
+        return (
+          <div className="reports-sidenav-group" key={group.key}>
+            <button
+              type="button"
+              className="reports-sidenav-group-title"
+              onClick={() => toggleGroup(group.key)}
+              aria-expanded={expanded}
+            >
+              <span className={`reports-sidenav-chevron${expanded ? " open" : ""}`}>&#9656;</span>
+              {group.title}
+            </button>
+            {expanded &&
+              group.children.map((child) => (
+                <button
+                  key={`${group.key}-${child.type}`}
+                  type="button"
+                  className={`reports-sidenav-item reports-sidenav-subitem${view === child.type ? " active" : ""}`}
+                  onClick={() => selectCategory(child.type)}
+                >
+                  {child.title}
+                </button>
+              ))}
+          </div>
+        );
+      })}
+      {ungroupedCategories.length > 0 && (() => {
+        const expanded = isGroupExpanded(otherGroup);
+        return (
+          <div className="reports-sidenav-group">
+            <button
+              type="button"
+              className="reports-sidenav-group-title"
+              onClick={() => toggleGroup(otherGroup.key)}
+              aria-expanded={expanded}
+            >
+              <span className={`reports-sidenav-chevron${expanded ? " open" : ""}`}>&#9656;</span>
+              {t("reports.groupOtherTitle")}
+            </button>
+            {expanded &&
+              ungroupedCategories.map((cat) => (
+                <button
+                  key={cat.type}
+                  type="button"
+                  className={`reports-sidenav-item reports-sidenav-subitem${view === cat.type ? " active" : ""}`}
+                  onClick={() => selectCategory(cat.type)}
+                >
+                  {cat.title}
+                </button>
+              ))}
+          </div>
+        );
+      })()}
     </aside>
   );
 
@@ -831,6 +1022,9 @@ export function ReportsPage() {
                   <Button variant="outline" onClick={() => handleExport("csv")} disabled={exporting !== null}>
                     {exporting === "csv" ? t("reports.generating") : t("reports.downloadCsv")}
                   </Button>
+                  <Button variant="outline" onClick={() => handleExport("xlsx")} disabled={exporting !== null}>
+                    {exporting === "xlsx" ? t("reports.generating") : t("reports.downloadExcel")}
+                  </Button>
                   <Button variant="primary" onClick={() => handleExport("pdf")} disabled={exporting !== null}>
                     {exporting === "pdf" ? t("reports.generating") : t("reports.downloadPdf")}
                   </Button>
@@ -936,6 +1130,9 @@ export function ReportsPage() {
 
             <Card variant="panel" className="chart-card">
               <h4>{t("reports.weeklyForceStrength")}</h4>
+              <p style={{ fontSize: 13, color: "var(--color-text-muted)", marginTop: -4, marginBottom: 8 }}>
+                {t("reports.weeklyForceStrengthDesc")}
+              </p>
               <ResponsiveContainer width="100%" height={220}>
                 <LineChart data={forceData}>
                   <CartesianGrid strokeDasharray="3 3" />
