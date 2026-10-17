@@ -208,6 +208,50 @@ async function createWeek(req, res) {
   }
 }
 
+// Station-wide capacity check shared by the staffing preview and
+// generateRoster. Every slot in a week is a different person on a given
+// day (one officer can't hold two shifts, or two branches, on one date),
+// so the TOTAL of every branch's day + night headcount has to fit within
+// the officers actually available — checking each branch on its own
+// (as updateRequirements' per-branch cap does) lets the totals add up to
+// far more than exists, which is what drains the General Pool and leaves
+// "no eligible officers" in the grid. Officers on approved leave for the
+// whole week are excluded; part-week leave is handled day by day by the
+// engine instead.
+async function computeCapacity(week, stationId) {
+  const activeOfficers = await User.find({ stationId, status: "active" }).select("department");
+  const weekEnd = new Date(week.weekStarting);
+  weekEnd.setDate(weekEnd.getDate() + 6);
+  const fullWeekLeave = await LeaveRequest.find({
+    stationId,
+    status: "approved",
+    startDate: { $lte: week.weekStarting },
+    endDate: { $gte: weekEnd },
+  }).select("officerId");
+  const onLeaveAllWeek = new Set(fullWeekLeave.map((l) => l.officerId.toString()));
+  const available = activeOfficers.filter((o) => !onLeaveAllWeek.has(o._id.toString()));
+
+  const daySlots = (week.requirements || []).reduce((n, r) => n + (r.dayRequired || 0), 0);
+  const nightSlots = (week.requirements || []).reduce((n, r) => n + (r.nightRequired || 0), 0);
+  const slotsPerDay = daySlots + nightSlots;
+  // Engine rule: nobody works 7 days straight, so a full 7-day week can
+  // only be covered by roughly 6/7 of the available headcount per day.
+  const restAdjustedCapacity = Math.floor((available.length * 6) / 7);
+
+  return {
+    activeOfficers: activeOfficers.length,
+    availableOfficers: available.length,
+    onLeaveAllWeekCount: activeOfficers.length - available.length,
+    daySlots,
+    nightSlots,
+    slotsPerDay,
+    restAdjustedCapacity,
+    exceeds: slotsPerDay > available.length,
+    tight: slotsPerDay <= available.length && slotsPerDay > restAdjustedCapacity,
+    availableOfficerRows: available,
+  };
+}
+
 // PATCH /api/duty-schedule/weeks/:weekId/requirements — duty_officer:
 // Step 2 of the wizard, "Branch Strength Planning" table. Replaces the
 // whole requirements list each save (the client always sends the full
@@ -263,31 +307,39 @@ async function getStaffingOverview(req, res) {
     const week = await DutyRosterWeek.findById(req.params.weekId);
     if (!week) return res.status(404).json({ error: "Roster week not found" });
 
-    const officers = await User.find({ stationId: req.user.stationId, status: "active" });
+    const { availableOfficerRows, ...capacity } = await computeCapacity(week, req.user.stationId);
     const permanentCountByBranch = new Map();
-    for (const o of officers) {
+    for (const o of availableOfficerRows) {
       permanentCountByBranch.set(o.department, (permanentCountByBranch.get(o.department) || 0) + 1);
     }
-    const generalPoolAvailable = officers.filter((o) => isGeneralPoolBranch(o.department)).length;
+    const generalPoolAvailable = availableOfficerRows.filter((o) => isGeneralPoolBranch(o.department)).length;
 
     const overview = week.requirements.map((r) => {
       const permAvailable = permanentCountByBranch.get(r.branch) || 0;
-      return {
-        branch: r.branch,
-        day: {
-          required: r.dayRequired,
+      const isPoolBranch = isGeneralPoolBranch(r.branch);
+      const shiftRow = (required) => {
+        const shortage = Math.max(0, required - permAvailable);
+        return {
+          required,
           permAvailable,
-          shortage: Math.max(0, r.dayRequired - permAvailable),
-        },
-        night: {
-          required: r.nightRequired,
-          permAvailable,
-          shortage: Math.max(0, r.nightRequired - permAvailable),
-        },
+          shortage,
+          // What's still missing even after borrowing the whole pool —
+          // the pool can't cover its own branch, so that one is unchanged.
+          uncoveredAfterPool: isPoolBranch ? shortage : Math.max(0, shortage - generalPoolAvailable),
+        };
       };
+      return { branch: r.branch, day: shiftRow(r.dayRequired), night: shiftRow(r.nightRequired) };
     });
 
-    return res.json({ overview, generalPoolAvailable });
+    // The pool is shared: every branch's shortage draws from the same
+    // officers, so the per-row "after pool" figure is optimistic on its
+    // own. This is the combined demand against the single pool.
+    const poolDemand = overview
+      .filter((row) => !isGeneralPoolBranch(row.branch))
+      .reduce((n, row) => n + row.day.shortage + row.night.shortage, 0);
+    const poolShortfall = Math.max(0, poolDemand - generalPoolAvailable);
+
+    return res.json({ overview, generalPoolAvailable, poolDemand, poolShortfall, capacity });
   } catch (err) {
     console.error("getStaffingOverview error:", err);
     return res.status(500).json({ error: "Could not compute staffing overview" });
@@ -476,6 +528,19 @@ async function generateRoster(req, res) {
     }
     targets = targets.filter((t) => t.required > 0);
 
+    // Block generation outright when the week's total requested slots
+    // can't be staffed by the officers who exist (see computeCapacity).
+    const { availableOfficerRows: _unusedRows, ...capacity } = await computeCapacity(week, req.user.stationId);
+    if (capacity.exceeds) {
+      return res.status(400).json({
+        error:
+          `Requested ${capacity.slotsPerDay} duty slots per day (${capacity.daySlots} day + ${capacity.nightSlots} night) ` +
+          `but only ${capacity.availableOfficers} active officers are available. ` +
+          `Reduce the branch requirements before generating.`,
+        capacity,
+      });
+    }
+
     if (targets.length === 0) {
       return res.status(400).json({ error: "Nothing to generate — set a required headcount above 0 first." });
     }
@@ -542,7 +607,12 @@ async function generateRoster(req, res) {
       previousShiftCounts.set(id, counts);
     }
     const previousShiftByOfficer = new Map(
-      Array.from(previousShiftCounts, ([id, counts]) => [id, counts.night > counts.day ? "night" : "day"])
+      Array.from(previousShiftCounts)
+        // A tie (equal day and night shifts) gives no clear "last shift",
+        // so that officer gets no rotation preference rather than being
+        // arbitrarily treated as a day-shift worker.
+        .filter(([, counts]) => counts.night !== counts.day)
+        .map(([id, counts]) => [id, counts.night > counts.day ? "night" : "day"])
     );
 
     let allAssignments = [];
@@ -581,6 +651,9 @@ async function generateRoster(req, res) {
         department: a.department,
         assignmentType: a.assignmentType,
         status: a.status,
+        absenceReason: a.absenceReason || null,
+        substituteFor: a.substituteFor || null,
+        rotationRelaxed: Boolean(a.rotationRelaxed),
         stationId: req.user.stationId,
         createdBy: req.user.uid,
       }))

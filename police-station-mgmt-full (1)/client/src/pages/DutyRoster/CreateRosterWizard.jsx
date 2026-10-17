@@ -443,6 +443,54 @@ export function CreateRosterWizard({ onCancel, onComplete, existingWeek, existin
           {overview && (
             <div style={{ marginTop: 24 }}>
               <h3>{t("dutyRoster.wizard.initialStaffing")}</h3>
+              {overview.capacity?.exceeds && (
+                <div
+                  role="alert"
+                  style={{
+                    marginBottom: 12,
+                    padding: "10px 12px",
+                    borderRadius: 6,
+                    fontSize: 13,
+                    background: "var(--color-danger-bg, #fee2e2)",
+                    color: "var(--color-danger, #dc2626)",
+                  }}
+                >
+                  You've requested {overview.capacity.slotsPerDay} duty slots per day ({overview.capacity.daySlots} day +{" "}
+                  {overview.capacity.nightSlots} night) but only {overview.capacity.availableOfficers} active officers are
+                  available. Reduce the requirements above and save again before generating.
+                </div>
+              )}
+              {overview.capacity?.tight && (
+                <div
+                  style={{
+                    marginBottom: 12,
+                    padding: "10px 12px",
+                    borderRadius: 6,
+                    fontSize: 13,
+                    background: "var(--color-warning-bg, #fef3c7)",
+                    color: "var(--color-warning, #d97706)",
+                  }}
+                >
+                  {overview.capacity.slotsPerDay} slots per day fits the {overview.capacity.availableOfficers} available
+                  officers, but with the 6-consecutive-day rest rule only about {overview.capacity.restAdjustedCapacity} can
+                  be covered every day of the week, so some days may come out short.
+                </div>
+              )}
+              {overview.poolShortfall > 0 && !overview.capacity?.exceeds && (
+                <div
+                  style={{
+                    marginBottom: 12,
+                    padding: "10px 12px",
+                    borderRadius: 6,
+                    fontSize: 13,
+                    background: "var(--color-warning-bg, #fef3c7)",
+                    color: "var(--color-warning, #d97706)",
+                  }}
+                >
+                  Branch shortages need {overview.poolDemand} General Duty officers per day, but the pool only has{" "}
+                  {overview.generalPoolAvailable}. Some branches will stay short.
+                </div>
+              )}
               {overview.overview.map((row) => (
                 <div key={row.branch} style={{ marginBottom: 16 }}>
                   <div style={{ fontWeight: 600, marginBottom: 6 }}>
@@ -460,6 +508,7 @@ export function CreateRosterWizard({ onCancel, onComplete, existingWeek, existin
                         <th>{t("dutyRoster.requiredStaffing")}</th>
                         <th>{t("dutyRoster.wizard.permAvailable")}</th>
                         <th>{t("dutyRoster.wizard.shortage")}</th>
+                        <th>After pool</th>
                         <th>{t("dutyRoster.wizard.action")}</th>
                       </tr>
                     </thead>
@@ -481,13 +530,20 @@ export function CreateRosterWizard({ onCancel, onComplete, existingWeek, existin
                               <td style={{ color: shiftRow.shortage > 0 ? "var(--color-danger, #dc2626)" : "inherit" }}>
                                 {shiftRow.shortage}
                               </td>
+                              <td
+                                style={{
+                                  color: shiftRow.uncoveredAfterPool > 0 ? "var(--color-danger, #dc2626)" : "inherit",
+                                }}
+                              >
+                                {shiftRow.uncoveredAfterPool ?? shiftRow.shortage}
+                              </td>
                                                         <td>
                                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                   {isDone && <Badge status="approved" label={t("dutyRoster.wizard.allocated")} />}
                                   <Button
                                     variant="outline"
                                     onClick={() => runSmartAllocation(row.branch, shiftType)}
-                                    disabled={isAllocating}
+                                    disabled={isAllocating || Boolean(overview?.capacity?.exceeds)}
                                   >
                                     {isAllocating
                                       ? t("dutyRoster.wizard.allocating")
@@ -505,7 +561,7 @@ export function CreateRosterWizard({ onCancel, onComplete, existingWeek, existin
                             </tr>
                             {isExpanded && notes?.length > 0 && (
                               <tr>
-                                <td colSpan={5} style={{ background: "var(--color-bg-subtle, #f9fafb)" }}>
+                                <td colSpan={6} style={{ background: "var(--color-bg-subtle, #f9fafb)" }}>
                                   <ul style={{ listStyle: "none", margin: 0, padding: "8px 4px", display: "grid", gap: 4 }}>
                                     {notes.map((note) => (
                                       <li key={note.officerId} style={{ fontSize: 12, display: "flex", gap: 8 }}>
@@ -542,7 +598,9 @@ export function CreateRosterWizard({ onCancel, onComplete, existingWeek, existin
             <Button
               variant="outline"
               onClick={handleGenerateAllRemaining}
-              disabled={!overview || activeRequirements.length === 0 || allocatingKey === "__all__"}
+              disabled={
+                !overview || activeRequirements.length === 0 || allocatingKey === "__all__" || Boolean(overview?.capacity?.exceeds)
+              }
             >
               {allocatingKey === "__all__" ? t("dutyRoster.wizard.allocating") : t("dutyRoster.wizard.generateAllRemaining")}
             </Button>

@@ -64,6 +64,13 @@ const dutyScheduleSchema = new mongoose.Schema(
     removedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     removedAt: { type: Date, default: null },
 
+    // True when this officer was placed on the same shift type (day or
+    // night) they already worked the previous roster week, because no
+    // officer who'd rotate onto it was left to fill the slot. Rotation
+    // is a soft rule, so the slot is filled and flagged rather than left
+    // empty — shown as a small tag in the weekly grid.
+    rotationRelaxed: { type: Boolean, default: false },
+
     stationId: { type: String, default: "default-station" },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },

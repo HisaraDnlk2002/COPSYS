@@ -125,6 +125,14 @@ function ShiftChip({ shift, hasDoubleShift, onLeave, editable, onRemove, t }) {
           ? t("dutyRoster.grid.poolTag")
           : t("dutyRoster.grid.permTag")}
       </span>
+      {shift.rotationRelaxed && !isAbsent && (
+        <span
+          title="Same shift type as last week: no other officer was left to rotate onto this slot"
+          style={{ fontSize: 10, fontWeight: 700 }}
+        >
+          ↻
+        </span>
+      )}
     </div>
   );
 }
@@ -204,6 +212,7 @@ export function WeeklyGrid({ week, shifts, officers, leaveRequests, editable, on
   const [assignTarget, setAssignTarget] = useState(null); // { branch, shiftType, date }
   const [assignDutyType, setAssignDutyType] = useState("");
   const [assigning, setAssigning] = useState(false);
+  const [assignError, setAssignError] = useState("");
   const [removeTarget, setRemoveTarget] = useState(null); // the shift pending removal (spec §13 — reason required)
   const [removeReason, setRemoveReason] = useState("");
   const [removing, setRemoving] = useState(false);
@@ -259,6 +268,7 @@ export function WeeklyGrid({ week, shifts, officers, leaveRequests, editable, on
   async function handleAssignOfficer(officer) {
     if (!assignTarget) return;
     setAssigning(true);
+    setAssignError("");
     try {
       const { shiftStart, shiftEnd } = assignTarget.shiftType === "night"
         ? { shiftStart: "20:00", shiftEnd: "08:00" }
@@ -278,6 +288,9 @@ export function WeeklyGrid({ week, shifts, officers, leaveRequests, editable, on
       onChanged();
     } catch (err) {
       console.error("Could not assign officer:", err);
+      // Show the server's reason (locked week, leave conflict, wrong
+      // role...) instead of leaving the dialog looking unresponsive.
+      setAssignError(err?.message || err?.response?.data?.error || "Could not assign this officer.");
     } finally {
       setAssigning(false);
     }
@@ -300,6 +313,36 @@ export function WeeklyGrid({ week, shifts, officers, leaveRequests, editable, on
         !alreadyWorkingIds.has(o.id) &&
         !officerOnLeave(o.id, date, leaveRequests)
     );
+  }
+
+  // Officers who belong to this branch (or the General Pool) but can't
+  // be offered for this date, each with the reason — so an empty picker
+  // explains itself instead of just saying "no eligible officers".
+  function excludedOfficersFor(branch, date) {
+    const dateKey = isoDate(date);
+    const workingByOfficerId = new Map();
+    shifts.forEach((s) => {
+      if (s.status === "absent") return;
+      if (isoDate(s.date) !== dateKey) return;
+      const officerId = typeof s.officerId === "object" ? s.officerId.id || s.officerId._id : s.officerId;
+      workingByOfficerId.set(officerId, s);
+    });
+
+    const excluded = [];
+    officers.forEach((o) => {
+      if (!(o.department === branch || isGeneralPoolBranch(o.department))) return;
+      let reason = "";
+      if (o.status !== "active") {
+        reason = "Not an active account";
+      } else if (workingByOfficerId.has(o.id)) {
+        const s = workingByOfficerId.get(o.id);
+        reason = `Already on the ${s.shiftType === "night" ? "night" : "day"} shift that day (${branchLabel(s.department)})`;
+      } else if (officerOnLeave(o.id, date, leaveRequests)) {
+        reason = "On approved leave";
+      }
+      if (reason) excluded.push({ officer: o, reason });
+    });
+    return excluded;
   }
 
   if (requirements.length === 0) {
@@ -381,7 +424,10 @@ export function WeeklyGrid({ week, shifts, officers, leaveRequests, editable, on
 
       <Modal
         open={Boolean(assignTarget)}
-        onClose={() => setAssignTarget(null)}
+        onClose={() => {
+          setAssignTarget(null);
+          setAssignError("");
+        }}
         title={t("dutyRoster.grid.assignModalTitle")}
       >
         {assignTarget && (
@@ -400,13 +446,54 @@ export function WeeklyGrid({ week, shifts, officers, leaveRequests, editable, on
               options={DUTY_TYPES.map((v) => ({ value: v, label: v }))}
               helperText={t("dutyRoster.grid.dutyTypeHelper")}
             />
+            {assignError && (
+              <div
+                role="alert"
+                style={{
+                  margin: "8px 0",
+                  padding: "8px 10px",
+                  borderRadius: 4,
+                  fontSize: 13,
+                  background: "var(--color-danger-bg, #fee2e2)",
+                  color: "var(--color-danger, #dc2626)",
+                }}
+              >
+                {assignError}
+              </div>
+            )}
             {assigning ? (
               <Loader label={t("dutyRoster.grid.assigning")} />
             ) : (
               (() => {
                 const candidates = eligibleOfficersFor(assignTarget.branch, assignTarget.date);
                 if (candidates.length === 0) {
-                  return <p style={{ color: "var(--color-text-muted)" }}>{t("dutyRoster.grid.noEligibleForSlot")}</p>;
+                  const excluded = excludedOfficersFor(assignTarget.branch, assignTarget.date);
+                  return (
+                    <div>
+                      <p style={{ color: "var(--color-text-muted)" }}>{t("dutyRoster.grid.noEligibleForSlot")}</p>
+                      {excluded.length === 0 ? (
+                        <p style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
+                          No officers are assigned to {branchLabel(assignTarget.branch)} or the General Duty pool. Check that
+                          officers' department names match this branch exactly.
+                        </p>
+                      ) : (
+                        <>
+                          <div style={{ fontSize: 12, fontWeight: 600, margin: "8px 0 4px" }}>Why nobody is available:</div>
+                          <ul style={{ listStyle: "none", padding: 0, margin: 0, fontSize: 12 }}>
+                            {excluded.map(({ officer, reason }) => (
+                              <li
+                                key={officer.id}
+                                style={{ padding: "4px 0", borderBottom: "1px solid var(--color-border, #e5e7eb)" }}
+                              >
+                                <span style={{ fontWeight: 600 }}>{officer.fullName}</span>
+                                <span style={{ color: "var(--color-text-muted)" }}> — {reason}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </>
+                      )}
+                    </div>
+                  );
                 }
                 return (
                   <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>

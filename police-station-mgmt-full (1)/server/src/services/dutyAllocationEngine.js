@@ -200,45 +200,80 @@ function generateWeeklyRoster({
     const dateKey = isoDate(date);
     const takenToday = excludeByDate.get(dateKey) || new Set();
 
-    // Rule: leave officers, and officers already committed to another
-    // branch/shift that same date, are excluded outright.
-    const filterAvailable = (list) =>
+    // Rule: officers already committed to another branch/shift that same
+    // date, officers on approved leave, and officers who've hit the
+    // consecutive-day cap are excluded. `ignoreLeave` + `record: false`
+    // is used for the "who WOULD have been picked" pass below, which
+    // must not double-count anyone in the per-officer stats.
+    const filterAvailable = (list, { ignoreLeave = false, record = true } = {}) =>
       list.filter((officer) => {
         if (takenToday.has(officer.id)) {
-          statFor(officer).daysExcludedTaken += 1;
+          if (record) statFor(officer).daysExcludedTaken += 1;
           return false;
         }
-        const onLeave = isOnLeave(officer, date, approvedLeaveRequests);
-        if (onLeave) {
-          excludedOfficerIdsSet.add(officer.id);
-          statFor(officer).daysExcludedLeave += 1;
+        if (!ignoreLeave && isOnLeave(officer, date, approvedLeaveRequests)) {
+          if (record) {
+            excludedOfficerIdsSet.add(officer.id);
+            statFor(officer).daysExcludedLeave += 1;
+          }
           return false;
         }
         if (!tracker.canAssign(officer.id)) {
-          statFor(officer).daysExcludedRest += 1;
+          if (record) statFor(officer).daysExcludedRest += 1;
           return false;
         }
         return true;
       });
 
+    // Pass 1: the branch's own permanent officers, balanced by rank and
+    // preferring whoever did NOT work this shift type last week.
+    // Pass 2: any shortfall is filled from the General Pool, same rules.
+    // Rotation is a soft preference — same-shift officers are only used
+    // once everyone else is exhausted, and then they get flagged
+    // (rotationRelaxed) rather than the slot being left empty.
+    const pick = (permanentList, poolList) => {
+      const permanentSplit = splitByRotationPreference(permanentList, shiftType, previousShiftByOfficer);
+      const orderedPermanent = [
+        ...roundRobinByRank(permanentSplit.rotated),
+        ...roundRobinByRank(permanentSplit.sameAsLastWeek),
+      ];
+      const chosenPermanent = orderedPermanent.slice(0, requiredStaffing);
+      const shortfall = requiredStaffing - chosenPermanent.length;
+      const generalPoolSplit = splitByRotationPreference(poolList, shiftType, previousShiftByOfficer);
+      const orderedGeneralPool = [
+        ...roundRobinByRank(generalPoolSplit.rotated),
+        ...roundRobinByRank(generalPoolSplit.sameAsLastWeek),
+      ];
+      const chosenGeneralPool = shortfall > 0 ? orderedGeneralPool.slice(0, shortfall) : [];
+      return { permanentSplit, generalPoolSplit, chosenPermanent, chosenGeneralPool };
+    };
+
     const availablePermanent = filterAvailable(permanentOfficers);
     const availableGeneralPool = filterAvailable(generalPoolOfficers);
-
-    // Rule: fill from permanent branch officers first, balancing rank via
-    // round-robin — but within that, prefer whoever *didn't* work this
-    // same shift type last week, so the rotation rule and the rank
-    // balance rule don't fight each other (rotation picks the pool,
-    // round-robin picks the order within it).
-    const permanentSplit = splitByRotationPreference(availablePermanent, shiftType, previousShiftByOfficer);
-    const orderedPermanent = [...roundRobinByRank(permanentSplit.rotated), ...roundRobinByRank(permanentSplit.sameAsLastWeek)];
-    const chosenPermanent = orderedPermanent.slice(0, requiredStaffing);
-
-    const shortfall = requiredStaffing - chosenPermanent.length;
-    const generalPoolSplit = splitByRotationPreference(availableGeneralPool, shiftType, previousShiftByOfficer);
-    const orderedGeneralPool = [...roundRobinByRank(generalPoolSplit.rotated), ...roundRobinByRank(generalPoolSplit.sameAsLastWeek)];
-    const chosenGeneralPool = shortfall > 0 ? orderedGeneralPool.slice(0, shortfall) : [];
-
+    const { permanentSplit, generalPoolSplit, chosenPermanent, chosenGeneralPool } = pick(
+      availablePermanent,
+      availableGeneralPool
+    );
     const chosenToday = [...chosenPermanent, ...chosenGeneralPool];
+
+    // Leave overlay: work out who WOULD have been picked if nobody were
+    // on leave. Anyone in that set who's on leave stays visible on the
+    // grid as an "absent / leave" row, and the officer who actually
+    // covers the slot is tagged SUBSTITUTE with substituteFor pointing
+    // at them — the same shape autoSubstituteForApprovedLeave produces
+    // for leave approved after a roster exists.
+    const intended = pick(
+      filterAvailable(permanentOfficers, { ignoreLeave: true, record: false }),
+      filterAvailable(generalPoolOfficers, { ignoreLeave: true, record: false })
+    );
+    const intendedChosen = [...intended.chosenPermanent, ...intended.chosenGeneralPool];
+    const intendedIds = new Set(intendedChosen.map((o) => o.id));
+    const onLeaveIntended = intendedChosen.filter((o) => isOnLeave(o, date, approvedLeaveRequests));
+    const substituteQueue = chosenToday.filter((o) => !intendedIds.has(o.id));
+    const substituteForByOfficerId = new Map();
+    substituteQueue.forEach((officer, idx) => {
+      if (onLeaveIntended[idx]) substituteForByOfficerId.set(officer.id, onLeaveIntended[idx].id);
+    });
 
     // Anyone available-but-not-picked today was either just extra
     // headcount beyond what was required, or specifically pushed back
@@ -268,32 +303,34 @@ function generateWeeklyRoster({
     }
     excludeByDate.set(dateKey, takenToday);
 
-    for (const officer of chosenPermanent) {
+    const baseRow = { date, day: dayName, shiftType, shiftStart, shiftEnd, department };
+
+    // Preserved on-leave rows come first so they sit next to the
+    // substitute in the grid. Not counted as "taken" — they aren't working.
+    for (const officer of onLeaveIntended) {
       assignments.push({
+        ...baseRow,
         officerId: officer.id,
-        date,
-        day: dayName,
-        shiftType,
-        shiftStart,
-        shiftEnd,
-        department,
-        assignmentType: "PERMANENT",
+        assignmentType: intended.chosenGeneralPool.includes(officer) ? "GENERAL_POOL" : "PERMANENT",
+        status: "absent",
+        absenceReason: "leave",
+        rotationRelaxed: false,
+      });
+    }
+
+    const pushChosen = (officer, assignmentType) => {
+      const substituteFor = substituteForByOfficerId.get(officer.id) || null;
+      assignments.push({
+        ...baseRow,
+        officerId: officer.id,
+        assignmentType: substituteFor ? "SUBSTITUTE" : assignmentType,
+        substituteFor,
         status: "pending", // Duty Officer reviews before submitting
+        rotationRelaxed: sameAsLastWeekIdsToday.has(officer.id),
       });
-    }
-    for (const officer of chosenGeneralPool) {
-      assignments.push({
-        officerId: officer.id,
-        date,
-        day: dayName,
-        shiftType,
-        shiftStart,
-        shiftEnd,
-        department,
-        assignmentType: "GENERAL_POOL",
-        status: "pending",
-      });
-    }
+    };
+    for (const officer of chosenPermanent) pushChosen(officer, "PERMANENT");
+    for (const officer of chosenGeneralPool) pushChosen(officer, "GENERAL_POOL");
   }
 
   const candidateNotes = Array.from(candidateStats.values()).map((stat) => ({
