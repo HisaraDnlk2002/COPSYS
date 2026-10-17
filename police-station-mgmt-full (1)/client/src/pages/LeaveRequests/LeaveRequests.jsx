@@ -235,11 +235,14 @@ export function LeaveRequestsPage() {
       setFormError(t("leave.errDoctorNoteRequired"));
       return;
     }
-    if (!form.actingOfficerOption) {
+        if (!form.actingOfficerOption) {
       setFormError(t("leave.errActingOfficerRequired"));
       return;
     }
-
+    if (form.emergencyContact.length !== 10) {
+      setFormError(t("personnel.errPhoneLength"));
+      return;
+    }
     setSubmitting(true);
     try {
       await applyForLeave(
@@ -391,7 +394,7 @@ export function LeaveRequestsPage() {
               type="tel"
               required
               value={form.emergencyContact}
-              onChange={(e) => updateField("emergencyContact", e.target.value)}
+                            onChange={(e) => updateField("emergencyContact", e.target.value.replace(/\D/g, "").slice(0, 10))}
               placeholder={t("leave.emergencyContactPlaceholder")}
             />
 

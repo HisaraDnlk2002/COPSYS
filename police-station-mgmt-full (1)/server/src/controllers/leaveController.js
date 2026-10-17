@@ -57,8 +57,12 @@ async function create(req, res) {
   const { leaveType, startDate, endDate, justification, actingOfficerId, emergencyContact } = req.body;
   const files = req.files || [];
 
-  if (!leaveType || !startDate || !endDate) {
+    if (!leaveType || !startDate || !endDate) {
     return res.status(400).json({ error: "Leave type, start date and end date are required" });
+  }
+
+  if (emergencyContact && !/^\d{10}$/.test(String(emergencyContact).trim())) {
+    return res.status(400).json({ error: "Emergency contact must be exactly 10 digits" });
   }
 
   const days = daysBetween(startDate, endDate);

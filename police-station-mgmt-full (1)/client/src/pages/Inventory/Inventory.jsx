@@ -367,20 +367,55 @@ export function InventoryPage() {
   // this run (with an empty query) as soon as it's focused, so the
   // officer's issued weapon(s) show immediately rather than requiring
   // the Inventory Officer to type anything.
+  // Every (officer, weapon) pair that's currently out, netted the same
+  // way as getOutstandingItemIds but across ALL officers — so the Return
+  // form can also find a weapon by typing its Item ID (or the holder's
+  // name) before an officer has been picked.
+  function getAllOutstandingHoldings() {
+    const net = new Map(); // `${officerId}|${itemId}` -> { officer, itemId, n }
+    const bump = (tx, sign) => {
+      if (!tx.officerId?._id || !tx.itemId?._id) return;
+      const key = `${tx.officerId._id}|${tx.itemId._id}`;
+      const entry = net.get(key) || { officer: tx.officerId, itemId: tx.itemId._id, n: 0 };
+      entry.n += sign * (tx.quantity || 1);
+      net.set(key, entry);
+    };
+    issueTx.forEach((tx) => bump(tx, 1));
+    [...returnTx, ...damagedTx].forEach((tx) => bump(tx, -1));
+    return [...net.values()].filter((e) => e.n > 0);
+  }
+
   async function searchOfficerIssuedItems(query) {
-    if (!returnForm.officer) return [];
     const q = query.toLowerCase();
-    const outstandingIds = getOutstandingItemIds(returnForm.officer.value);
-    return items
-      .filter(
-        (i) =>
-          outstandingIds.has(i.id) &&
-          (i.itemId.toLowerCase().includes(q) || i.itemName.toLowerCase().includes(q))
-      )
-      .map((i) => ({
-        value: i.id,
-        label: `${i.itemId} — ${i.itemName}`,
-        subtitle: i.category,
+    const officerChosen = Boolean(returnForm.officer);
+    return getAllOutstandingHoldings()
+      .filter((h) => !officerChosen || h.officer._id === returnForm.officer.value)
+      .map((h) => ({ h, item: items.find((i) => i.id === h.itemId) }))
+      .filter(({ item }) => Boolean(item))
+      .filter(({ h, item }) => {
+        if (item.itemId.toLowerCase().includes(q) || item.itemName.toLowerCase().includes(q)) return true;
+        // Before an officer is chosen, the holder's name / rank number
+        // is searchable too.
+        return (
+          !officerChosen &&
+          ((h.officer.fullName || "").toLowerCase().includes(q) ||
+            (h.officer.rankAndNumber || "").toLowerCase().includes(q))
+        );
+      })
+      .map(({ h, item }) => ({
+        value: item.id,
+        label: `${item.itemId} — ${item.itemName}`,
+        subtitle: officerChosen
+          ? item.category
+          : `${t("inventory.heldBy")} ${h.officer.fullName} — ${h.officer.rankAndNumber}`,
+        // Used to fill the officer in when the weapon is picked first.
+        heldBy: {
+          value: h.officer._id,
+          label: `${h.officer.fullName} — ${h.officer.rankAndNumber}`,
+          fullName: h.officer.fullName,
+          rankAndNumber: h.officer.rankAndNumber,
+          department: h.officer.department,
+        },
       }));
   }
 
@@ -1195,7 +1230,17 @@ export function InventoryPage() {
         {canManage && (
           <div className="inventory-header-actions">
             <Button variant="outline" onClick={() => setOpenModal("issue")}>{t("inventory.issueItem")}</Button>
-            <Button variant="outline" onClick={() => setOpenModal("return")}>{t("inventory.returnItem")}</Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                // Re-read the ledger so a weapon issued moments ago (or from
+                // another session) is in the Return picker's list.
+                loadAll().catch((err) => console.error("Failed to refresh inventory:", err));
+                setOpenModal("return");
+              }}
+            >
+              {t("inventory.returnItem")}
+            </Button>
             <Button variant="primary" onClick={() => setOpenModal("add")}>{t("inventory.addNewItem")}</Button>
           </div>
         )}
@@ -1492,16 +1537,21 @@ export function InventoryPage() {
               // re-typing facts already on file. Still just a starting
               // point: every field stays editable for a partial return
               // or a correction.
-              const sourceIssue = findOpenIssueRecord(returnForm.officer?.value, opt?.value);
+              // Picked the weapon before choosing an officer: fill the
+              // officer in from whoever currently holds it.
+              const officerOpt = returnForm.officer || opt?.heldBy || null;
+              const sourceIssue = findOpenIssueRecord(officerOpt?.value, opt?.value);
               setReturnSourceIssue(sourceIssue);
               setReturnForm((f) => ({
                 ...f,
+                officer: officerOpt,
                 item: opt,
                 ammoIssued: sourceIssue?.ammoIssued != null ? String(sourceIssue.ammoIssued) : "",
               }));
             }}
             searchFn={searchOfficerIssuedItems}
-            placeholder={returnForm.officer ? t("inventory.colItemId") : t("inventory.selectOfficerFirst")}
+            placeholder={t("inventory.colItemId")}
+            emptyText={returnForm.officer ? t("inventory.noWeaponIssuedToOfficer") : t("inventory.noIssuedWeapons")}
             helperText={
               returnSourceIssue
                 ? `${t("inventory.prefilledFromIssue")} ${formatDate(returnSourceIssue.dateTime)} (${returnSourceIssue.dutyType || "—"})`

@@ -2,8 +2,6 @@ import { useState, useRef, useEffect } from "react";
 import "../InputField/InputField.css";
 import "./SearchableSelect.css";
 
-let debounceTimer;
-
 // A text input that searches asynchronously as the user types and lets
 // them pick one result from a dropdown, instead of free-typing a value.
 //
@@ -21,6 +19,7 @@ export function SearchableSelect({
   error,
   helperText,
   minChars = 1,
+  emptyText = "No matches found",
   id,
 }) {
   const [query, setQuery] = useState(value?.label || "");
@@ -29,6 +28,13 @@ export function SearchableSelect({
   const [loading, setLoading] = useState(false);
   const [highlighted, setHighlighted] = useState(-1);
   const containerRef = useRef(null);
+  // One timer / request counter PER field. These used to be a single
+  // module-level timer shared by every SearchableSelect on screen, so
+  // focusing or typing in one field (e.g. the Return form's weapon
+  // picker) cancelled a pending search in another field (the officer
+  // picker), and a slow earlier response could overwrite a newer one.
+  const debounceRef = useRef(null);
+  const requestIdRef = useRef(0);
   const inputId = id || label?.toLowerCase().replace(/\s+/g, "-");
 
   useEffect(() => {
@@ -50,22 +56,24 @@ export function SearchableSelect({
   }, []);
 
   function runSearch(text) {
-    clearTimeout(debounceTimer);
+    clearTimeout(debounceRef.current);
     if (text.trim().length < minChars) {
+      requestIdRef.current += 1;
       setOptions([]);
       return;
     }
 
-    debounceTimer = setTimeout(async () => {
+    debounceRef.current = setTimeout(async () => {
+      const requestId = ++requestIdRef.current;
       setLoading(true);
       try {
         const results = await searchFn(text.trim());
-        setOptions(results || []);
+        if (requestId === requestIdRef.current) setOptions(results || []);
       } catch (err) {
-        console.error("Officer search failed:", err);
-        setOptions([]);
+        console.error("Search failed:", err);
+        if (requestId === requestIdRef.current) setOptions([]);
       } finally {
-        setLoading(false);
+        if (requestId === requestIdRef.current) setLoading(false);
       }
     }, 300);
   }
@@ -150,7 +158,7 @@ export function SearchableSelect({
               <li className="searchable-select-empty">Searching…</li>
             )}
             {!loading && options.length === 0 && (
-              <li className="searchable-select-empty">No matches found</li>
+              <li className="searchable-select-empty">{emptyText}</li>
             )}
             {options.map((opt, i) => (
               <li
