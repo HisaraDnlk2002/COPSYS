@@ -28,6 +28,7 @@ const ALERT_PRIORITY = {
   low_ammo_stock: "warning",
   confirmation_overdue: "warning",
   accessories_missing: "warning",
+  confirmation_rejected: "warning",
 };
 
 // Next ref ID after whatever's already in use. Deliberately NOT based on

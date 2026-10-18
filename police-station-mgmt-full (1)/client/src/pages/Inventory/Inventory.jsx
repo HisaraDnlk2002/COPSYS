@@ -15,6 +15,7 @@ import {
   returnItem as returnItemRequest,
   reportMissing,
   restockItem,
+  reviewTransaction,
 } from "../../services/inventory";
 import { getMaintenanceRecords, updateMaintenanceRecord, returnMaintenanceToStock } from "../../services/maintenance";
 import { getInspections, createInspection } from "../../services/inspections";
@@ -140,10 +141,25 @@ const EMPTY_RETURN_FORM = {
   missingAccessories: [],
   accessoriesRemarks: "",
 };
+// Read-only "label: value" box used by the Inspection and Review modals
+// (same look as the confirm-details box on the My Weapons page).
+const DETAIL_BOX_STYLE = {
+  background: "var(--color-surface-muted)",
+  borderRadius: "var(--radius-md)",
+  padding: "var(--space-md)",
+  marginBottom: "var(--space-md)",
+  fontSize: "var(--font-size-sm)",
+};
+const DETAIL_ROW_STYLE = { margin: "0 0 6px" };
+
+// Sentinel value of the "add a new type" option in the Type dropdown —
+// choosing it reveals a text box to type a type that isn't in the list.
+const CUSTOM_TYPE = "__custom__";
 const EMPTY_ADD_FORM = {
   weaponSerialId: "",
   quantity: "",
   weaponType: "",
+  customType: "",
   category: "",
   caliber: "",
   storageLocation: "",
@@ -233,6 +249,12 @@ export function InventoryPage() {
   const [inspectingItem, setInspectingItem] = useState(null);
   const [inspectionForm, setInspectionForm] = useState(null);
   const [inspectionSubmitting, setInspectionSubmitting] = useState(false);
+  // Inspection History "View" details.
+  const [viewingInspection, setViewingInspection] = useState(null);
+  // Reviewing a transaction the officer rejected: { tx, action: "resend" | "cancel" }.
+  const [reviewing, setReviewing] = useState(null);
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewError, setReviewError] = useState("");
   const [inspectionError, setInspectionError] = useState("");
 
   // The Inventory item currently open in the "Report Missing" modal, or null.
@@ -349,11 +371,15 @@ export function InventoryPage() {
   // of how the line's stock count reads.
   function getOutstandingItemIds(officerValue) {
     const net = new Map(); // item's Mongo id -> units still outstanding
+    // A cancelled record (rejected by the officer, then voided by the
+    // Inventory Officer) never counts, either way.
     for (const tx of issueTx) {
+      if (tx.confirmationStatus === "cancelled") continue;
       if (tx.officerId?._id !== officerValue || !tx.itemId?._id) continue;
       net.set(tx.itemId._id, (net.get(tx.itemId._id) || 0) + (tx.quantity || 1));
     }
     for (const tx of [...returnTx, ...damagedTx]) {
+      if (tx.confirmationStatus === "cancelled") continue;
       if (tx.officerId?._id !== officerValue || !tx.itemId?._id) continue;
       net.set(tx.itemId._id, (net.get(tx.itemId._id) || 0) - (tx.quantity || 1));
     }
@@ -374,6 +400,7 @@ export function InventoryPage() {
   function getAllOutstandingHoldings() {
     const net = new Map(); // `${officerId}|${itemId}` -> { officer, itemId, n }
     const bump = (tx, sign) => {
+      if (tx.confirmationStatus === "cancelled") return;
       if (!tx.officerId?._id || !tx.itemId?._id) return;
       const key = `${tx.officerId._id}|${tx.itemId._id}`;
       const entry = net.get(key) || { officer: tx.officerId, itemId: tx.itemId._id, n: 0 };
@@ -433,7 +460,10 @@ export function InventoryPage() {
     // route a subdocument through its own model's toJSON transform.
     return (
       issueTx
-        .filter((tx) => tx.officerId?._id === officerValue && tx.itemId?._id === itemValue)
+        .filter(
+          (tx) =>
+            tx.confirmationStatus !== "cancelled" && tx.officerId?._id === officerValue && tx.itemId?._id === itemValue
+        )
         .sort((a, b) => new Date(b.dateTime) - new Date(a.dateTime))[0] || null
     );
   }
@@ -549,17 +579,53 @@ export function InventoryPage() {
     }
   }
 
+  function openReview(tx, action) {
+    setReviewing({ tx, action });
+    setReviewError("");
+  }
+
+  function closeReview() {
+    setReviewing(null);
+    setReviewError("");
+  }
+
+  async function handleReviewSubmit() {
+    setReviewSubmitting(true);
+    setReviewError("");
+    try {
+      await reviewTransaction(reviewing.tx.id, reviewing.action);
+      await loadAll();
+      closeReview();
+    } catch (err) {
+      setReviewError(err.message || t("inventory.errReviewFailed"));
+    } finally {
+      setReviewSubmitting(false);
+    }
+  }
+
+  // Types typed in earlier (already in stock under this category but not
+  // in the built-in catalog), so they can be picked next time instead of
+  // typed again.
+  function savedCustomTypesFor(category) {
+    const builtIn = typesForCategory(category);
+    return [...new Set(items.filter((i) => i.category === category).map((i) => i.itemName))]
+      .filter((name) => name && !builtIn.includes(name))
+      .sort();
+  }
+
   async function handleAddSubmit(e) {
     e.preventDefault();
     setModalError("");
 
     const addingAmmunition = addForm.category === AMMUNITION_CATEGORY;
+    const isCustomType = addForm.weaponType === CUSTOM_TYPE;
+    const typeName = isCustomType ? addForm.customType.trim() : addForm.weaponType;
     if (
       (addingAmmunition && !addForm.weaponSerialId) ||
-      !addForm.weaponType ||
+      !typeName ||
       !addForm.category ||
       !addForm.quantity ||
-      (addForm.category === "Firearms" && calibersForType(addForm.weaponType).length > 1 && !addForm.caliber)
+      (addForm.category === "Firearms" && !isCustomType && calibersForType(addForm.weaponType).length > 1 && !addForm.caliber)
     ) {
       setModalError(t("inventory.errRequiredFields"));
       return;
@@ -578,7 +644,7 @@ export function InventoryPage() {
         // generateNextWeaponItemId in inventoryController.js); only
         // ammunition's free-format batch ID is still typed in here.
         itemId: addingAmmunition ? addForm.weaponSerialId : undefined,
-        itemName: addForm.weaponType,
+        itemName: typeName,
         category: addForm.category,
         quantity,
         caliber: addForm.caliber || undefined,
@@ -1050,8 +1116,35 @@ export function InventoryPage() {
     if (row.confirmationStatus === "pending") {
       return <Badge tone="warning">{t("inventory.pendingConfirmation")}</Badge>;
     }
+    if (row.confirmationStatus === "rejected") {
+      return (
+        <div>
+          <Badge tone="danger" title={row.rejectionReason || undefined}>{t("inventory.rejected")}</Badge>
+          {row.rejectionReason && (
+            <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 4 }}>{row.rejectionReason}</div>
+          )}
+        </div>
+      );
+    }
+    if (row.confirmationStatus === "cancelled") {
+      return <Badge tone="info" title={row.rejectionReason || undefined}>{t("inventory.cancelled")}</Badge>;
+    }
     return "—";
   }
+
+  // The Inventory Officer's two ways to resolve a transaction the officer
+  // rejected. Only shown on rejected rows.
+  const reviewColumn = {
+    key: "review",
+    label: "",
+    render: (row) =>
+      row.confirmationStatus === "rejected" ? (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Button variant="primary" onClick={() => openReview(row, "resend")}>{t("inventory.reviewResend")}</Button>
+          <Button variant="outline" onClick={() => openReview(row, "cancel")}>{t("inventory.reviewCancel")}</Button>
+        </div>
+      ) : null,
+  };
 
   const issueColumns = [
     { key: "itemId", label: t("inventory.colItemId"), render: (row) => row.itemId?.itemId || row.itemId?.itemName || "—" },
@@ -1071,6 +1164,7 @@ export function InventoryPage() {
     { key: "accessories", label: t("inventory.accessories"), render: (row) => row.accessories || "—" },
     { key: "confirmationStatus", label: t("inventory.colConfirmation"), render: renderConfirmation },
     { key: "processedBy", label: t("inventory.colProcessedBy"), render: (row) => row.processedBy?.fullName || row.processedBy?.rankAndNumber || "—" },
+    ...(canManage ? [reviewColumn] : []),
   ];
 
   function renderAmmoUsed(row) {
@@ -1083,11 +1177,29 @@ export function InventoryPage() {
     return <Badge tone="danger">{row.ammoDiscrepancy > 0 ? `−${row.ammoDiscrepancy}` : `+${-row.ammoDiscrepancy}`}</Badge>;
   }
 
+  // Return records didn't store a duty type of their own (older ones
+  // never did), which left that column blank. Fall back to the issue the
+  // weapon came back from: the latest issue to the same officer for the
+  // same weapon, made before the return.
+  function dutyTypeForReturn(row) {
+    if (row.dutyType) return row.dutyType;
+    const returnedAt = new Date(row.dateTime).getTime();
+    const source = issueTx
+      .filter(
+        (tx) =>
+          tx.officerId?._id === row.officerId?._id &&
+          tx.itemId?._id === row.itemId?._id &&
+          new Date(tx.dateTime).getTime() <= returnedAt
+      )
+      .sort((a, b) => new Date(b.dateTime) - new Date(a.dateTime))[0];
+    return source?.dutyType || "—";
+  }
+
   const returnColumns = [
     { key: "itemId", label: t("inventory.colItemId"), render: (row) => row.itemId?.itemId || row.itemId?.itemName || "—" },
     { key: "officerId", label: t("inventory.colOfficerName"), render: (row) => row.officerId?.fullName || row.officerId?.rankAndNumber || "—" },
     { key: "department", label: t("personnel.colDepartment"), render: (row) => row.officerId?.department || "—" },
-    { key: "dutyType", label: t("inventory.colDutyType") },
+    { key: "dutyType", label: t("inventory.colDutyType"), render: dutyTypeForReturn },
     { key: "dateTime", label: t("inventory.colDateTime"), render: (row) => formatDateTime(row.dateTime) },
     { key: "condition", label: t("inventory.colCondition"), render: (row) => (row.condition ? <Badge status={row.condition} /> : "—") },
     { key: "ammoUsed", label: t("inventory.ammoUsed"), render: renderAmmoUsed },
@@ -1107,6 +1219,7 @@ export function InventoryPage() {
     { key: "remarks", label: t("inventory.colRemarks"), render: (row) => row.remarks || "—" },
     { key: "confirmationStatus", label: t("inventory.colConfirmation"), render: renderConfirmation },
     { key: "processedBy", label: t("inventory.colProcessedBy"), render: (row) => row.processedBy?.fullName || row.processedBy?.rankAndNumber || "—" },
+    ...(canManage ? [reviewColumn] : []),
   ];
 
   const TX_TYPE = {
@@ -1131,6 +1244,7 @@ export function InventoryPage() {
     { key: "ammoUsed", label: t("inventory.ammoUsed"), render: renderAmmoUsed },
     { key: "confirmationStatus", label: t("inventory.colConfirmation"), render: renderConfirmation },
     { key: "processedBy", label: t("inventory.colProcessedBy"), render: (row) => row.processedBy?.fullName || row.processedBy?.rankAndNumber || "—" },
+    ...(canManage ? [reviewColumn] : []),
   ];
 
   const MAINTENANCE_STATUS = {
@@ -1216,6 +1330,15 @@ export function InventoryPage() {
       render: (row) => (row.result === "passed" ? <Badge tone="success">{t("inventory.inspectionPassed")}</Badge> : <Badge tone="danger">{t("inventory.inspectionFailed")}</Badge>),
     },
     { key: "nextInspectionDate", label: t("inventory.colNextInspection"), render: (row) => (row.nextInspectionDate ? formatDate(row.nextInspectionDate) : "—") },
+    {
+      key: "view",
+      label: "",
+      render: (row) => (
+        <Button variant="ghost" onClick={() => setViewingInspection(row)}>
+          {t("common.view")}
+        </Button>
+      ),
+    },
   ];
 
   // Surfaces the server's one-weapon-per-officer rule (checkIssueEligibility
@@ -1714,7 +1837,7 @@ export function InventoryPage() {
             value={addForm.category}
             // The type list depends on the category, so a category change
             // clears whatever type was picked under the old one.
-            onChange={(e) => setAddForm((f) => ({ ...f, category: e.target.value, weaponType: "", caliber: "" }))}
+            onChange={(e) => setAddForm((f) => ({ ...f, category: e.target.value, weaponType: "", customType: "", caliber: "" }))}
             placeholder={t("inventory.selectCategory")}
             options={WEAPON_CATALOG.map((c) => ({ value: c.category, label: c.category }))}
           />
@@ -1727,11 +1850,34 @@ export function InventoryPage() {
               // A type with only one caliber (Pistol -> 9mm) fills it in;
               // otherwise it's picked below.
               const calibers = calibersForType(e.target.value);
-              setAddForm((f) => ({ ...f, weaponType: e.target.value, caliber: calibers.length === 1 ? calibers[0] : "" }));
+              setAddForm((f) => ({
+                ...f,
+                weaponType: e.target.value,
+                customType: "",
+                caliber: calibers.length === 1 ? calibers[0] : "",
+              }));
             }}
             placeholder={addForm.category ? t("inventory.selectType") : t("inventory.selectCategoryFirst")}
-            options={typesForCategory(addForm.category).map((type) => ({ value: type, label: type }))}
+            options={
+              addForm.category
+                ? [
+                    ...typesForCategory(addForm.category),
+                    ...savedCustomTypesFor(addForm.category),
+                  ]
+                    .map((type) => ({ value: type, label: type }))
+                    .concat([{ value: CUSTOM_TYPE, label: t("inventory.typeNewOption") }])
+                : []
+            }
           />
+          {addForm.weaponType === CUSTOM_TYPE && (
+            <InputField
+              label={t("inventory.newTypeName")}
+              required
+              value={addForm.customType}
+              placeholder={t("inventory.newTypePlaceholder")}
+              onChange={(e) => setAddForm((f) => ({ ...f, customType: e.target.value.slice(0, 60) }))}
+            />
+          )}
           {isAddingAmmunition ? (
             <InputField
               label={t("inventory.ammunitionBatchId")}
@@ -1768,7 +1914,12 @@ export function InventoryPage() {
                 options={calibersForType(addForm.weaponType).map((c) => ({ value: c, label: c }))}
               />
             ) : (
-              <InputField label={t("inventory.colCaliber")} readOnly value={addForm.caliber} />
+              <InputField
+                label={t("inventory.colCaliber")}
+                readOnly={addForm.weaponType !== CUSTOM_TYPE}
+                value={addForm.caliber}
+                onChange={(e) => setAddForm((f) => ({ ...f, caliber: e.target.value.slice(0, 30) }))}
+              />
             ))}
           <InputField
             label={t("inventory.colStorageLocation")}
@@ -2092,6 +2243,85 @@ export function InventoryPage() {
           </>
         )}
         {inspectionError && <p style={{ color: "var(--color-danger)", marginTop: 12 }}>{inspectionError}</p>}
+      </Modal>
+
+      <Modal
+        open={Boolean(viewingInspection)}
+        onClose={() => setViewingInspection(null)}
+        title={viewingInspection ? `${t("inventory.inspectionDetailsTitle")} — ${viewingInspection.refId}` : ""}
+        footer={
+          <Button variant="outline" fullWidth onClick={() => setViewingInspection(null)}>
+            {t("common.close")}
+          </Button>
+        }
+      >
+        {viewingInspection && (
+          <div style={DETAIL_BOX_STYLE}>
+            <p style={DETAIL_ROW_STYLE}>
+              <strong>{t("inventory.colItemId")}:</strong> {viewingInspection.itemId?.itemId || "—"}
+              {viewingInspection.itemId?.itemName ? ` — ${viewingInspection.itemId.itemName}` : ""}
+            </p>
+            <p style={DETAIL_ROW_STYLE}><strong>{t("inventory.colInspector")}:</strong> {viewingInspection.inspectedBy?.fullName || viewingInspection.inspectedBy?.rankAndNumber || "—"}</p>
+            <p style={DETAIL_ROW_STYLE}><strong>{t("inventory.colInspectionDate")}:</strong> {formatDate(viewingInspection.inspectionDate)}</p>
+            <p style={DETAIL_ROW_STYLE}><strong>{t("inventory.colInspectionType")}:</strong> {viewingInspection.inspectionType || "—"}</p>
+            <p style={DETAIL_ROW_STYLE}>
+              <strong>{t("inventory.colResult")}:</strong>{" "}
+              {viewingInspection.result === "passed" ? (
+                <Badge tone="success">{t("inventory.inspectionPassed")}</Badge>
+              ) : (
+                <Badge tone="danger">{t("inventory.inspectionFailed")}</Badge>
+              )}
+            </p>
+            <p style={DETAIL_ROW_STYLE}><strong>{t("inventory.colCondition")}:</strong> {viewingInspection.condition ? <Badge status={viewingInspection.condition} /> : "—"}</p>
+            <p style={DETAIL_ROW_STYLE}><strong>{t("inventory.findings")}:</strong> {viewingInspection.findings || "—"}</p>
+            <p style={DETAIL_ROW_STYLE}><strong>{t("inventory.damageIssues")}:</strong> {viewingInspection.damageIssues || "—"}</p>
+            <p style={DETAIL_ROW_STYLE}><strong>{t("inventory.accessoriesChecked")}:</strong> {viewingInspection.accessoriesChecked || "—"}</p>
+            <p style={DETAIL_ROW_STYLE}><strong>{t("inventory.colRemarks")}:</strong> {viewingInspection.remarks || "—"}</p>
+            <p style={DETAIL_ROW_STYLE}>
+              <strong>{t("inventory.colNextInspection")}:</strong>{" "}
+              {viewingInspection.nextInspectionDate ? formatDate(viewingInspection.nextInspectionDate) : "—"}
+            </p>
+            {viewingInspection.resultingMaintenanceId && (
+              <p style={{ color: "var(--color-danger)" }}>{t("inventory.inspectionMaintenanceOpened")}</p>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        open={Boolean(reviewing)}
+        onClose={closeReview}
+        title={reviewing ? t(reviewing.action === "resend" ? "inventory.reviewResendTitle" : "inventory.reviewCancelTitle") : ""}
+        footer={
+          <Button variant="primary" fullWidth onClick={handleReviewSubmit} disabled={reviewSubmitting}>
+            {reviewSubmitting
+              ? t("inventory.processing")
+              : reviewing
+              ? t(reviewing.action === "resend" ? "inventory.reviewResend" : "inventory.reviewCancel")
+              : ""}
+          </Button>
+        }
+      >
+        {reviewing && (
+          <>
+            <p style={{ color: "var(--color-text-muted)", fontSize: 13, marginBottom: 16 }}>
+              {reviewing.action === "resend"
+                ? t("inventory.reviewResendText")
+                : reviewing.tx.type === "issue"
+                ? t("inventory.reviewCancelIssueText")
+                : t("inventory.reviewCancelReturnText")}
+            </p>
+            <div style={DETAIL_BOX_STYLE}>
+              <p style={DETAIL_ROW_STYLE}>
+                <strong>{t("inventory.colItemId")}:</strong> {reviewing.tx.itemId?.itemId || "—"}
+                {reviewing.tx.itemId?.itemName ? ` — ${reviewing.tx.itemId.itemName}` : ""}
+              </p>
+              <p style={DETAIL_ROW_STYLE}><strong>{t("inventory.colOfficerName")}:</strong> {reviewing.tx.officerId?.fullName || "—"}</p>
+              <p style={DETAIL_ROW_STYLE}><strong>{t("inventory.rejectionReason")}:</strong> {reviewing.tx.rejectionReason || "—"}</p>
+            </div>
+            {reviewError && <p style={{ color: "var(--color-danger)", marginTop: 12 }}>{reviewError}</p>}
+          </>
+        )}
       </Modal>
 
       <Modal

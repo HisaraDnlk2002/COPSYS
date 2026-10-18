@@ -83,12 +83,24 @@ const inventoryTransactionSchema = new mongoose.Schema(
     // applies the stock update (see confirmTransaction) — deferred
     // until then specifically so a not-yet-confirmed return can't
     // silently free up stock nobody has actually verified came back.
-    confirmationStatus: { type: String, enum: ["pending", "secured"], default: null },
+    // "rejected": the officer refused to confirm (see rejectTransaction) and
+    // it's waiting for the Inventory Officer to review. "cancelled": the
+    // Inventory Officer voided it after a rejection (see reviewTransaction).
+    confirmationStatus: { type: String, enum: ["pending", "secured", "rejected", "cancelled"], default: null },
     confirmedAt: { type: Date, default: null },
     confirmationRemarks: { type: String, default: null },
     // Set once a "Confirmation Overdue" reminder has gone out for this
     // still-pending transaction, so the alert scan doesn't repeat it.
     confirmationReminderGenerated: { type: Boolean, default: false },
+
+    // Reject-and-review workflow. The officer must give a reason when
+    // rejecting; the Inventory Officer then either sends it back for
+    // confirmation or cancels it (reviewTransaction). Nothing about stock
+    // or custody changes at the moment of rejection itself.
+    rejectionReason: { type: String, default: null },
+    rejectedAt: { type: Date, default: null },
+    reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    reviewedAt: { type: Date, default: null },
 
     stationId: { type: String, default: "default-station" },
   },

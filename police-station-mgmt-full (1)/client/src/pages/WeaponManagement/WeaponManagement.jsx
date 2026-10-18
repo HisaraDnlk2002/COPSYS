@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLanguage } from "../../i18n/useLanguage";
 import { Card, StatCard, Table, Badge, Loader, Button, Modal, InputField } from "../../components";
-import { getMyWeapons, confirmTransaction } from "../../services/inventory";
+import { getMyWeapons, confirmTransaction, rejectTransaction } from "../../services/inventory";
 import { getMyAlerts, updateAlertStatus } from "../../services/alerts";
 import { formatDateAndTime } from "../../utils/formatDate";
 import "./WeaponManagement.css";
@@ -58,6 +58,11 @@ export function WeaponManagementPage() {
   const [confirmRemarks, setConfirmRemarks] = useState("");
   const [confirming, setConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState("");
+  // Reject: the officer refusing a pending issue/return, with a reason.
+  const [rejectingTx, setRejectingTx] = useState(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [rejecting, setRejecting] = useState(false);
+  const [rejectError, setRejectError] = useState("");
 
   // The alert currently open in the status-update modal, or null.
   const [actingAlert, setActingAlert] = useState(null);
@@ -96,6 +101,36 @@ export function WeaponManagementPage() {
     setConfirmingTx(null);
     setConfirmRemarks("");
     setConfirmError("");
+  }
+
+  function openReject(tx) {
+    setRejectingTx(tx);
+    setRejectReason("");
+    setRejectError("");
+  }
+
+  function closeReject() {
+    setRejectingTx(null);
+    setRejectReason("");
+    setRejectError("");
+  }
+
+  async function handleReject() {
+    if (rejectReason.trim().length < 3) {
+      setRejectError(t("weaponManagement.errRejectReasonRequired"));
+      return;
+    }
+    setRejecting(true);
+    setRejectError("");
+    try {
+      await rejectTransaction(rejectingTx.id, rejectReason.trim());
+      await loadData();
+      closeReject();
+    } catch (err) {
+      setRejectError(err.message || t("weaponManagement.errRejectFailed"));
+    } finally {
+      setRejecting(false);
+    }
   }
 
   async function handleConfirm() {
@@ -144,6 +179,9 @@ export function WeaponManagementPage() {
   const openAlertsCount = myAlerts.filter((a) => a.status !== "resolved").length;
   const confirmingMeta = confirmingTx ? TRANSACTION_TYPE[confirmingTx.type] || TRANSACTION_TYPE.issue : null;
   const isReturnLike = confirmingTx?.type === "return" || confirmingTx?.type === "damaged";
+  const rejectingMeta = rejectingTx ? TRANSACTION_TYPE[rejectingTx.type] || TRANSACTION_TYPE.issue : null;
+  // Rejected by this officer and still waiting on the Inventory Officer.
+  const rejectedAwaitingReview = history.filter((tx) => tx.confirmationStatus === "rejected");
 
   const pendingColumns = [
     { key: "itemId", label: t("weaponManagement.colItemId"), render: (row) => itemLabel(row.itemId) },
@@ -164,9 +202,14 @@ export function WeaponManagementPage() {
       render: (row) => {
         const meta = TRANSACTION_TYPE[row.type] || TRANSACTION_TYPE.issue;
         return (
-          <Button variant="primary" onClick={() => openConfirm(row)}>
-            {t(`weaponManagement.${meta.actionKey}`)}
-          </Button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Button variant="primary" onClick={() => openConfirm(row)}>
+              {t(`weaponManagement.${meta.actionKey}`)}
+            </Button>
+            <Button variant="outline" onClick={() => openReject(row)}>
+              {t("weaponManagement.reject")}
+            </Button>
+          </div>
         );
       },
     },
@@ -200,6 +243,10 @@ export function WeaponManagementPage() {
           <Badge tone="success">{t("weaponManagement.secured")}</Badge>
         ) : row.confirmationStatus === "pending" ? (
           <Badge tone="warning">{t("weaponManagement.pending")}</Badge>
+        ) : row.confirmationStatus === "rejected" ? (
+          <Badge tone="danger" title={row.rejectionReason || undefined}>{t("weaponManagement.rejected")}</Badge>
+        ) : row.confirmationStatus === "cancelled" ? (
+          <Badge tone="info" title={row.rejectionReason || undefined}>{t("weaponManagement.cancelled")}</Badge>
         ) : (
           "—"
         ),
@@ -259,6 +306,30 @@ export function WeaponManagementPage() {
           <h3 className="section-label">{t("weaponManagement.pendingConfirmationTitle")}</h3>
           <p className="weapon-mgmt-section-subtitle">{t("weaponManagement.pendingConfirmationSubtitle")}</p>
           <Table columns={pendingColumns} data={pendingConfirmation} emptyMessage="" />
+        </Card>
+      )}
+
+      {rejectedAwaitingReview.length > 0 && (
+        <Card variant="panel" className="weapon-mgmt-section">
+          <h3 className="section-label">{t("weaponManagement.rejectedTitle")}</h3>
+          <p className="weapon-mgmt-section-subtitle">{t("weaponManagement.rejectedSubtitle")}</p>
+          <Table
+            columns={[
+              { key: "itemId", label: t("weaponManagement.colItemId"), render: (row) => itemLabel(row.itemId) },
+              {
+                key: "type",
+                label: t("weaponManagement.colTransactionType"),
+                render: (row) => {
+                  const meta = TRANSACTION_TYPE[row.type] || TRANSACTION_TYPE.issue;
+                  return <Badge tone={meta.tone}>{t(`weaponManagement.${meta.labelKey}`)}</Badge>;
+                },
+              },
+              { key: "rejectionReason", label: t("weaponManagement.rejectReasonLabel"), render: (row) => row.rejectionReason || "—" },
+              { key: "rejectedAt", label: t("weaponManagement.colDateTime"), render: (row) => (row.rejectedAt ? formatDateAndTime(row.rejectedAt) : "—") },
+            ]}
+            data={rejectedAwaitingReview}
+            emptyMessage=""
+          />
         </Card>
       )}
 
@@ -342,6 +413,41 @@ export function WeaponManagementPage() {
           sinhalaTyping
         />
         {confirmError && <p style={{ color: "var(--color-danger)", marginTop: 12 }}>{confirmError}</p>}
+      </Modal>
+
+      <Modal
+        open={Boolean(rejectingTx)}
+        onClose={closeReject}
+        title={rejectingMeta ? t("weaponManagement.rejectTitle") : ""}
+        footer={
+          <Button variant="primary" fullWidth onClick={handleReject} disabled={rejecting}>
+            {rejecting ? t("weaponManagement.rejecting") : t("weaponManagement.reject")}
+          </Button>
+        }
+      >
+        <p style={{ color: "var(--color-text-muted)", fontSize: 13, marginBottom: 16 }}>
+          {t("weaponManagement.rejectText")}
+        </p>
+        {rejectingTx && (
+          <div className="weapon-mgmt-confirm-details">
+            <p><strong>{t("weaponManagement.colItemId")}:</strong> {itemLabel(rejectingTx.itemId)}</p>
+            <p><strong>{t("weaponManagement.colTransactionType")}:</strong> {rejectingMeta ? t(`weaponManagement.${rejectingMeta.labelKey}`) : "—"}</p>
+            <p><strong>{t("weaponManagement.colProcessedBy")}:</strong> {rejectingTx.processedBy?.fullName || rejectingTx.processedBy?.rankAndNumber || "—"}</p>
+            <p><strong>{t("weaponManagement.colDateTime")}:</strong> {formatDateAndTime(rejectingTx.dateTime)}</p>
+          </div>
+        )}
+        <InputField
+          label={t("weaponManagement.rejectReasonLabel")}
+          type="textarea"
+          rows={3}
+          required
+          value={rejectReason}
+          onChange={(e) => setRejectReason(e.target.value)}
+          placeholder={t("weaponManagement.rejectReasonPlaceholder")}
+          voiceInput
+          sinhalaTyping
+        />
+        {rejectError && <p style={{ color: "var(--color-danger)", marginTop: 12 }}>{rejectError}</p>}
       </Modal>
 
       <Modal

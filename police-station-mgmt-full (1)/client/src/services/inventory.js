@@ -46,6 +46,24 @@ export async function confirmTransaction(transactionId, remarks) {
   return api.patch(`/inventory/transactions/${transactionId}/confirm`, { remarks });
 }
 
+// The officer on a pending issue/return refusing to confirm it — a reason
+// is required. See rejectTransaction in inventoryController.js.
+export async function rejectTransaction(transactionId, remarks) {
+  if (USE_DUMMY_DATA) {
+    return Promise.resolve({ id: transactionId, confirmationStatus: "rejected" });
+  }
+  return api.patch(`/inventory/transactions/${transactionId}/reject`, { remarks });
+}
+
+// Inventory Officer resolving a rejected transaction: action is "resend"
+// (back to pending) or "cancel" (void it). See reviewTransaction.
+export async function reviewTransaction(transactionId, action) {
+  if (USE_DUMMY_DATA) {
+    return Promise.resolve({ id: transactionId, confirmationStatus: action === "resend" ? "pending" : "cancelled" });
+  }
+  return api.patch(`/inventory/transactions/${transactionId}/review`, { action });
+}
+
 export async function getInventoryStats() {
   if (USE_DUMMY_DATA) {
     return Promise.resolve(dummyInventoryStats);

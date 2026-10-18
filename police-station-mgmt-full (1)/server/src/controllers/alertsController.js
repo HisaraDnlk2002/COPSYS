@@ -29,6 +29,9 @@ async function scanForTimeBasedAlerts(stationId) {
   const overdueIssues = await InventoryTransaction.find({
     stationId,
     type: "issue",
+    // A cancelled issue (rejected by the officer, then voided by the
+    // Inventory Officer) never left the armory, so it can't be overdue.
+    confirmationStatus: { $ne: "cancelled" },
     expectedReturnDate: { $ne: null, $lt: now },
     overdueAlertGenerated: false,
   }).populate("itemId");
@@ -45,6 +48,7 @@ async function scanForTimeBasedAlerts(stationId) {
       itemId: tx.itemId?._id,
       officerId: tx.officerId,
       type: { $in: ["return", "damaged"] },
+      confirmationStatus: { $ne: "cancelled" },
       dateTime: { $gte: tx.dateTime },
     });
     if (!tx.itemId || alreadyReturned) continue;

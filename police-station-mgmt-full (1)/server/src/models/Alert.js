@@ -34,6 +34,7 @@ const ALERT_TYPES = [
   "low_ammo_stock",
   "confirmation_overdue",
   "accessories_missing",
+  "confirmation_rejected",
 ];
 
 // Which part of the system each alert type comes from — drives the
@@ -55,6 +56,7 @@ const ALERT_SOURCE_BY_TYPE = {
   low_ammo_stock: "inventory",
   confirmation_overdue: "inventory",
   accessories_missing: "inventory",
+  confirmation_rejected: "inventory",
   leave_request_submitted: "leave",
   leave_approved: "leave",
   leave_rejected: "leave",

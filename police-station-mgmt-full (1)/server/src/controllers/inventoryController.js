@@ -7,6 +7,7 @@ const LeaveRequest = require("../models/LeaveRequest");
 const { generateAlert } = require("../utils/alerts");
 const { logAuditForActor } = require("../utils/auditLogger");
 const {
+  WEAPON_CATALOG,
   WEAPON_CATEGORIES,
   AMMUNITION_CATEGORY,
   STORAGE_LOCATIONS,
@@ -106,20 +107,36 @@ async function create(req, res) {
   if (!Number.isInteger(resolvedQuantity) || resolvedQuantity < 0) {
     return res.status(400).json({ error: "Quantity must be a whole number, zero or above" });
   }
-  if (!isValidCatalogEntry(category, itemName)) {
-    return res.status(400).json({ error: "Unknown weapon category or type" });
+  // The CATEGORY must be one of the built-in ones, but the TYPE can be
+  // anything the station types in (e.g. a model that isn't in the list).
+  if (![...WEAPON_CATEGORIES, AMMUNITION_CATEGORY].includes(category)) {
+    return res.status(400).json({ error: "Unknown weapon category" });
   }
+  const typedName = String(itemName).trim().replace(/\s+/g, " ");
+  if (typedName.length < 2 || typedName.length > 60) {
+    return res.status(400).json({ error: "Type name must be between 2 and 60 characters" });
+  }
+  // Typed the same as a built-in type (any capitalization)? Use the
+  // built-in spelling so its calibers and accessories still apply.
+  const catalogEntry = WEAPON_CATALOG.find((c) => c.category === category);
+  const resolvedItemName =
+    (catalogEntry && catalogEntry.types.find((ty) => ty.toLowerCase() === typedName.toLowerCase())) || typedName;
+
   // Firearms only. One possible caliber for the type -> set it here; more
   // than one -> the form must say which this particular weapon takes.
-  const typeCalibers = category === "Firearms" ? calibersForType(itemName) : [];
+  const typeCalibers = category === "Firearms" ? calibersForType(resolvedItemName) : [];
   let resolvedCaliber = "";
   if (typeCalibers.length === 1) {
     resolvedCaliber = typeCalibers[0];
   } else if (typeCalibers.length > 1) {
     if (!typeCalibers.includes(caliber)) {
-      return res.status(400).json({ error: `Select the caliber for this ${itemName} (${typeCalibers.join(" or ")})` });
+      return res.status(400).json({ error: `Select the caliber for this ${resolvedItemName} (${typeCalibers.join(" or ")})` });
     }
     resolvedCaliber = caliber;
+  } else if (category === "Firearms" && caliber) {
+    // A firearm type that isn't in the built-in caliber table: keep the
+    // caliber that was typed in.
+    resolvedCaliber = String(caliber).trim().slice(0, 30);
   }
   if (storageLocation && !STORAGE_LOCATIONS.includes(storageLocation)) {
     return res.status(400).json({ error: "Unknown storage location" });
@@ -141,7 +158,7 @@ async function create(req, res) {
     const scheduleFrom = lastInspected || new Date();
     const item = await Inventory.create({
       itemId: resolvedItemId,
-      itemName,
+      itemName: resolvedItemName,
       category,
       quantity: resolvedQuantity,
       condition: condition || "good",
@@ -245,6 +262,8 @@ async function getOutstandingIssues(officerId) {
   const byItem = new Map();
   for (const tx of txs) {
     if (!tx.itemId) continue;
+    // Voided after the officer rejected it — never counts either way.
+    if (tx.confirmationStatus === "cancelled") continue;
     const key = tx.itemId._id.toString();
     const entry = byItem.get(key) || { item: tx.itemId, net: 0, lastIssue: null };
     if (tx.type === "issue") {
@@ -529,6 +548,9 @@ async function returnItem(req, res) {
       officerId,
       processedBy: req.user.uid,
       type: transactionType,
+      // Carried over from the issue this return closes, so the Duty Type
+      // column in the Return Records table isn't left blank.
+      dutyType: sourceIssue?.dutyType || "",
       quantity,
       dateTime: dateTime || new Date(),
       condition,
@@ -649,6 +671,7 @@ async function getMyWeapons(req, res) {
     const netByItem = new Map(); // item's Mongo id -> { item, net }
     for (const tx of allFirearmsTx) {
       if (!WEAPON_CATEGORIES.includes(tx.itemId?.category)) continue;
+      if (tx.confirmationStatus === "cancelled") continue;
       const key = tx.itemId._id.toString();
       const entry = netByItem.get(key) || { item: tx.itemId, net: 0 };
       if (tx.type === "issue") entry.net += tx.quantity || 1;
@@ -702,6 +725,12 @@ async function confirmTransaction(req, res) {
     }
     if (tx.confirmationStatus === "secured") {
       return res.status(400).json({ error: "This transaction has already been confirmed" });
+    }
+    if (tx.confirmationStatus === "rejected") {
+      return res.status(400).json({ error: "You rejected this transaction. It is waiting for the Inventory Officer's review" });
+    }
+    if (tx.confirmationStatus === "cancelled") {
+      return res.status(400).json({ error: "This transaction was cancelled" });
     }
 
     if (tx.type === "return" || tx.type === "damaged") {
@@ -861,6 +890,142 @@ async function reportMissing(req, res) {
   }
 }
 
+// PATCH /api/inventory/transactions/:id/reject — the officer named on the
+// transaction ONLY, same rule as confirmTransaction. The alternative to
+// confirming when something's wrong (didn't receive it, wrong weapon,
+// never handed it back...). A reason is required so the Inventory Officer
+// knows what to check. Rejecting changes NO stock or custody by itself —
+// it just stops the transaction being confirmable and raises an alert for
+// the Inventory Officer, who decides what happens next (reviewTransaction).
+async function rejectTransaction(req, res) {
+  try {
+    const reason = typeof req.body.remarks === "string" ? req.body.remarks.trim() : "";
+    if (reason.length < 3) {
+      return res.status(400).json({ error: "Please give a reason for rejecting this" });
+    }
+
+    const tx = await InventoryTransaction.findById(req.params.id).populate("itemId", "itemId itemName");
+    if (!tx) return res.status(404).json({ error: "Transaction not found" });
+    if (!["issue", "return", "damaged"].includes(tx.type)) {
+      return res.status(400).json({ error: "This transaction type cannot be rejected" });
+    }
+    if (String(tx.officerId) !== String(req.user.uid)) {
+      return res.status(403).json({ error: "Only the officer on this transaction can reject it" });
+    }
+    if (tx.confirmationStatus !== "pending") {
+      return res.status(400).json({ error: "Only a transaction that is waiting for confirmation can be rejected" });
+    }
+
+    tx.confirmationStatus = "rejected";
+    tx.rejectionReason = reason.slice(0, 500);
+    tx.rejectedAt = new Date();
+    await tx.save();
+
+    const officer = await User.findById(tx.officerId).select("fullName");
+    const what = tx.type === "issue" ? "issue" : "return";
+    await generateAlert({
+      alertType: "confirmation_rejected",
+      title: tx.type === "issue" ? "Weapon Issue Rejected by Officer" : "Weapon Return Rejected by Officer",
+      message: `${officer?.fullName || "The officer"} rejected the ${what} of ${tx.itemId?.itemId || "a weapon"}: "${tx.rejectionReason}". Review it in the Inventory records.`,
+      itemId: tx.itemId?._id || null,
+      transactionId: tx._id,
+      recipientId: null, // armory-side: shows for the Inventory Officer, Duty Officer and OIC
+      stationId: tx.stationId,
+    });
+
+    logAuditForActor(req, {
+      action: `Rejected ${what} of ${tx.itemId?.itemId || "a weapon"}: ${tx.rejectionReason}`,
+      module: "Inventory",
+    });
+
+    return res.json({ id: tx._id.toString(), confirmationStatus: "rejected" });
+  } catch (err) {
+    console.error("rejectTransaction error:", err);
+    return res.status(500).json({ error: "Could not reject this transaction" });
+  }
+}
+
+// PATCH /api/inventory/transactions/:id/review — inventory_officer only.
+// Resolves a transaction the officer rejected:
+//   - resend: back to "pending" so the officer can confirm (or reject) it
+//     again — e.g. the officer was mistaken, or the record was corrected.
+//   - cancel: voids it. For an ISSUE that undoes what issue() did (the
+//     weapon, and any rounds drawn with it, go back into stock and the
+//     officer no longer holds it). A return/damaged only applies stock
+//     when confirmed, so cancelling one just voids the record and the
+//     weapon stays with the officer.
+async function reviewTransaction(req, res) {
+  try {
+    const { action } = req.body;
+    if (!["resend", "cancel"].includes(action)) {
+      return res.status(400).json({ error: "Action must be resend or cancel" });
+    }
+
+    const tx = await InventoryTransaction.findById(req.params.id).populate("itemId", "itemId itemName");
+    if (!tx || tx.stationId !== req.user.stationId) {
+      return res.status(404).json({ error: "Transaction not found" });
+    }
+    if (tx.confirmationStatus !== "rejected") {
+      return res.status(400).json({ error: "Only a rejected transaction can be reviewed" });
+    }
+
+    const itemLabel = tx.itemId?.itemId || "a weapon";
+
+    if (action === "resend") {
+      tx.confirmationStatus = "pending";
+      tx.confirmationReminderGenerated = false; // let the overdue reminder fire again
+    } else {
+      if (tx.type === "issue") {
+        const laterReturn = await InventoryTransaction.exists({
+          itemId: tx.itemId?._id,
+          officerId: tx.officerId,
+          type: { $in: ["return", "damaged"] },
+          confirmationStatus: { $ne: "cancelled" },
+          dateTime: { $gte: tx.dateTime },
+        });
+        if (laterReturn) {
+          return res.status(400).json({
+            error: "A return was recorded for this weapon after this issue. Cancel that return first.",
+          });
+        }
+
+        const item = await Inventory.findById(tx.itemId?._id);
+        if (item) {
+          item.quantity += tx.quantity || 1;
+          if (item.status === "issued") item.status = "available";
+          if (String(item.assignedTo) === String(tx.officerId)) item.assignedTo = null;
+          item.lastUpdatedBy = req.user.uid;
+          await item.save();
+        }
+        if (tx.ammoItemId && tx.ammoIssued > 0) {
+          const ammoItem = await Inventory.findById(tx.ammoItemId);
+          if (ammoItem) {
+            ammoItem.quantity += tx.ammoIssued;
+            ammoItem.lastUpdatedBy = req.user.uid;
+            await ammoItem.save();
+            await syncLowStockAlert(ammoItem);
+          }
+        }
+      }
+      tx.confirmationStatus = "cancelled";
+    }
+
+    tx.reviewedBy = req.user.uid;
+    tx.reviewedAt = new Date();
+    await tx.save();
+
+    logAuditForActor(req, {
+      action: `${action === "resend" ? "Sent back for confirmation" : "Cancelled"} rejected ${tx.type} of ${itemLabel}`,
+      module: "Inventory",
+    });
+
+    return res.json({ id: tx._id.toString(), confirmationStatus: tx.confirmationStatus });
+  } catch (err) {
+    console.error("reviewTransaction error:", err);
+    return res.status(500).json({ error: "Could not review this transaction" });
+  }
+}
+
 module.exports = {
   list,
   create,
@@ -872,5 +1037,7 @@ module.exports = {
   getMyWeapons,
   getStats,
   confirmTransaction,
+  rejectTransaction,
+  reviewTransaction,
   reportMissing,
 };
