@@ -11,6 +11,7 @@ const maintenanceSchema = new mongoose.Schema(
     refId: { type: String, required: true, unique: true }, // "MR-0001" style, human-facing
 
     itemId: { type: mongoose.Schema.Types.ObjectId, ref: "Inventory", required: true },
+    subId: { type: String, default: null }, // specific sub-unit ID when quantity > 1
 
     issueDescription: { type: String, required: true },
     reportedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },

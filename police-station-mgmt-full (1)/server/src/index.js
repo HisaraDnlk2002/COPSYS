@@ -2,11 +2,32 @@ require("dotenv").config();
 
 // On some mobile-hotspot networks, the OS's default DNS resolver
 // transparently hijacks/mis-resolves the MongoDB Atlas hostnames (returns
-// NXDOMAIN) even when 8.8.8.8 is configured system-wide — but the same
-// query succeeds when sent directly to 8.8.8.8. Forcing Node's own
-// resolver here bypasses whatever the OS/network is doing to the default
-// path, for local dev on flaky networks.
-require("dns").setServers(["8.8.8.8", "8.8.4.4"]);
+// NXDOMAIN) even when 8.8.8.8 is configured system-wide.
+// Setting dns.setServers bypasses OS DNS for dns.resolve*, and monkey-patching
+// dns.lookup ensures MongoDB's socket connections (which use getaddrinfo)
+// also resolve correctly through public DNS.
+const dns = require("dns");
+dns.setServers(["8.8.8.8", "1.1.1.1", "8.8.4.4"]);
+const originalLookup = dns.lookup;
+dns.lookup = function (hostname, options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = {};
+  }
+  if (typeof hostname === "string" && hostname.endsWith(".mongodb.net")) {
+    dns.resolve4(hostname, (err, addresses) => {
+      if (!err && addresses && addresses.length > 0) {
+        if (options && options.all) {
+          return callback(null, addresses.map((a) => ({ address: a, family: 4 })));
+        }
+        return callback(null, addresses[0], 4);
+      }
+      return originalLookup(hostname, options, callback);
+    });
+    return;
+  }
+  return originalLookup(hostname, options, callback);
+};
 
 const express = require("express");
 const cors = require("cors");

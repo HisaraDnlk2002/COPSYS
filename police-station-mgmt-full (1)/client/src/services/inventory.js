@@ -80,6 +80,13 @@ export async function getInventoryItems() {
   return api.get("/inventory");
 }
 
+export async function getNextWeaponItemId() {
+  if (USE_DUMMY_DATA) {
+    return Promise.resolve({ nextItemId: "10018" });
+  }
+  return api.get("/inventory/next-item-id");
+}
+
 export async function getIssueTransactions() {
   if (USE_DUMMY_DATA) {
     return Promise.resolve(dummyIssueTransactions);
