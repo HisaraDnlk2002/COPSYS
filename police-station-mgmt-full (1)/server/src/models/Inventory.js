@@ -10,6 +10,13 @@ const INSPECTION_INTERVAL_DAYS = 90;
 const inventorySchema = new mongoose.Schema(
   {
     itemId: { type: String, required: true, unique: true }, // "WP-8821" style, human-facing
+    // Weapons are tracked one record per physical weapon. A registration of
+    // quantity 6 creates six records sharing one main ID (groupId, e.g.
+    // "10016") with sub IDs as their itemId ("10016-01" ... "10016-06"), so
+    // issue/return always names the exact weapon. Ammunition and other
+    // bulk stock keep one record with a quantity and have no groupId.
+    groupId: { type: String, default: null, index: true },
+    unitNumber: { type: Number, default: null },
     itemName: { type: String, required: true },
     caliber: { type: String, default: "", trim: true },
     storageLocation: { type: String, default: "", trim: true }, // e.g. "Armory Rack A-3"

@@ -61,7 +61,8 @@ async function list(req, res) {
 // one exception: its itemId IS a free-format batch/lot ID, still typed
 // in by the inventory officer, since that's how the physical batch is
 // actually labeled when it arrives.
-const WEAPON_ID_PATTERN = /^\d{5}$/;
+const WEAPON_ID_PATTERN = /^\d{5}(-\d{2,3})?$/; // main ID, or main ID plus sub ID ("10016-03")
+const MAX_WEAPONS_PER_REGISTRATION = 100;
 
 // Next 5-digit Item ID after whatever's already in use, scanning only
 // well-formed 5-digit weapon IDs so old/irregular legacy data (a stray
@@ -76,11 +77,15 @@ async function generateNextWeaponItemId() {
   }).select("itemId");
   let max = 10000;
   for (const item of weaponItems) {
-    const n = Number(item.itemId);
+    const n = Number(item.itemId.slice(0, 5)); // the main ID part
     if (n > max) max = n;
   }
   let next = max + 1;
-  while (await Inventory.exists({ itemId: String(next).padStart(5, "0") })) {
+  while (
+    await Inventory.exists({
+      $or: [{ itemId: new RegExp(`^${String(next).padStart(5, "0")}(-|$)`) }, { groupId: String(next).padStart(5, "0") }],
+    })
+  ) {
     next += 1;
   }
   return String(next).padStart(5, "0");
@@ -106,6 +111,9 @@ async function create(req, res) {
   const resolvedQuantity = Number(quantity);
   if (!Number.isInteger(resolvedQuantity) || resolvedQuantity < 0) {
     return res.status(400).json({ error: "Quantity must be a whole number, zero or above" });
+  }
+  if (!isAmmunition && (resolvedQuantity < 1 || resolvedQuantity > MAX_WEAPONS_PER_REGISTRATION)) {
+    return res.status(400).json({ error: `Add between 1 and ${MAX_WEAPONS_PER_REGISTRATION} weapons at a time` });
   }
   // The CATEGORY must be one of the built-in ones, but the TYPE can be
   // anything the station types in (e.g. a model that isn't in the list).
@@ -156,6 +164,34 @@ async function create(req, res) {
     // otherwise from today. Ammunition isn't periodically inspected.
     const lastInspected = lastInspectionDate ? new Date(lastInspectionDate) : null;
     const scheduleFrom = lastInspected || new Date();
+
+    if (!isAmmunition) {
+      // One record per physical weapon: main ID + sub ID (10016-01, -02 ...).
+      const nextInspection = new Date(scheduleFrom.getTime() + INSPECTION_INTERVAL_DAYS * 24 * 60 * 60 * 1000);
+      const docs = Array.from({ length: resolvedQuantity }, (_, i) => ({
+        itemId: `${resolvedItemId}-${String(i + 1).padStart(2, "0")}`,
+        groupId: resolvedItemId,
+        unitNumber: i + 1,
+        itemName: resolvedItemName,
+        category,
+        quantity: 1,
+        condition: condition || "good",
+        caliber: resolvedCaliber,
+        storageLocation: storageLocation?.trim() || "",
+        status: "available",
+        lastUpdatedBy: req.user.uid,
+        lastInspectionDate: lastInspected,
+        nextInspectionDate: nextInspection,
+        stationId: req.user.stationId,
+      }));
+      const created = await Inventory.insertMany(docs);
+      logAuditForActor(req, {
+        action: `Added ${created.length} ${resolvedItemName} (${resolvedItemId}-01${created.length > 1 ? ` to ${resolvedItemId}-${String(created.length).padStart(2, "0")}` : ""})`,
+        module: "Inventory",
+      });
+      return res.status(201).json({ groupId: resolvedItemId, count: created.length, items: created.map((d) => d.toJSON()) });
+    }
+
     const item = await Inventory.create({
       itemId: resolvedItemId,
       itemName: resolvedItemName,
@@ -196,6 +232,13 @@ async function update(req, res) {
   }
 
   try {
+    // A weapon is one physical unit, so its quantity can only be 0 or 1.
+    if (quantity !== undefined && Number(quantity) > 1) {
+      const existing = await Inventory.findById(req.params.id).select("category");
+      if (existing && existing.category !== AMMUNITION_CATEGORY) {
+        return res.status(400).json({ error: "Each weapon is its own record. Add more weapons as new items instead" });
+      }
+    }
     const item = await Inventory.findByIdAndUpdate(
       req.params.id,
       {
@@ -233,6 +276,9 @@ async function restock(req, res) {
   try {
     const item = await Inventory.findOne({ _id: req.params.id, stationId: req.user.stationId });
     if (!item) return res.status(404).json({ error: "Item not found" });
+    if (item.category !== AMMUNITION_CATEGORY) {
+      return res.status(400).json({ error: "Restocking is for ammunition. Add each new weapon as its own item" });
+    }
 
     item.quantity += quantity;
     if (item.status === "issued" && item.quantity > 0) item.status = "available";
@@ -255,7 +301,8 @@ async function restock(req, res) {
 // return/damaged records (confirmed or not — once a return is submitted
 // the weapon is physically back in the armory). Keyed by item id, with
 // the most recent issue transaction kept for its expectedReturnDate.
-async function getOutstandingIssues(officerId) {
+async function getOutstandingIssues(officerId, ignoreTxIds = []) {
+  const ignored = new Set(ignoreTxIds.map(String));
   const txs = await InventoryTransaction.find({ officerId })
     .sort({ dateTime: 1 })
     .populate("itemId", "itemId itemName category");
@@ -264,6 +311,7 @@ async function getOutstandingIssues(officerId) {
     if (!tx.itemId) continue;
     // Voided after the officer rejected it — never counts either way.
     if (tx.confirmationStatus === "cancelled") continue;
+    if (ignored.has(String(tx._id))) continue;
     const key = tx.itemId._id.toString();
     const entry = byItem.get(key) || { item: tx.itemId, net: 0, lastIssue: null };
     if (tx.type === "issue") {
@@ -470,17 +518,28 @@ async function issue(req, res) {
 // confirms. Ammunition: issued (from the open issue record), counted
 // returned, and the officer's declared rounds fired; used = issued -
 // returned, and any gap between used and declared is the discrepancy.
-async function returnItem(req, res) {
+// POST /api/inventory/:id/submit-return — the officer holding the weapon
+// writes their own return report (condition, rounds, accessories). The
+// Inventory Officer then checks the physical weapon against it and
+// confirms or rejects (confirmTransaction / rejectTransaction).
+async function submitReturn(req, res) {
+  return createReturn(req, res, { officerId: req.user.uid, initiatedBy: "officer" });
+}
+
+async function createReturn(req, res, { officerId, initiatedBy }) {
   const {
-    officerId,
     condition,
     remarks,
-    dateTime,
+    dateTime: bodyDateTime,
     ammoReturned,
     ammoDeclaredUsed,
     accessoriesComplete,
     accessoriesRemarks,
   } = req.body;
+  const byOfficer = initiatedBy === "officer";
+  // An officer's own report is stamped with the server time — they don't
+  // get to back-date it.
+  const dateTime = byOfficer ? new Date() : bodyDateTime;
 
   if (!officerId || !condition) {
     return res.status(400).json({ error: "Officer ID and condition are required" });
@@ -498,10 +557,32 @@ async function returnItem(req, res) {
     // The officer's open issue for this weapon — its recorded rounds and
     // ammo stock line win over whatever the form sent, so the count
     // can't be quietly re-typed at return time.
-    const outstanding = await getOutstandingIssues(officerId);
+    // For an officer's own report: a return still waiting for the
+    // Inventory Officer blocks a second one, and an earlier rejected one
+    // is replaced by this corrected report (voided once this one saves).
+    let supersededIds = [];
+    if (byOfficer) {
+      const earlier = await InventoryTransaction.find({
+        itemId: item._id,
+        officerId,
+        initiatedBy: "officer",
+        type: { $in: ["return", "damaged"] },
+        confirmationStatus: { $in: ["pending", "rejected"] },
+      });
+      if (earlier.some((e) => e.confirmationStatus === "pending")) {
+        return res.status(400).json({
+          error: "You already submitted a return for this weapon. It is waiting for the Inventory Officer to check it.",
+        });
+      }
+      supersededIds = earlier.map((e) => e._id);
+    }
+
+    const outstanding = await getOutstandingIssues(officerId, supersededIds);
     const open = outstanding.find((e) => String(e.item._id) === String(item._id));
     if (!open) {
-      return res.status(400).json({ error: "This officer has no open issue for this item" });
+      return res.status(400).json({
+        error: byOfficer ? "You do not hold this weapon" : "This officer has no open issue for this item",
+      });
     }
     const sourceIssue = open.lastIssue;
     // Everything the officer holds of this item comes back together —
@@ -547,6 +628,7 @@ async function returnItem(req, res) {
       itemId: item._id,
       officerId,
       processedBy: req.user.uid,
+      initiatedBy,
       type: transactionType,
       // Carried over from the issue this return closes, so the Duty Type
       // column in the Return Records table isn't left blank.
@@ -568,19 +650,30 @@ async function returnItem(req, res) {
       stationId: req.user.stationId,
     });
 
+    if (supersededIds.length) {
+      await InventoryTransaction.updateMany(
+        { _id: { $in: supersededIds } },
+        { $set: { confirmationStatus: "cancelled", reviewedBy: req.user.uid, reviewedAt: new Date() } }
+      );
+    }
+
+    const officer = await User.findById(officerId).select("fullName");
     await generateAlert({
       alertType: "return_awaiting_confirmation",
-      title: "Return Awaiting Officer Confirmation",
-      message: `${item.itemId} return submitted — waiting on the officer to confirm before it's secured.`,
+      title: byOfficer ? "Return Awaiting Your Check" : "Return Awaiting Officer Confirmation",
+      message: byOfficer
+        ? `${officer?.fullName || "An officer"} submitted a return of ${item.itemId}${transactionType === "damaged" ? " (reported faulty)" : ""}. Check the weapon and confirm or reject it.`
+        : `${item.itemId} return submitted — waiting on the officer to confirm before it's secured.`,
       itemId: item._id,
       transactionId: transaction._id,
-      recipientId: officerId,
+      recipientId: byOfficer ? null : officerId, // null = armory side (Inventory Officer, Duty Officer, OIC)
       stationId: req.user.stationId,
     });
 
-    const officer = await User.findById(officerId).select("fullName");
     logAuditForActor(req, {
-      action: `Recorded ${transactionType === "damaged" ? "Damaged Return" : "Return"} of ${item.itemId} from ${officer?.fullName || "an officer"}${ammoUsed !== null ? ` (rounds used ${ammoUsed}, declared ${declaredUsed})` : ""}`,
+      action: byOfficer
+        ? `Submitted ${transactionType === "damaged" ? "damaged " : ""}return report of ${item.itemId}${ammoUsed !== null ? ` (rounds used ${ammoUsed}, declared ${declaredUsed})` : ""}`
+        : `Recorded ${transactionType === "damaged" ? "Damaged Return" : "Return"} of ${item.itemId} from ${officer?.fullName || "an officer"}${ammoUsed !== null ? ` (rounds used ${ammoUsed}, declared ${declaredUsed})` : ""}`,
       module: "Inventory",
     });
 
@@ -642,7 +735,18 @@ async function getMyWeapons(req, res) {
     // they haven't yet confirmed — surfaced separately (and first) on
     // the My Weapons page as an action item, not just another history
     // row. See confirmTransaction for what confirming each type does.
-    const pendingConfirmation = firearmsTx.filter((tx) => tx.confirmationStatus === "pending");
+    // An officer-written return is waiting on the Inventory Officer, so it
+    // is NOT something this officer confirms — it is listed separately.
+    const writtenByOfficer = (tx) => tx.type !== "issue" && tx.initiatedBy === "officer";
+    const pendingConfirmation = firearmsTx.filter(
+      (tx) => tx.confirmationStatus === "pending" && !writtenByOfficer(tx)
+    );
+    const submittedReturns = firearmsTx.filter(
+      (tx) => tx.confirmationStatus === "pending" && writtenByOfficer(tx)
+    );
+    const rejectedReturns = firearmsTx.filter(
+      (tx) => tx.confirmationStatus === "rejected" && writtenByOfficer(tx)
+    );
 
     // "Currently assigned" is netted from this officer's OWN issue vs.
     // confirmed-return/damaged transaction history — NOT the shared
@@ -667,14 +771,19 @@ async function getMyWeapons(req, res) {
     // transactions (any category) pile up, and wrongly disappear from
     // "assigned" even though it was never actually returned.
     const allFirearmsTx = await InventoryTransaction.find({ officerId })
-      .populate("itemId", "itemId itemName category");
-    const netByItem = new Map(); // item's Mongo id -> { item, net }
+      .sort({ dateTime: 1 })
+      .populate("itemId", "itemId itemName category")
+      .populate("ammoItemId", "itemId itemName");
+    const netByItem = new Map(); // item's Mongo id -> { item, net, lastIssue }
     for (const tx of allFirearmsTx) {
       if (!WEAPON_CATEGORIES.includes(tx.itemId?.category)) continue;
       if (tx.confirmationStatus === "cancelled") continue;
       const key = tx.itemId._id.toString();
-      const entry = netByItem.get(key) || { item: tx.itemId, net: 0 };
-      if (tx.type === "issue") entry.net += tx.quantity || 1;
+      const entry = netByItem.get(key) || { item: tx.itemId, net: 0, lastIssue: null };
+      if (tx.type === "issue") {
+        entry.net += tx.quantity || 1;
+        entry.lastIssue = tx;
+      }
       else if (tx.confirmationStatus === "secured") entry.net -= tx.quantity || 1;
       netByItem.set(key, entry);
     }
@@ -683,10 +792,24 @@ async function getMyWeapons(req, res) {
       ? await Inventory.find({ _id: { $in: assignedItemIds } }).sort({ itemName: 1 })
       : [];
 
+    // What each held weapon was issued with — the officer's own return form
+    // needs the rounds issued and accessories to compare against.
+    const holdings = [...netByItem.values()]
+      .filter((e) => e.net > 0 && e.lastIssue)
+      .map((e) => ({
+        itemId: e.item._id.toString(),
+        ammoIssued: e.lastIssue.ammoIssued > 0 ? e.lastIssue.ammoIssued : 0,
+        ammoItemName: e.lastIssue.ammoItemId?.itemName || "",
+        accessories: e.lastIssue.accessories || "",
+      }));
+
     return res.json({
+      holdings,
       assigned: assigned.map((i) => i.toJSON()),
       history: history.map((tx) => tx.toJSON()),
       pendingConfirmation: pendingConfirmation.map((tx) => tx.toJSON()),
+      submittedReturns: submittedReturns.map((tx) => tx.toJSON()),
+      rejectedReturns: rejectedReturns.map((tx) => tx.toJSON()),
     });
   } catch (err) {
     console.error("getMyWeapons error:", err);
@@ -720,14 +843,26 @@ async function confirmTransaction(req, res) {
     if (!["issue", "return", "damaged"].includes(tx.type)) {
       return res.status(400).json({ error: "This transaction type cannot be confirmed" });
     }
-    if (String(tx.officerId) !== String(req.user.uid)) {
+    // A return the officer wrote themselves is confirmed by the Inventory
+    // Officer after checking the physical weapon; every other transaction
+    // is confirmed by the officer named on it.
+    const officerWrote = tx.initiatedBy === "officer" && tx.type !== "issue";
+    if (officerWrote) {
+      if (req.user.role !== "inventory_officer" || tx.stationId !== req.user.stationId) {
+        return res.status(403).json({ error: "Only the Inventory Officer can confirm this return after checking the weapon" });
+      }
+    } else if (String(tx.officerId) !== String(req.user.uid)) {
       return res.status(403).json({ error: "Only the officer on this transaction can confirm it" });
     }
     if (tx.confirmationStatus === "secured") {
       return res.status(400).json({ error: "This transaction has already been confirmed" });
     }
     if (tx.confirmationStatus === "rejected") {
-      return res.status(400).json({ error: "You rejected this transaction. It is waiting for the Inventory Officer's review" });
+      return res.status(400).json({
+        error: officerWrote
+          ? "This return was rejected. The officer has to correct it and submit it again"
+          : "You rejected this transaction. It is waiting for the Inventory Officer's review",
+      });
     }
     if (tx.confirmationStatus === "cancelled") {
       return res.status(400).json({ error: "This transaction was cancelled" });
@@ -740,7 +875,10 @@ async function confirmTransaction(req, res) {
         item.status = tx.type === "damaged" ? "damaged" : "available";
         item.condition = tx.condition;
         item.assignedTo = null; // nobody's assigned to stock that's back in the armory
-        item.lastUpdatedBy = tx.processedBy || req.user.uid;
+        // For an officer-written return, the verifying Inventory Officer is
+        // the one answerable for the stock change, not the submitting officer.
+        const actorId = officerWrote ? req.user.uid : tx.processedBy || req.user.uid;
+        item.lastUpdatedBy = actorId;
         await item.save();
 
         if (tx.type === "damaged") {
@@ -753,7 +891,7 @@ async function confirmTransaction(req, res) {
             refId: `MR-${String(maintenanceCount + 1).padStart(4, "0")}`,
             itemId: item._id,
             issueDescription: tx.remarks || "Reported damaged on return",
-            reportedBy: tx.processedBy,
+            reportedBy: actorId,
             reportedDate: new Date(),
             sourceTransactionId: tx._id,
             stationId: tx.stationId,
@@ -795,7 +933,7 @@ async function confirmTransaction(req, res) {
           const ammoItem = await Inventory.findById(tx.ammoItemId);
           if (ammoItem) {
             ammoItem.quantity += tx.ammoReturned;
-            ammoItem.lastUpdatedBy = tx.processedBy || req.user.uid;
+            ammoItem.lastUpdatedBy = actorId;
             await ammoItem.save();
             await syncLowStockAlert(ammoItem);
           }
@@ -842,7 +980,9 @@ async function confirmTransaction(req, res) {
 
     const confirmedItem = await Inventory.findById(tx.itemId).select("itemId");
     logAuditForActor(req, {
-      action: `Confirmed ${tx.type === "issue" ? "receipt" : "return"} of ${confirmedItem?.itemId || "a weapon"}`,
+      action: officerWrote
+        ? `Checked and confirmed officer's return of ${confirmedItem?.itemId || "a weapon"}`
+        : `Confirmed ${tx.type === "issue" ? "receipt" : "return"} of ${confirmedItem?.itemId || "a weapon"}`,
       module: "Inventory",
     });
 
@@ -909,7 +1049,14 @@ async function rejectTransaction(req, res) {
     if (!["issue", "return", "damaged"].includes(tx.type)) {
       return res.status(400).json({ error: "This transaction type cannot be rejected" });
     }
-    if (String(tx.officerId) !== String(req.user.uid)) {
+    const officerWrote = tx.initiatedBy === "officer" && tx.type !== "issue";
+    if (officerWrote) {
+      // The Inventory Officer checked the weapon and it doesn't match the
+      // officer's report.
+      if (req.user.role !== "inventory_officer" || tx.stationId !== req.user.stationId) {
+        return res.status(403).json({ error: "Only the Inventory Officer can reject this return" });
+      }
+    } else if (String(tx.officerId) !== String(req.user.uid)) {
       return res.status(403).json({ error: "Only the officer on this transaction can reject it" });
     }
     if (tx.confirmationStatus !== "pending") {
@@ -919,10 +1066,31 @@ async function rejectTransaction(req, res) {
     tx.confirmationStatus = "rejected";
     tx.rejectionReason = reason.slice(0, 500);
     tx.rejectedAt = new Date();
+    if (officerWrote) {
+      tx.reviewedBy = req.user.uid;
+      tx.reviewedAt = new Date();
+    }
     await tx.save();
 
     const officer = await User.findById(tx.officerId).select("fullName");
     const what = tx.type === "issue" ? "issue" : "return";
+    if (officerWrote) {
+      // Straight back to the officer: they correct the report and resubmit.
+      await generateAlert({
+        alertType: "confirmation_rejected",
+        title: "Your Return Was Rejected",
+        message: `The Inventory Officer rejected your return of ${tx.itemId?.itemId || "a weapon"}: "${tx.rejectionReason}". Correct it and submit it again from My Weapons.`,
+        itemId: tx.itemId?._id || null,
+        transactionId: tx._id,
+        recipientId: tx.officerId,
+        stationId: tx.stationId,
+      });
+      logAuditForActor(req, {
+        action: `Rejected officer's return of ${tx.itemId?.itemId || "a weapon"}: ${tx.rejectionReason}`,
+        module: "Inventory",
+      });
+      return res.json({ id: tx._id.toString(), confirmationStatus: "rejected" });
+    }
     await generateAlert({
       alertType: "confirmation_rejected",
       title: tx.type === "issue" ? "Weapon Issue Rejected by Officer" : "Weapon Return Rejected by Officer",
@@ -967,6 +1135,9 @@ async function reviewTransaction(req, res) {
     }
     if (tx.confirmationStatus !== "rejected") {
       return res.status(400).json({ error: "Only a rejected transaction can be reviewed" });
+    }
+    if (tx.initiatedBy === "officer" && tx.type !== "issue") {
+      return res.status(400).json({ error: "The officer has to correct this return and submit it again" });
     }
 
     const itemLabel = tx.itemId?.itemId || "a weapon";
@@ -1032,7 +1203,7 @@ module.exports = {
   update,
   restock,
   issue,
-  returnItem,
+  submitReturn,
   listTransactions,
   getMyWeapons,
   getStats,

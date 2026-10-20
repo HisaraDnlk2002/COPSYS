@@ -97,6 +97,13 @@ const inventoryTransactionSchema = new mongoose.Schema(
     // rejecting; the Inventory Officer then either sends it back for
     // confirmation or cancels it (reviewTransaction). Nothing about stock
     // or custody changes at the moment of rejection itself.
+    // Who started a return. "inventory_officer" (default, every older
+    // record): the Inventory Officer filled the form and the officer
+    // confirms it. "officer": the officer wrote their own return report on
+    // My Weapons and the Inventory Officer verifies it against the physical
+    // weapon, so confirming/rejecting belongs to the Inventory Officer.
+    initiatedBy: { type: String, enum: ["inventory_officer", "officer"], default: "inventory_officer" },
+
     rejectionReason: { type: String, default: null },
     rejectedAt: { type: Date, default: null },
     reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },

@@ -161,6 +161,16 @@ export async function returnItem(itemId, payload) {
   return api.post(`/inventory/${itemId}/return`, payload);
 }
 
+// POST /api/inventory/:id/submit-return — the officer writes their own
+// return report for a weapon they hold (condition, rounds, accessories).
+// The Inventory Officer then checks the weapon and confirms or rejects it.
+export async function submitReturn(itemId, payload) {
+  if (USE_DUMMY_DATA) {
+    return Promise.resolve({ id: `sr${Date.now()}`, itemId, confirmationStatus: "pending", ...payload });
+  }
+  return api.post(`/inventory/${itemId}/submit-return`, payload);
+}
+
 // POST /api/inventory/:id/report-missing — inventory_officer only.
 // Raises a Critical "Weapon Reported Missing" alert and blocks the item
 // from being issued until it's manually cleared.

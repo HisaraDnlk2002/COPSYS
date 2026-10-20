@@ -98,13 +98,22 @@ async function scanForTimeBasedAlerts(stationId) {
   }).populate("itemId", "itemId");
 
   for (const tx of unconfirmed) {
+    // A return the officer wrote themselves is waiting on the Inventory
+    // Officer, so that reminder goes to the armory side, not the officer.
+    const officerWrote = tx.initiatedBy === "officer";
     await generateAlert({
       alertType: "confirmation_overdue",
-      title: tx.type === "issue" ? "Weapon Receipt Not Confirmed" : "Weapon Return Not Confirmed",
-      message: `${tx.itemId?.itemId || "A weapon"} ${tx.type === "issue" ? "issue" : "return"} has been waiting over ${CONFIRMATION_REMINDER_HOURS} hours for the officer's confirmation on My Weapons.`,
+      title: officerWrote
+        ? "Officer Return Not Checked"
+        : tx.type === "issue"
+        ? "Weapon Receipt Not Confirmed"
+        : "Weapon Return Not Confirmed",
+      message: officerWrote
+        ? `${tx.itemId?.itemId || "A weapon"} return has been waiting over ${CONFIRMATION_REMINDER_HOURS} hours for the Inventory Officer to check the weapon.`
+        : `${tx.itemId?.itemId || "A weapon"} ${tx.type === "issue" ? "issue" : "return"} has been waiting over ${CONFIRMATION_REMINDER_HOURS} hours for the officer's confirmation on My Weapons.`,
       itemId: tx.itemId?._id || null,
       transactionId: tx._id,
-      recipientId: tx.officerId,
+      recipientId: officerWrote ? null : tx.officerId,
       stationId,
     });
     tx.confirmationReminderGenerated = true;

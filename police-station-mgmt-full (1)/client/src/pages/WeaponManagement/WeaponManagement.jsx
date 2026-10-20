@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLanguage } from "../../i18n/useLanguage";
 import { Card, StatCard, Table, Badge, Loader, Button, Modal, InputField } from "../../components";
-import { getMyWeapons, confirmTransaction, rejectTransaction } from "../../services/inventory";
+import { getMyWeapons, confirmTransaction, rejectTransaction, submitReturn } from "../../services/inventory";
 import { getMyAlerts, updateAlertStatus } from "../../services/alerts";
 import { formatDateAndTime } from "../../utils/formatDate";
 import "./WeaponManagement.css";
@@ -13,6 +13,18 @@ const TRANSACTION_TYPE = {
   issue: { labelKey: "typeIssue", tone: "info", actionKey: "confirmReceipt", titleKey: "confirmReceiptTitle", textKey: "confirmReceiptText" },
   return: { labelKey: "typeReturn", tone: "success", actionKey: "confirmReturn", titleKey: "confirmReturnTitle", textKey: "confirmReturnText" },
   damaged: { labelKey: "typeDamaged", tone: "danger", actionKey: "confirmReturn", titleKey: "confirmReturnTitle", textKey: "confirmReturnText" },
+};
+
+// The officer's own return report. Condition is a fixed Good/Faulty choice
+// because the server only treats a return as damaged when it is exactly
+// "Faulty".
+const EMPTY_RETURN_FORM = {
+  condition: "Good",
+  faultReason: "",
+  ammoReturned: "",
+  ammoDeclaredUsed: "",
+  accessoriesComplete: "",
+  accessoriesRemarks: "",
 };
 
 // Item ID alone ("10016") doesn't say what the item actually is —
@@ -52,6 +64,13 @@ export function WeaponManagementPage() {
   const [assigned, setAssigned] = useState([]);
   const [history, setHistory] = useState([]);
   const [pendingConfirmation, setPendingConfirmation] = useState([]);
+  const [submittedReturns, setSubmittedReturns] = useState([]); // my own returns waiting for the Inventory Officer
+  const [rejectedReturns, setRejectedReturns] = useState([]); // my own returns the Inventory Officer rejected
+  const [holdings, setHoldings] = useState([]); // rounds/accessories each held weapon was issued with
+  const [returningItem, setReturningItem] = useState(null); // the held weapon whose return form is open
+  const [returnForm, setReturnForm] = useState(EMPTY_RETURN_FORM);
+  const [returnSubmitting, setReturnSubmitting] = useState(false);
+  const [returnError, setReturnError] = useState("");
   const [myAlerts, setMyAlerts] = useState([]);
 
   const [confirmingTx, setConfirmingTx] = useState(null); // the pending transaction being confirmed, or null
@@ -75,6 +94,9 @@ export function WeaponManagementPage() {
       setAssigned(weapons.assigned || []);
       setHistory(weapons.history || []);
       setPendingConfirmation(weapons.pendingConfirmation || []);
+      setSubmittedReturns(weapons.submittedReturns || []);
+      setRejectedReturns(weapons.rejectedReturns || []);
+      setHoldings(weapons.holdings || []);
       setMyAlerts(alerts || []);
     });
   }
@@ -147,6 +169,68 @@ export function WeaponManagementPage() {
     }
   }
 
+  function openReturn(item) {
+    setReturningItem(item);
+    setReturnForm(EMPTY_RETURN_FORM);
+    setReturnError("");
+  }
+
+  function closeReturn() {
+    setReturningItem(null);
+    setReturnError("");
+  }
+
+  async function handleReturnSubmit() {
+    if (!returningItem) return;
+    const held = holdings.find((h) => h.itemId === returningItem.id);
+    const issued = held?.ammoIssued || 0;
+    const f = returnForm;
+
+    if (f.condition === "Faulty" && !f.faultReason.trim()) {
+      setReturnError(t("weaponManagement.errFaultReason"));
+      return;
+    }
+    if (issued > 0) {
+      if (f.ammoReturned === "" || f.ammoDeclaredUsed === "") {
+        setReturnError(t("weaponManagement.errAmmoRequired"));
+        return;
+      }
+      const returned = Number(f.ammoReturned);
+      const used = Number(f.ammoDeclaredUsed);
+      if (!Number.isInteger(returned) || !Number.isInteger(used) || returned < 0 || used < 0) {
+        setReturnError(t("weaponManagement.errAmmoWhole"));
+        return;
+      }
+      if (returned > issued || used > issued) {
+        setReturnError(t("weaponManagement.errAmmoTooMany"));
+        return;
+      }
+    }
+    if (f.accessoriesComplete === "false" && !f.accessoriesRemarks.trim()) {
+      setReturnError(t("weaponManagement.errAccessoriesRemarks"));
+      return;
+    }
+
+    setReturnSubmitting(true);
+    setReturnError("");
+    try {
+      await submitReturn(returningItem.id, {
+        condition: f.condition,
+        remarks: f.condition === "Faulty" ? f.faultReason.trim() : undefined,
+        ammoReturned: issued > 0 ? Number(f.ammoReturned) : undefined,
+        ammoDeclaredUsed: issued > 0 ? Number(f.ammoDeclaredUsed) : undefined,
+        accessoriesComplete: f.accessoriesComplete === "" ? undefined : f.accessoriesComplete === "true",
+        accessoriesRemarks: f.accessoriesComplete === "false" ? f.accessoriesRemarks.trim() : undefined,
+      });
+      closeReturn();
+      await loadData();
+    } catch (err) {
+      setReturnError(err?.response?.data?.error || err?.message || t("weaponManagement.errReturnFailed"));
+    } finally {
+      setReturnSubmitting(false);
+    }
+  }
+
   function openAlertAction(alert) {
     setActingAlert(alert);
     setAlertRemarks(alert.remarks || "");
@@ -181,7 +265,14 @@ export function WeaponManagementPage() {
   const isReturnLike = confirmingTx?.type === "return" || confirmingTx?.type === "damaged";
   const rejectingMeta = rejectingTx ? TRANSACTION_TYPE[rejectingTx.type] || TRANSACTION_TYPE.issue : null;
   // Rejected by this officer and still waiting on the Inventory Officer.
-  const rejectedAwaitingReview = history.filter((tx) => tx.confirmationStatus === "rejected");
+  const rejectedAwaitingReview = history.filter(
+    (tx) => tx.confirmationStatus === "rejected" && !(tx.initiatedBy === "officer" && tx.type !== "issue")
+  );
+  const heldReturn = returningItem ? holdings.find((h) => h.itemId === returningItem.id) : null;
+  const heldAmmoIssued = heldReturn?.ammoIssued || 0;
+  // Weapons whose return is already with the Inventory Officer can't be submitted again.
+  const awaitingCheckIds = new Set(submittedReturns.map((tx) => tx.itemId?._id || tx.itemId?.id));
+  const rejectedReturnFor = (itemId) => rejectedReturns.find((tx) => (tx.itemId?._id || tx.itemId?.id) === itemId);
 
   const pendingColumns = [
     { key: "itemId", label: t("weaponManagement.colItemId"), render: (row) => itemLabel(row.itemId) },
@@ -220,6 +311,18 @@ export function WeaponManagementPage() {
     { key: "itemName", label: t("weaponManagement.colItemName") },
     { key: "quantity", label: t("weaponManagement.colQuantity") },
     { key: "condition", label: t("weaponManagement.colCondition"), render: (row) => <Badge status={row.condition || "good"} /> },
+    {
+      key: "returnAction",
+      label: "",
+      render: (row) =>
+        awaitingCheckIds.has(row.id) ? (
+          <Badge tone="warning">{t("weaponManagement.awaitingInventoryCheck")}</Badge>
+        ) : (
+          <Button variant={rejectedReturnFor(row.id) ? "primary" : "outline"} onClick={() => openReturn(row)}>
+            {rejectedReturnFor(row.id) ? t("weaponManagement.resubmitReturn") : t("weaponManagement.returnWeapon")}
+          </Button>
+        ),
+    },
   ];
 
   const historyColumns = [
@@ -242,7 +345,11 @@ export function WeaponManagementPage() {
         row.confirmationStatus === "secured" ? (
           <Badge tone="success">{t("weaponManagement.secured")}</Badge>
         ) : row.confirmationStatus === "pending" ? (
-          <Badge tone="warning">{t("weaponManagement.pending")}</Badge>
+          <Badge tone="warning">
+            {row.initiatedBy === "officer" && row.type !== "issue"
+              ? t("weaponManagement.awaitingInventoryCheck")
+              : t("weaponManagement.pending")}
+          </Badge>
         ) : row.confirmationStatus === "rejected" ? (
           <Badge tone="danger" title={row.rejectionReason || undefined}>{t("weaponManagement.rejected")}</Badge>
         ) : row.confirmationStatus === "cancelled" ? (
@@ -333,6 +440,22 @@ export function WeaponManagementPage() {
         </Card>
       )}
 
+      {rejectedReturns.length > 0 && (
+        <Card variant="panel" className="weapon-mgmt-section weapon-mgmt-pending">
+          <h3 className="section-label">{t("weaponManagement.returnRejectedTitle")}</h3>
+          <p className="weapon-mgmt-section-subtitle">{t("weaponManagement.returnRejectedSubtitle")}</p>
+          <Table
+            columns={[
+              { key: "itemId", label: t("weaponManagement.colItemId"), render: (row) => itemLabel(row.itemId) },
+              { key: "rejectionReason", label: t("weaponManagement.rejectReasonLabel"), render: (row) => row.rejectionReason || "—" },
+              { key: "rejectedAt", label: t("weaponManagement.colDateTime"), render: (row) => (row.rejectedAt ? formatDateAndTime(row.rejectedAt) : "—") },
+            ]}
+            data={rejectedReturns}
+            emptyMessage=""
+          />
+        </Card>
+      )}
+
       <Card variant="panel" className="weapon-mgmt-section">
         <h3 className="section-label">{t("weaponManagement.inCustody")}</h3>
         <Table columns={custodyColumns} data={assigned} emptyMessage={t("weaponManagement.noWeaponsAssigned")} />
@@ -413,6 +536,107 @@ export function WeaponManagementPage() {
           sinhalaTyping
         />
         {confirmError && <p style={{ color: "var(--color-danger)", marginTop: 12 }}>{confirmError}</p>}
+      </Modal>
+
+      <Modal
+        open={Boolean(returningItem)}
+        onClose={closeReturn}
+        title={returningItem ? `${t("weaponManagement.returnTitle")} — ${returningItem.itemId}` : ""}
+        footer={
+          <Button variant="primary" fullWidth onClick={handleReturnSubmit} disabled={returnSubmitting}>
+            {returnSubmitting ? t("weaponManagement.submittingReturn") : t("weaponManagement.submitReturn")}
+          </Button>
+        }
+      >
+        {returningItem && (
+          <>
+            <p style={{ color: "var(--color-text-muted)", fontSize: 13, marginBottom: 16 }}>
+              {t("weaponManagement.returnText")}
+            </p>
+            {rejectedReturnFor(returningItem.id) && (
+              <p style={{ color: "var(--color-danger)", fontSize: 13, marginBottom: 16 }}>
+                {t("weaponManagement.previousRejection")}: {rejectedReturnFor(returningItem.id).rejectionReason || "—"}
+              </p>
+            )}
+            <InputField
+              label={t("weaponManagement.colCondition")}
+              type="select"
+              required
+              value={returnForm.condition}
+              onChange={(e) =>
+                setReturnForm((f) => ({ ...f, condition: e.target.value, faultReason: e.target.value === "Faulty" ? f.faultReason : "" }))
+              }
+              options={[
+                { value: "Good", label: t("status.good") },
+                { value: "Faulty", label: t("status.faulty") },
+              ]}
+            />
+            {returnForm.condition === "Faulty" && (
+              <InputField
+                label={t("weaponManagement.faultReason")}
+                type="textarea"
+                rows={3}
+                required
+                value={returnForm.faultReason}
+                placeholder={t("weaponManagement.faultReasonPlaceholder")}
+                onChange={(e) => setReturnForm((f) => ({ ...f, faultReason: e.target.value }))}
+                voiceInput
+                sinhalaTyping
+              />
+            )}
+            {heldAmmoIssued > 0 && (
+              <>
+                <p className="weapon-mgmt-section-subtitle">
+                  {t("weaponManagement.roundsIssuedWithWeapon")}: {heldAmmoIssued}
+                  {heldReturn?.ammoItemName ? ` × ${heldReturn.ammoItemName}` : ""}
+                </p>
+                <InputField
+                  label={t("weaponManagement.roundsReturned")}
+                  type="number"
+                  required
+                  value={returnForm.ammoReturned}
+                  onChange={(e) => setReturnForm((f) => ({ ...f, ammoReturned: e.target.value }))}
+                />
+                <InputField
+                  label={t("weaponManagement.roundsFired")}
+                  type="number"
+                  required
+                  value={returnForm.ammoDeclaredUsed}
+                  onChange={(e) => setReturnForm((f) => ({ ...f, ammoDeclaredUsed: e.target.value }))}
+                />
+              </>
+            )}
+            {heldReturn?.accessories && (
+              <p className="weapon-mgmt-section-subtitle">
+                {t("weaponManagement.issuedWith")}: {heldReturn.accessories}
+              </p>
+            )}
+            <InputField
+              label={t("weaponManagement.accessoriesAllReturnedQ")}
+              type="select"
+              value={returnForm.accessoriesComplete}
+              onChange={(e) => setReturnForm((f) => ({ ...f, accessoriesComplete: e.target.value }))}
+              placeholder={t("weaponManagement.selectOption")}
+              options={[
+                { value: "true", label: t("weaponManagement.yes") },
+                { value: "false", label: t("weaponManagement.no") },
+              ]}
+            />
+            {returnForm.accessoriesComplete === "false" && (
+              <InputField
+                label={t("weaponManagement.missingAccessories")}
+                type="textarea"
+                rows={2}
+                required
+                value={returnForm.accessoriesRemarks}
+                onChange={(e) => setReturnForm((f) => ({ ...f, accessoriesRemarks: e.target.value }))}
+                voiceInput
+                sinhalaTyping
+              />
+            )}
+            {returnError && <p style={{ color: "var(--color-danger)", marginTop: 12 }}>{returnError}</p>}
+          </>
+        )}
       </Modal>
 
       <Modal
