@@ -45,10 +45,35 @@ async function getStats(req, res) {
 async function list(req, res) {
   try {
     const items = await Inventory.find({ stationId: req.user.stationId }).sort({ itemName: 1 });
+    // Automatically ensure all items with quantity > 1 have individual subItems allocated
+    for (const item of items) {
+      if (item.quantity > 1 && (!item.subItems || item.subItems.length === 0)) {
+        const padLength = item.quantity >= 100 ? 3 : 2;
+        item.subItems = Array.from({ length: item.quantity }, (_, i) => ({
+          subId: `${item.itemId}-${String(i + 1).padStart(padLength, "0")}`,
+          status: item.status === "issued" ? "issued" : "available",
+          condition: item.condition || "good",
+          assignedTo: item.assignedTo || null,
+        }));
+        await Inventory.updateOne({ _id: item._id }, { $set: { subItems: item.subItems } });
+      }
+    }
     return res.json(items.map((i) => i.toJSON()));
   } catch (err) {
     console.error("list inventory error:", err);
     return res.status(500).json({ error: "Could not load inventory" });
+  }
+}
+
+// GET /api/inventory/next-item-id — duty_officer, inventory_officer, oic
+// Previews the next auto-assigned weapon Item ID for the Add Item form modal
+async function getNextItemId(req, res) {
+  try {
+    const nextItemId = await generateNextWeaponItemId();
+    return res.json({ nextItemId });
+  } catch (err) {
+    console.error("getNextItemId error:", err);
+    return res.status(500).json({ error: "Could not generate next item ID" });
   }
 }
 
@@ -151,6 +176,18 @@ async function create(req, res) {
       }
     }
 
+    // Allocate individual Sub IDs when quantity is more than one (e.g. 10004-01, 10004-02...)
+    const padLength = resolvedQuantity >= 100 ? 3 : 2;
+    const subItems =
+      resolvedQuantity > 1
+        ? Array.from({ length: resolvedQuantity }, (_, i) => ({
+            subId: `${resolvedItemId}-${String(i + 1).padStart(padLength, "0")}`,
+            status: "available",
+            condition: condition || "good",
+            assignedTo: null,
+          }))
+        : [];
+
     // A brand-new weapon goes on the periodic inspection schedule
     // immediately — counted from its last inspection if one is known,
     // otherwise from today. Ammunition isn't periodically inspected.
@@ -161,6 +198,7 @@ async function create(req, res) {
       itemName: resolvedItemName,
       category,
       quantity: resolvedQuantity,
+      subItems,
       condition: condition || "good",
       caliber: resolvedCaliber,
       storageLocation: storageLocation?.trim() || "",
@@ -177,7 +215,7 @@ async function create(req, res) {
       stationId: req.user.stationId,
     });
     await syncLowStockAlert(item);
-    logAuditForActor(req, { action: `Added Inventory Item: ${item.itemId} (${item.itemName})`, module: "Inventory" });
+    logAuditForActor(req, { action: `Added Inventory Item: ${item.itemId} (${item.itemName})${subItems.length > 0 ? ` with ${subItems.length} sub-units` : ""}`, module: "Inventory" });
     return res.status(201).json(item.toJSON());
   } catch (err) {
     console.error("create inventory error:", err);
@@ -322,7 +360,7 @@ function hasValue(v) {
 // accessories handed over. Creates a PENDING record — only the receiving
 // officer can secure it (see confirmTransaction).
 async function issue(req, res) {
-  const { officerId, dutyType, expectedReturnDate, ammoIssued, ammoItemId, accessories } = req.body;
+  const { officerId, dutyType, expectedReturnDate, ammoIssued, ammoItemId, accessories, subId } = req.body;
 
   if (!officerId) {
     return res.status(400).json({ error: "Officer ID is required" });
@@ -365,6 +403,24 @@ async function issue(req, res) {
       return res.status(400).json({ error: "Not enough stock available to issue" });
     }
 
+    // Handle sub ID allocation if item has subItems
+    let resolvedSubId = subId || null;
+    let chosenSubItem = null;
+    if (item.subItems && item.subItems.length > 0) {
+      if (resolvedSubId) {
+        chosenSubItem = item.subItems.find((s) => s.subId === resolvedSubId);
+        if (!chosenSubItem) {
+          return res.status(400).json({ error: `Sub ID ${resolvedSubId} does not belong to this item` });
+        }
+        if (chosenSubItem.status !== "available") {
+          return res.status(400).json({ error: `Unit ${resolvedSubId} is currently ${chosenSubItem.status} and cannot be issued` });
+        }
+      } else {
+        chosenSubItem = item.subItems.find((s) => s.status === "available");
+        if (chosenSubItem) resolvedSubId = chosenSubItem.subId;
+      }
+    }
+
     // Accessories arrive as a list of ticked items; only ones that belong
     // with this weapon type are accepted. Stored as one readable string.
     const accessoryList = Array.isArray(accessories)
@@ -393,9 +449,15 @@ async function issue(req, res) {
       }
     }
 
+    const issueDateTime = new Date();
     item.quantity -= quantity;
     item.status = item.quantity === 0 ? "issued" : item.status;
     item.assignedTo = officerId;
+    if (chosenSubItem) {
+      chosenSubItem.status = "issued";
+      chosenSubItem.assignedTo = officerId;
+      chosenSubItem.lastIssuedDate = issueDateTime;
+    }
     item.lastUpdatedBy = req.user.uid;
     await item.save();
 
@@ -408,10 +470,6 @@ async function issue(req, res) {
       await syncLowStockAlert(ammoItem);
     }
 
-    // Always the real moment the weapon (and its rounds) left the armory —
-    // stamped by the server, never taken from the form, so it can't be
-    // back- or forward-dated.
-    const issueDateTime = new Date();
     // A weapon is only meant to stay out for 24 hours by default — the
     // Inventory Officer can still set a longer/shorter explicit
     // deadline on the Issue form for a specific deployment, but leaving
@@ -425,6 +483,7 @@ async function issue(req, res) {
 
     const transaction = await InventoryTransaction.create({
       itemId: item._id,
+      subId: resolvedSubId,
       officerId,
       processedBy: req.user.uid,
       type: "issue",
@@ -442,7 +501,7 @@ async function issue(req, res) {
     await generateAlert({
       alertType: "weapon_issued",
       title: "Weapon Successfully Issued",
-      message: `${item.itemId} issued${rounds > 0 ? ` with ${rounds} round(s)` : ""}, pending the officer's receipt confirmation.`,
+      message: `${item.itemId}${resolvedSubId ? ` (${resolvedSubId})` : ""} issued${rounds > 0 ? ` with ${rounds} round(s)` : ""}, pending the officer's receipt confirmation.`,
       itemId: item._id,
       transactionId: transaction._id,
       recipientId: officerId,
@@ -480,6 +539,7 @@ async function returnItem(req, res) {
     ammoDeclaredUsed,
     accessoriesComplete,
     accessoriesRemarks,
+    subId,
   } = req.body;
 
   if (!officerId || !condition) {
@@ -504,6 +564,7 @@ async function returnItem(req, res) {
       return res.status(400).json({ error: "This officer has no open issue for this item" });
     }
     const sourceIssue = open.lastIssue;
+    const resolvedSubId = subId || sourceIssue?.subId || null;
     // Everything the officer holds of this item comes back together —
     // normally 1, but covers older multi-unit issues too.
     const quantity = open.net;
@@ -545,6 +606,7 @@ async function returnItem(req, res) {
 
     const transaction = await InventoryTransaction.create({
       itemId: item._id,
+      subId: resolvedSubId,
       officerId,
       processedBy: req.user.uid,
       type: transactionType,
@@ -741,6 +803,16 @@ async function confirmTransaction(req, res) {
         item.condition = tx.condition;
         item.assignedTo = null; // nobody's assigned to stock that's back in the armory
         item.lastUpdatedBy = tx.processedBy || req.user.uid;
+
+        // If transaction has a specific subId, update that subItem's status and condition
+        if (tx.subId && item.subItems && item.subItems.length > 0) {
+          const sub = item.subItems.find((s) => s.subId === tx.subId);
+          if (sub) {
+            sub.status = tx.type === "damaged" ? "damaged" : "available";
+            sub.condition = tx.condition || "good";
+            sub.assignedTo = null;
+          }
+        }
         await item.save();
 
         if (tx.type === "damaged") {
@@ -752,7 +824,8 @@ async function confirmTransaction(req, res) {
           await Maintenance.create({
             refId: `MR-${String(maintenanceCount + 1).padStart(4, "0")}`,
             itemId: item._id,
-            issueDescription: tx.remarks || "Reported damaged on return",
+            subId: tx.subId || null,
+            issueDescription: `${tx.remarks || "Reported damaged on return"}${tx.subId ? ` (Unit: ${tx.subId})` : ""}`,
             reportedBy: tx.processedBy,
             reportedDate: new Date(),
             sourceTransactionId: tx._id,
@@ -994,6 +1067,13 @@ async function reviewTransaction(req, res) {
           item.quantity += tx.quantity || 1;
           if (item.status === "issued") item.status = "available";
           if (String(item.assignedTo) === String(tx.officerId)) item.assignedTo = null;
+          if (tx.subId && item.subItems && item.subItems.length > 0) {
+            const sub = item.subItems.find((s) => s.subId === tx.subId);
+            if (sub) {
+              sub.status = "available";
+              sub.assignedTo = null;
+            }
+          }
           item.lastUpdatedBy = req.user.uid;
           await item.save();
         }
@@ -1036,6 +1116,7 @@ module.exports = {
   listTransactions,
   getMyWeapons,
   getStats,
+  getNextItemId,
   confirmTransaction,
   rejectTransaction,
   reviewTransaction,

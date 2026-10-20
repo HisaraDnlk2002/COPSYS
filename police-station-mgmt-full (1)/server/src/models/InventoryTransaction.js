@@ -9,6 +9,7 @@ const inventoryTransactionSchema = new mongoose.Schema(
     // always resolved to null, since InventoryItem's collection is
     // empty). Fixed here so item details actually populate.
     itemId: { type: mongoose.Schema.Types.ObjectId, ref: "Inventory", required: true },
+    subId: { type: String, default: null }, // specific sub-unit ID (e.g. "10004-01") when quantity > 1
     officerId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true }, // issued to / returned by
 
     // Which inventory_officer actually carried out the issue/return —

@@ -10,6 +10,7 @@ const {
   listTransactions,
   getMyWeapons,
   getStats,
+  getNextItemId,
   confirmTransaction,
   rejectTransaction,
   reviewTransaction,
@@ -40,6 +41,7 @@ router.use(requireRole("duty_officer", "inventory_officer", "oic"));
 
 // Read access — both roles
 router.get("/stats", getStats);
+router.get("/next-item-id", getNextItemId);
 router.get("/transactions", listTransactions);
 router.get("/", list);
 

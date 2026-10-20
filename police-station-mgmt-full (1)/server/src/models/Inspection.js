@@ -11,6 +11,7 @@ const inspectionSchema = new mongoose.Schema(
     refId: { type: String, required: true, unique: true }, // "INS-0001" style, human-facing
 
     itemId: { type: mongoose.Schema.Types.ObjectId, ref: "Inventory", required: true },
+    subId: { type: String, default: null }, // specific sub-unit ID when quantity > 1
     inspectedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     inspectionDate: { type: Date, default: Date.now },
     inspectionType: { type: String, enum: INSPECTION_TYPES, default: "Scheduled" },

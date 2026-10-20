@@ -25,6 +25,22 @@ const inventorySchema = new mongoose.Schema(
     assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     lastUpdatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
 
+    // For items with quantity > 1, each unit is allocated a unique sub ID (e.g. 10004-01)
+    // and tracked with its individual custody and maintenance state.
+    subItems: [
+      {
+        subId: { type: String, required: true },
+        status: {
+          type: String,
+          enum: ["available", "issued", "damaged", "missing", "ready_for_stock"],
+          default: "available",
+        },
+        condition: { type: String, default: "good" },
+        assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+        lastIssuedDate: { type: Date, default: null },
+      },
+    ],
+
     lastInspectionDate: { type: Date, default: null },
     nextInspectionDate: { type: Date, default: null }, // drives the Due/Overdue alerts on the Inspections tab
 
