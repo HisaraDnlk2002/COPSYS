@@ -117,7 +117,9 @@ export function NotificationsPage() {
   function canAct(row) {
     if (!NEXT_STATUS[row.status]) return false;
     if (user?.role === "oic") return true;
-    if (user?.role === "inventory_officer" && row.source === "inventory") return true;
+    // A self-verified return is flagged for the OIC to review, so the Inventory
+    // Officer who confirmed it gets no action button (the server refuses too).
+    if (user?.role === "inventory_officer" && row.source === "inventory" && row.alertType !== "self_verified_return") return true;
     const recipientId = row.recipientId?._id || row.recipientId?.id;
     return Boolean(recipientId) && String(recipientId) === String(user?.id);
   }

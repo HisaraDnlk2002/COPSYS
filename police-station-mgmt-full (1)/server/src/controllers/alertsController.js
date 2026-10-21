@@ -257,8 +257,12 @@ async function updateStatus(req, res) {
     // OIC reviews exceptions (workflow section 8), so can move any
     // alert along its lifecycle too, same as the Inventory Officer.
     const isOic = req.user.role === "oic";
+    // A self-verified return is flagged FOR the OIC to review, so the
+    // Inventory Officer who confirmed it can't acknowledge or clear it.
     const isInventoryAlertForInventoryOfficer =
-      req.user.role === "inventory_officer" && alertTypesForSource("inventory").includes(alert.alertType);
+      req.user.role === "inventory_officer" &&
+      alert.alertType !== "self_verified_return" &&
+      alertTypesForSource("inventory").includes(alert.alertType);
     const isRecipient = alert.recipientId && String(alert.recipientId) === String(req.user.uid);
     if (!isOic && !isInventoryAlertForInventoryOfficer && !isRecipient) {
       return res.status(403).json({ error: "You do not have permission to update this alert" });

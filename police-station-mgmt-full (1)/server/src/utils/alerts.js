@@ -17,6 +17,7 @@ const ALERT_PRIORITY = {
   inspection_due: "warning",
   maintenance_pending: "warning",
   return_awaiting_confirmation: "warning",
+  self_verified_return: "warning",
   leave_rejected: "warning",
   weapon_issued: "info",
   weapon_returned: "info",
