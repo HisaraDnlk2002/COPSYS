@@ -134,7 +134,7 @@ export function DailyDutyUpdate() {
         {shifts.length === 0 ? (
           <p style={{ color: "var(--color-text-muted)" }}>{t("dutyRoster.daily.noneScheduled")}</p>
         ) : (
-          <div style={{ overflowX: "auto" }}>
+          <div className="roster-grid-scroll">
             <table className="roster-grid-table">
               <thead>
                 <tr>

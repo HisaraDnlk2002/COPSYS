@@ -103,6 +103,15 @@ const inventoryTransactionSchema = new mongoose.Schema(
     reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     reviewedAt: { type: Date, default: null },
 
+    // Return/damaged only. Who started the record: "officer" = the officer
+    // submitted it from My Weapons and the Inventory Officer must check and
+    // confirm it (the current flow); null = a legacy record created by the
+    // Inventory Officer. resubmitCount counts how many times a rejected
+    // return was corrected and sent again (it replaces the old record in
+    // place, so there is only ever one record per return).
+    initiatedBy: { type: String, enum: ["officer", null], default: null },
+    resubmitCount: { type: Number, default: 0 },
+
     stationId: { type: String, default: "default-station" },
   },
   { timestamps: true }

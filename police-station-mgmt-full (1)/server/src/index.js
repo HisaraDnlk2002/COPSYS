@@ -117,6 +117,9 @@ connectDB().then(async () => {
   await refreshBranchCache();
   await refreshShiftCache();
 
+  // Report duplicate inventory Item IDs and make sure the unique index exists.
+  await require("./utils/inventoryIdIntegrity").ensureInventoryIdIntegrity();
+
   app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });

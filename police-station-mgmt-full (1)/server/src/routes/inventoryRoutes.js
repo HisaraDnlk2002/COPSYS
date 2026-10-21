@@ -6,7 +6,7 @@ const {
   create,
   update,
   issue,
-  returnItem,
+  submitMyReturn,
   listTransactions,
   getMyWeapons,
   getStats,
@@ -24,12 +24,14 @@ router.use(verifyToken);
 
 // Any authenticated role — scoped server-side to req.user.uid, so these
 // sit above the duty_officer/inventory_officer gate below rather than
-// behind it. See getMyWeapons/confirmTransaction in
-// inventoryController.js — confirmTransaction in particular MUST stay
-// reachable by every role, since the officer confirming could be an
-// Officer, Duty Officer, or Inventory Officer, and confirmTransaction
-// itself is the thing enforcing that only that actual officer can use it.
+// behind it. confirm/reject MUST stay reachable by every role: an ISSUE is
+// confirmed by the officer it was issued to (any operational role), while a
+// RETURN is confirmed by an Inventory Officer — confirmTransaction and
+// rejectTransaction themselves enforce which one applies.
 router.get("/my-weapons", getMyWeapons);
+// The officer reports their own return (stock changes only once the
+// Inventory Officer confirms it — see submitMyReturn).
+router.post("/my-weapons/return", submitMyReturn);
 router.patch("/transactions/:id/confirm", confirmTransaction);
 // Same reasoning as confirm: only the officer named on the transaction can
 // reject it, and rejectTransaction itself enforces that.
@@ -53,7 +55,6 @@ router.patch("/transactions/:id/review", requireRole("inventory_officer"), revie
 router.post("/", requireRole("inventory_officer"), create);
 router.patch("/:id", requireRole("inventory_officer"), update);
 router.post("/:id/issue", requireRole("inventory_officer"), issue);
-router.post("/:id/return", requireRole("inventory_officer"), returnItem);
 router.post("/:id/report-missing", requireRole("inventory_officer"), reportMissing);
 router.post("/:id/restock", requireRole("inventory_officer"), restock);
 

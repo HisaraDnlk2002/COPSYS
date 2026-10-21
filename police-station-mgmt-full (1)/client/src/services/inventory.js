@@ -24,16 +24,17 @@ export async function getMyWeapons() {
         firearms.some((i) => i.itemId === t.itemId)
       ),
       pendingConfirmation: [],
+      holdings: [],
     });
   }
   return api.get("/inventory/my-weapons");
 }
 
-// PATCH /api/inventory/transactions/:id/confirm — the officer named on
-// the transaction confirming their side of it: receipt for an issue, or
-// that they actually handed the weapon back for a return/damaged
-// report. remarks is optional. See confirmTransaction in
-// inventoryController.js for what each type does on confirm.
+// PATCH /api/inventory/transactions/:id/confirm — an issue is confirmed by
+// the officer it was issued to (receipt); a return/damaged report is
+// confirmed by the Inventory Officer after physically checking the weapon
+// (never by the officer returning it). remarks is optional. See
+// confirmTransaction in inventoryController.js for what each type does.
 export async function confirmTransaction(transactionId, remarks) {
   if (USE_DUMMY_DATA) {
     return Promise.resolve({
@@ -46,8 +47,10 @@ export async function confirmTransaction(transactionId, remarks) {
   return api.patch(`/inventory/transactions/${transactionId}/confirm`, { remarks });
 }
 
-// The officer on a pending issue/return refusing to confirm it — a reason
-// is required. See rejectTransaction in inventoryController.js.
+// Refusing a pending issue (the officer) or a pending return (the Inventory
+// Officer, after checking the weapon) — a reason is required. A rejected
+// return notifies the officer, who corrects and resubmits it. See
+// rejectTransaction in inventoryController.js.
 export async function rejectTransaction(transactionId, remarks) {
   if (USE_DUMMY_DATA) {
     return Promise.resolve({ id: transactionId, confirmationStatus: "rejected" });
@@ -155,17 +158,19 @@ export async function issueItem(itemId, payload) {
   return api.post(`/inventory/${itemId}/issue`, payload);
 }
 
-export async function returnItem(itemId, payload) {
+// POST /api/inventory/my-weapons/return — the officer reporting their own
+// return from My Weapons. payload: { itemId (the weapon's Inventory id),
+// condition: "Good" | "Faulty", remarks (reason, required if Faulty),
+// ammoReturned, ammoDeclaredUsed (only if issued with ammunition),
+// accessoriesComplete (boolean), accessoriesRemarks (required if false) }.
+// Stock does NOT change — the Inventory Officer must check and confirm it
+// (see confirmTransaction / rejectTransaction). Submitting again after a
+// rejection replaces the rejected record.
+export async function submitMyReturn(payload) {
   if (USE_DUMMY_DATA) {
-    const newReturn = {
-      id: `r${dummyReturnTransactions.length + 1}`,
-      itemId,
-      ...payload,
-    };
-    dummyReturnTransactions.unshift(newReturn);
-    return Promise.resolve(newReturn);
+    return Promise.resolve({ id: `r${Date.now()}`, confirmationStatus: "pending", ...payload });
   }
-  return api.post(`/inventory/${itemId}/return`, payload);
+  return api.post("/inventory/my-weapons/return", payload);
 }
 
 // POST /api/inventory/:id/report-missing — inventory_officer only.

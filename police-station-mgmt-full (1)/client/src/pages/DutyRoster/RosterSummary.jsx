@@ -62,7 +62,7 @@ export function RosterSummary({ week, shifts, officers, leaveRequests }) {
     // appears to stick. Being explicit here keeps this div a
     // horizontal-only scroller, so sticky correctly finds whatever
     // ancestor is really handling the vertical scroll instead.
-    <div style={{ overflowX: "auto", overflowY: "visible" }}>
+    <div className="roster-grid-scroll" style={{ overflowY: "visible" }}>
       <table className="roster-grid-table" style={{ borderCollapse: "separate", borderSpacing: 0, width: "100%" }}>
         {/* position: sticky on each <th> (not the <thead>, for more
             consistent cross-browser table behavior) — a no-op wherever

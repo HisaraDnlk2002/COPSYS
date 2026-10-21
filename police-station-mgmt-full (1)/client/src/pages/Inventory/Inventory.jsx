@@ -13,7 +13,8 @@ import {
   addInventoryItem,
   updateInventoryItem,
   issueItem,
-  returnItem as returnItemRequest,
+  confirmTransaction,
+  rejectTransaction,
   reportMissing,
   restockItem,
   reviewTransaction,
@@ -158,20 +159,6 @@ const EMPTY_ISSUE_FORM = {
   ammoIssued: "",
   accessories: [],
 };
-const EMPTY_RETURN_FORM = {
-  officer: null,
-  item: null,
-  subId: "",
-  returnDate: "",
-  condition: "",
-  faultReason: "",
-  ammoIssued: "",
-  ammoReturned: "",
-  ammoDeclaredUsed: "",
-  accessoriesComplete: "",
-  missingAccessories: [],
-  accessoriesRemarks: "",
-};
 // Read-only "label: value" box used by the Inspection and Review modals
 // (same look as the confirm-details box on the My Weapons page).
 const DETAIL_BOX_STYLE = {
@@ -236,15 +223,9 @@ export function InventoryPage() {
   const [maintenanceRecords, setMaintenanceRecords] = useState([]);
   const [inspectionRecords, setInspectionRecords] = useState([]);
 
-  const [openModal, setOpenModal] = useState(null); // null | "issue" | "return" | "add"
+  const [openModal, setOpenModal] = useState(null); // null | "issue" | "add"
   const [nextWeaponIdPreview, setNextWeaponIdPreview] = useState("");
   const [issueForm, setIssueForm] = useState(EMPTY_ISSUE_FORM);
-  const [returnForm, setReturnForm] = useState(EMPTY_RETURN_FORM);
-  // The issue record the Return form's quantity/ammoIssued were
-  // pre-filled from (see findOpenIssueRecord) — kept only to show the
-  // "Issued on … for …" caption under the weapon picker, not submitted
-  // with the return itself.
-  const [returnSourceIssue, setReturnSourceIssue] = useState(null);
   const [addForm, setAddForm] = useState(EMPTY_ADD_FORM);
   const [previewSubIdSelected, setPreviewSubIdSelected] = useState("");
   // The ammunition (or other stock) line open in the Restock modal, or null.
@@ -288,6 +269,11 @@ export function InventoryPage() {
   const [reviewing, setReviewing] = useState(null);
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewError, setReviewError] = useState("");
+  // Checking a return the officer submitted: { tx, action: "confirm" | "reject" }.
+  const [checking, setChecking] = useState(null);
+  const [checkText, setCheckText] = useState(""); // remarks (confirm) or reason (reject)
+  const [checkSubmitting, setCheckSubmitting] = useState(false);
+  const [checkError, setCheckError] = useState("");
   const [inspectionError, setInspectionError] = useState("");
 
   // The Inventory item currently open in the "Report Missing" modal, or null.
@@ -342,8 +328,6 @@ export function InventoryPage() {
     setOpenModal(null);
     setNextWeaponIdPreview("");
     setIssueForm(EMPTY_ISSUE_FORM);
-    setReturnForm(EMPTY_RETURN_FORM);
-    setReturnSourceIssue(null);
     setAddForm(EMPTY_ADD_FORM);
     setRestockingItem(null);
     setRestockForm(EMPTY_RESTOCK_FORM);
@@ -437,94 +421,13 @@ export function InventoryPage() {
       net.set(tx.itemId._id, (net.get(tx.itemId._id) || 0) + (tx.quantity || 1));
     }
     for (const tx of [...returnTx, ...damagedTx]) {
-      if (tx.confirmationStatus === "cancelled") continue;
+      // Only a return the Inventory Officer has CONFIRMED releases the
+      // officer; one still awaiting the check (or rejected) doesn't.
+      if (["cancelled", "pending", "rejected"].includes(tx.confirmationStatus)) continue;
       if (tx.officerId?._id !== officerValue || !tx.itemId?._id) continue;
       net.set(tx.itemId._id, (net.get(tx.itemId._id) || 0) - (tx.quantity || 1));
     }
     return new Set([...net.entries()].filter(([, n]) => n > 0).map(([id]) => id));
-  }
-
-  // "System loads the officer's currently issued weapon" — the Return
-  // modal's item picker is scoped to whichever officer is selected
-  // first, rather than searching the whole ledger. Returns nothing
-  // until an officer is chosen. minChars={0} on the field itself makes
-  // this run (with an empty query) as soon as it's focused, so the
-  // officer's issued weapon(s) show immediately rather than requiring
-  // the Inventory Officer to type anything.
-  // Every (officer, weapon) pair that's currently out, netted the same
-  // way as getOutstandingItemIds but across ALL officers — so the Return
-  // form can also find a weapon by typing its Item ID (or the holder's
-  // name) before an officer has been picked.
-  function getAllOutstandingHoldings() {
-    const net = new Map(); // `${officerId}|${itemId}` -> { officer, itemId, n }
-    const bump = (tx, sign) => {
-      if (tx.confirmationStatus === "cancelled") return;
-      if (!tx.officerId?._id || !tx.itemId?._id) return;
-      const key = `${tx.officerId._id}|${tx.itemId._id}`;
-      const entry = net.get(key) || { officer: tx.officerId, itemId: tx.itemId._id, n: 0 };
-      entry.n += sign * (tx.quantity || 1);
-      net.set(key, entry);
-    };
-    issueTx.forEach((tx) => bump(tx, 1));
-    [...returnTx, ...damagedTx].forEach((tx) => bump(tx, -1));
-    return [...net.values()].filter((e) => e.n > 0);
-  }
-
-  async function searchOfficerIssuedItems(query) {
-    const q = query.toLowerCase();
-    const officerChosen = Boolean(returnForm.officer);
-    return getAllOutstandingHoldings()
-      .filter((h) => !officerChosen || h.officer._id === returnForm.officer.value)
-      .map((h) => ({ h, item: items.find((i) => i.id === h.itemId) }))
-      .filter(({ item }) => Boolean(item))
-      .filter(({ h, item }) => {
-        if (item.itemId.toLowerCase().includes(q) || item.itemName.toLowerCase().includes(q)) return true;
-        // Before an officer is chosen, the holder's name / rank number
-        // is searchable too.
-        return (
-          !officerChosen &&
-          ((h.officer.fullName || "").toLowerCase().includes(q) ||
-            (h.officer.rankAndNumber || "").toLowerCase().includes(q))
-        );
-      })
-      .map(({ h, item }) => ({
-        value: item.id,
-        label: `${item.itemId} — ${item.itemName}`,
-        subtitle: officerChosen
-          ? item.category
-          : `${t("inventory.heldBy")} ${h.officer.fullName} — ${h.officer.rankAndNumber}`,
-        // Used to fill the officer in when the weapon is picked first.
-        heldBy: {
-          value: h.officer._id,
-          label: `${h.officer.fullName} — ${h.officer.rankAndNumber}`,
-          fullName: h.officer.fullName,
-          rankAndNumber: h.officer.rankAndNumber,
-          department: h.officer.department,
-        },
-        subItems: item.subItems || [],
-      }));
-  }
-
-  // The record the Return form pre-fills from once a weapon is picked —
-  // the officer's own most recent "issue" transaction for that exact
-  // item. Most recent (not just "any match") because the same serial
-  // can have older issue history from before a past return, and that
-  // older row isn't the one currently open.
-  function findOpenIssueRecord(officerValue, itemValue) {
-    if (!officerValue || !itemValue) return null;
-    // Populated officerId/itemId only carry the fields listTransactions
-    // selected (fullName/rankAndNumber, itemId/itemName/category) plus
-    // Mongo's own _id — never the custom `id` the top-level transaction
-    // gets from InventoryTransaction's toJSON, since populate() doesn't
-    // route a subdocument through its own model's toJSON transform.
-    return (
-      issueTx
-        .filter(
-          (tx) =>
-            tx.confirmationStatus !== "cancelled" && tx.officerId?._id === officerValue && tx.itemId?._id === itemValue
-        )
-        .sort((a, b) => new Date(b.dateTime) - new Date(a.dateTime))[0] || null
-    );
   }
 
   // Reused from the Return form's own officer-scoping (searchOfficerIssuedItems
@@ -582,61 +485,39 @@ export function InventoryPage() {
     }
   }
 
-  async function handleReturnSubmit(e) {
-    e.preventDefault();
-    setModalError("");
+  function openCheck(tx, action) {
+    setChecking({ tx, action });
+    setCheckText("");
+    setCheckError("");
+  }
 
-    if (!returnForm.item || !returnForm.officer || !returnForm.condition) {
-      setModalError(t("inventory.errRequiredFields"));
-      return;
-    }
-    if (returnForm.condition === "Faulty" && !returnForm.faultReason.trim()) {
-      setModalError(t("inventory.errFaultReason"));
-      return;
-    }
-    const issuedRounds = returnForm.ammoIssued === "" ? 0 : Number(returnForm.ammoIssued);
-    if (issuedRounds > 0 && (returnForm.ammoReturned === "" || returnForm.ammoDeclaredUsed === "")) {
-      setModalError(t("inventory.errAmmoCountRequired"));
-      return;
-    }
-    if (returnForm.ammoReturned !== "" && Number(returnForm.ammoReturned) > issuedRounds) {
-      setModalError(t("inventory.errAmmoDiscrepancy"));
-      return;
-    }
-    if (returnForm.ammoDeclaredUsed !== "" && Number(returnForm.ammoDeclaredUsed) > issuedRounds) {
-      setModalError(t("inventory.errDeclaredExceedsIssued"));
-      return;
-    }
-    if (
-      returnForm.accessoriesComplete === "false" &&
-      !returnForm.missingAccessories.length &&
-      !returnForm.accessoriesRemarks.trim()
-    ) {
-      setModalError(t("inventory.errAccessoriesRemarks"));
-      return;
-    }
+  function closeCheck() {
+    setChecking(null);
+    setCheckText("");
+    setCheckError("");
+  }
 
-    setSubmitting(true);
+  // Inventory Officer physically checked the weapon against the officer's
+  // report. Confirm applies the stock changes server-side (weapon back into
+  // stock, unused rounds back to ammo stock, Maintenance record if faulty);
+  // Reject needs a reason and notifies the officer, who must resubmit.
+  async function handleCheckSubmit() {
+    const { tx, action } = checking;
+    if (action === "reject" && checkText.trim().length < 3) {
+      setCheckError(t("inventory.errCheckReasonRequired"));
+      return;
+    }
+    setCheckSubmitting(true);
+    setCheckError("");
     try {
-      await returnItemRequest(returnForm.item.value, {
-        officerId: returnForm.officer.value,
-        dateTime: returnForm.returnDate,
-        subId: returnForm.subId || undefined,
-        condition: returnForm.condition,
-        remarks: returnForm.condition === "Faulty" ? returnForm.faultReason.trim() : undefined,
-        ammoReturned: returnForm.ammoReturned === "" ? undefined : Number(returnForm.ammoReturned),
-        ammoDeclaredUsed: returnForm.ammoDeclaredUsed === "" ? undefined : Number(returnForm.ammoDeclaredUsed),
-        accessoriesComplete: returnForm.accessoriesComplete === "" ? undefined : returnForm.accessoriesComplete === "true",
-        accessoriesRemarks:
-          [returnForm.missingAccessories.join(", "), returnForm.accessoriesRemarks.trim()].filter(Boolean).join(" — ") ||
-          undefined,
-      });
+      if (action === "confirm") await confirmTransaction(tx.id, checkText.trim() || undefined);
+      else await rejectTransaction(tx.id, checkText.trim());
       await loadAll();
-      closeModal();
+      closeCheck();
     } catch (err) {
-      setModalError(err.message || t("inventory.errReturnFailed"));
+      setCheckError(err.message || t("inventory.errCheckFailed"));
     } finally {
-      setSubmitting(false);
+      setCheckSubmitting(false);
     }
   }
 
@@ -936,7 +817,9 @@ export function InventoryPage() {
     try {
       await updateInventoryItem(editingItem.id, {
         storageLocation: editForm.storageLocation,
-        quantity,
+        // A weapon's quantity follows its sub IDs and is changed only through
+        // Restock, so only ammunition sends a typed quantity.
+        ...(editingAmmunition ? { quantity } : {}),
         ...(editingAmmunition
           ? { lowStockThreshold: editForm.lowStockThreshold === "" ? null : Number(editForm.lowStockThreshold) }
           : { condition: editForm.condition }),
@@ -1021,7 +904,10 @@ export function InventoryPage() {
   }
 
   const filteredIssueTx = filterTransactions(issueTx);
-  const filteredReturnTx = filterTransactions(returnTx);
+  // A faulty return is stored as type "damaged" but is still a return, and
+  // it must be checked in just like a good one — so Return Records lists both.
+  const returnRecords = [...returnTx, ...damagedTx].sort((a, b) => new Date(b.dateTime) - new Date(a.dateTime));
+  const filteredReturnTx = filterTransactions(returnRecords);
 
   // Combined "Audit Ledger" tab — all three transaction types together,
   // newest first, instead of segregated by type like the other tabs.
@@ -1198,6 +1084,10 @@ export function InventoryPage() {
       return <Badge tone="success" title={row.confirmationRemarks || undefined}>{t("inventory.secured")}</Badge>;
     }
     if (row.confirmationStatus === "pending") {
+      // A pending RETURN waits on the Inventory Officer, not the officer.
+      if (row.type !== "issue") {
+        return <Badge tone="warning">{canManage ? t("inventory.awaitingYourCheck") : t("inventory.awaitingInventoryCheck")}</Badge>;
+      }
       return <Badge tone="warning">{t("inventory.pendingConfirmation")}</Badge>;
     }
     if (row.confirmationStatus === "rejected") {
@@ -1216,18 +1106,36 @@ export function InventoryPage() {
     return "—";
   }
 
-  // The Inventory Officer's two ways to resolve a transaction the officer
-  // rejected. Only shown on rejected rows.
+  // The Inventory Officer's actions on a row: Confirm/Reject a return the
+  // officer submitted, or resolve an issue the officer rejected.
   const reviewColumn = {
     key: "review",
     label: "",
-    render: (row) =>
-      row.confirmationStatus === "rejected" ? (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Button variant="primary" onClick={() => openReview(row, "resend")}>{t("inventory.reviewResend")}</Button>
-          <Button variant="outline" onClick={() => openReview(row, "cancel")}>{t("inventory.reviewCancel")}</Button>
-        </div>
-      ) : null,
+    render: (row) => {
+      // A return the officer submitted: the Inventory Officer checks the
+      // weapon and confirms or rejects it. Never the officer's own return.
+      if (row.type !== "issue" && row.confirmationStatus === "pending") {
+        if (String(row.officerId?._id) === String(user?.id)) {
+          return <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>{t("inventory.ownReturnNote")}</span>;
+        }
+        return (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Button variant="primary" onClick={() => openCheck(row, "confirm")}>{t("inventory.checkReturnConfirmBtn")}</Button>
+            <Button variant="outline" onClick={() => openCheck(row, "reject")}>{t("inventory.checkReturnRejectBtn")}</Button>
+          </div>
+        );
+      }
+      // A rejected ISSUE: resend it for the officer's confirmation, or cancel it.
+      if (row.type === "issue" && row.confirmationStatus === "rejected") {
+        return (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Button variant="primary" onClick={() => openReview(row, "resend")}>{t("inventory.reviewResend")}</Button>
+            <Button variant="outline" onClick={() => openReview(row, "cancel")}>{t("inventory.reviewCancel")}</Button>
+          </div>
+        );
+      }
+      return null;
+    },
   };
 
   const issueColumns = [
@@ -1447,17 +1355,6 @@ export function InventoryPage() {
         {canManage && (
           <div className="inventory-header-actions">
             <Button variant="outline" onClick={() => setOpenModal("issue")}>{t("inventory.issueItem")}</Button>
-            <Button
-              variant="outline"
-              onClick={() => {
-                // Re-read the ledger so a weapon issued moments ago (or from
-                // another session) is in the Return picker's list.
-                loadAll().catch((err) => console.error("Failed to refresh inventory:", err));
-                setOpenModal("return");
-              }}
-            >
-              {t("inventory.returnItem")}
-            </Button>
             <Button variant="primary" onClick={openAddModal}>{t("inventory.addNewItem")}</Button>
           </div>
         )}
@@ -1742,227 +1639,6 @@ export function InventoryPage() {
       </Modal>
 
       <Modal
-        open={openModal === "return"}
-        onClose={closeModal}
-        title={t("inventory.returnItemForm")}
-        footer={
-          <Button variant="primary" fullWidth onClick={handleReturnSubmit} disabled={submitting}>
-            {submitting ? t("inventory.processing") : t("inventory.processReturnAudit")}
-          </Button>
-        }
-      >
-        <p style={{ color: "var(--color-text-muted)", fontSize: 13, marginBottom: 16 }}>
-          {t("inventory.recordReturningText")}
-        </p>
-        <div className="modal-form-grid">
-          <SearchableSelect
-            label={t("inventory.officerId")}
-            required
-            value={returnForm.officer}
-            onChange={(opt) => {
-              setReturnForm((f) => ({ ...f, officer: opt, item: null, ammoIssued: "" }));
-              setReturnSourceIssue(null);
-            }}
-            searchFn={searchOfficersByRank}
-            placeholder={t("leave.searchOfficerPlaceholder")}
-          />
-          <InputField
-            label={t("personnel.colDepartment")}
-            readOnly
-            value={returnForm.officer ? returnForm.officer.department || "—" : ""}
-            placeholder={t("inventory.departmentAuto")}
-          />
-          <SearchableSelect
-            label={t("inventory.colItemId")}
-            required
-            minChars={0}
-            value={returnForm.item}
-            onChange={(opt) => {
-              // Pre-fill from the officer's own matching issue record —
-              // "choose the weapon, the rest fills itself in" instead of
-              // re-typing facts already on file. Still just a starting
-              // point: every field stays editable for a partial return
-              // or a correction.
-              // Picked the weapon before choosing an officer: fill the
-              // officer in from whoever currently holds it.
-              const officerOpt = returnForm.officer || opt?.heldBy || null;
-              const sourceIssue = findOpenIssueRecord(officerOpt?.value, opt?.value);
-              setReturnSourceIssue(sourceIssue);
-              setReturnForm((f) => ({
-                ...f,
-                officer: officerOpt,
-                item: opt,
-                subId: sourceIssue?.subId || "",
-                ammoIssued: sourceIssue?.ammoIssued != null ? String(sourceIssue.ammoIssued) : "",
-              }));
-            }}
-            searchFn={searchOfficerIssuedItems}
-            placeholder={t("inventory.colItemId")}
-            emptyText={returnForm.officer ? t("inventory.noWeaponIssuedToOfficer") : t("inventory.noIssuedWeapons")}
-            helperText={
-              returnSourceIssue
-                ? `${t("inventory.prefilledFromIssue")} ${formatDate(returnSourceIssue.dateTime)} (${returnSourceIssue.dutyType || "—"})`
-                : undefined
-            }
-          />
-          {returnForm.item && (returnSourceIssue?.subId || (returnForm.item.subItems && returnForm.item.subItems.length > 0)) && (
-            <InputField
-              label={t("inventory.selectSpecificSubId")}
-              type="select"
-              value={returnForm.subId}
-              onChange={(e) => setReturnForm((f) => ({ ...f, subId: e.target.value }))}
-              placeholder={returnSourceIssue?.subId ? `${returnSourceIssue.subId} (Issued)` : t("inventory.selectSubId")}
-              options={
-                returnForm.item.subItems && returnForm.item.subItems.length > 0
-                  ? returnForm.item.subItems
-                      .filter((s) => s.status === "issued" || s.subId === returnSourceIssue?.subId)
-                      .map((s) => ({
-                        value: s.subId,
-                        label: `${s.subId} — ${s.status}${s.assignedTo?.fullName ? ` (${s.assignedTo.fullName})` : ""}`,
-                      }))
-                  : returnSourceIssue?.subId
-                  ? [{ value: returnSourceIssue.subId, label: `${returnSourceIssue.subId} (Issued)` }]
-                  : []
-              }
-              helperText={t("inventory.issuedSubIdHelper")}
-            />
-          )}
-          <InputField label={t("inventory.returnDate")} type="date" value={returnForm.returnDate} onChange={(e) => setReturnForm((f) => ({ ...f, returnDate: e.target.value }))} />
-          <InputField
-            label={t("inventory.weaponCondition")}
-            type="select"
-            required
-            value={returnForm.condition}
-            // Switching back to Good clears any reason typed for Faulty.
-            onChange={(e) =>
-              setReturnForm((f) => ({ ...f, condition: e.target.value, faultReason: e.target.value === "Faulty" ? f.faultReason : "" }))
-            }
-            // A fixed choice, not free text — the server only ever
-            // classifies a return as damaged when this is exactly
-            // "Faulty" (see returnItem() in inventoryController.js), so
-            // free typing let a genuinely damaged weapon silently go
-            // back into available stock on anything but that exact word
-            // ("Damaged", "Broken scope", a typo, ...).
-            options={[
-              { value: "Good", label: t("status.good") },
-              { value: "Faulty", label: t("status.faulty") },
-            ]}
-          />
-        </div>
-        {returnForm.condition === "Faulty" && (
-          <InputField
-            label={t("inventory.faultReason")}
-            type="textarea"
-            rows={3}
-            required
-            value={returnForm.faultReason}
-            placeholder={t("inventory.faultReasonPlaceholder")}
-            helperText={t("inventory.faultReasonHelper")}
-            onChange={(e) => setReturnForm((f) => ({ ...f, faultReason: e.target.value }))}
-            voiceInput
-            sinhalaTyping
-          />
-        )}
-
-        <h3 className="section-label">{t("inventory.accessoriesCheckTitle")}</h3>
-        {returnSourceIssue?.accessories && (
-          <p className="inventory-pending-note">
-            {t("inventory.issuedWith")}: {returnSourceIssue.accessories}
-          </p>
-        )}
-        <div className="modal-form-grid">
-          <InputField
-            label={t("inventory.accessoriesAllReturnedQ")}
-            type="select"
-            value={returnForm.accessoriesComplete}
-            onChange={(e) => setReturnForm((f) => ({ ...f, accessoriesComplete: e.target.value }))}
-            placeholder={t("inventory.selectOption")}
-            options={[
-              { value: "true", label: t("inventory.yes") },
-              { value: "false", label: t("inventory.no") },
-            ]}
-          />
-          {returnForm.accessoriesComplete === "false" && (
-            <InputField
-              label={t("inventory.accessoriesNote")}
-              value={returnForm.accessoriesRemarks}
-              placeholder={t("inventory.accessoriesNotePlaceholder")}
-              onChange={(e) => setReturnForm((f) => ({ ...f, accessoriesRemarks: e.target.value }))}
-            />
-          )}
-        </div>
-        {returnForm.accessoriesComplete === "false" && returnSourceIssue?.accessories && (
-          <CheckboxGroup
-            label={t("inventory.accessoriesMissingWhich")}
-            options={returnSourceIssue.accessories.split(", ")}
-            selected={returnForm.missingAccessories}
-            onChange={(list) => setReturnForm((f) => ({ ...f, missingAccessories: list }))}
-          />
-        )}
-
-        <h3 className="section-label">{t("inventory.ammoCheckTitle")}</h3>
-        {returnSourceIssue?.ammoItemId?.itemName && (
-          <p className="inventory-pending-note">
-            {returnSourceIssue.ammoItemId.itemName} — {returnSourceIssue.ammoItemId.itemId}
-          </p>
-        )}
-        {returnForm.item && !(Number(returnForm.ammoIssued) > 0) ? (
-          <p className="inventory-pending-note">{t("inventory.noAmmoIssued")}</p>
-        ) : (
-        <div className="modal-form-grid">
-          <InputField
-            label={t("inventory.ammoIssued")}
-            type="number"
-            // Fixed at issue time — shown from the issue record, never
-            // typed here (the server ignores it anyway).
-            readOnly
-            value={returnForm.ammoIssued}
-            helperText={t("inventory.ammoIssuedFixedHelper")}
-          />
-          <InputField
-            label={t("inventory.ammoReturned")}
-            type="number"
-            min="0"
-            max={returnForm.ammoIssued}
-            value={returnForm.ammoReturned}
-            onChange={(e) => setReturnForm((f) => ({ ...f, ammoReturned: capRounds(e.target.value, Number(f.ammoIssued)) }))}
-            helperText={`${t("inventory.ammoReturnedHelper")} (${t("inventory.maxRounds").replace("{n}", returnForm.ammoIssued || 0)})`}
-          />
-          <InputField
-            label={t("inventory.ammoDeclaredUsed")}
-            type="number"
-            min="0"
-            max={returnForm.ammoIssued}
-            value={returnForm.ammoDeclaredUsed}
-            onChange={(e) => setReturnForm((f) => ({ ...f, ammoDeclaredUsed: capRounds(e.target.value, Number(f.ammoIssued)) }))}
-            helperText={`${t("inventory.ammoDeclaredUsedHelper")} (${t("inventory.maxRounds").replace("{n}", returnForm.ammoIssued || 0)})`}
-          />
-          {returnForm.ammoIssued !== "" && returnForm.ammoReturned !== "" && (
-            <InputField
-              label={t("inventory.ammoUsed")}
-              readOnly
-              value={Number(returnForm.ammoIssued) - Number(returnForm.ammoReturned)}
-            />
-          )}
-        </div>
-        )}
-        {returnForm.ammoIssued !== "" && returnForm.ammoReturned !== "" && returnForm.ammoDeclaredUsed !== "" && (() => {
-          const gap =
-            Number(returnForm.ammoIssued) - Number(returnForm.ammoReturned) - Number(returnForm.ammoDeclaredUsed);
-          return gap === 0 ? (
-            <p className="inventory-pending-note">{t("inventory.ammoReconciledNote")}</p>
-          ) : (
-            <p style={{ color: "var(--color-danger)", fontSize: 13, marginTop: 8 }}>
-              {t("inventory.ammoDiscrepancyNote").replace("{n}", Math.abs(gap))}
-            </p>
-          );
-        })()}
-
-        <p className="inventory-pending-note">{t("inventory.returnPendingNote")}</p>
-        {modalError && <p style={{ color: "var(--color-danger)", marginTop: 12 }}>{modalError}</p>}
-      </Modal>
-
-      <Modal
         open={openModal === "add"}
         onClose={closeModal}
         title={t("inventory.addNewItemForm")}
@@ -2139,9 +1815,12 @@ export function InventoryPage() {
         <p style={{ color: "var(--color-text-muted)", fontSize: 13, marginBottom: 16 }}>
           {t("inventory.currentStock")}: {restockingItem?.quantity}
         </p>
+        {restockingItem && restockingItem.category !== AMMUNITION_CATEGORY && (
+          <p className="inventory-pending-note">{t("inventory.restockWeaponNote").replace("{id}", restockingItem.itemId)}</p>
+        )}
         <div className="modal-form-grid">
           <InputField
-            label={t("inventory.roundsToAdd")}
+            label={restockingItem && restockingItem.category !== AMMUNITION_CATEGORY ? t("inventory.unitsToAdd") : t("inventory.roundsToAdd")}
             required
             type="number"
             min="1"
@@ -2507,6 +2186,78 @@ export function InventoryPage() {
       </Modal>
 
       <Modal
+        open={Boolean(checking)}
+        onClose={closeCheck}
+        title={checking ? t(checking.action === "confirm" ? "inventory.checkReturnConfirmTitle" : "inventory.checkReturnRejectTitle") : ""}
+        footer={
+          <Button variant="primary" fullWidth onClick={handleCheckSubmit} disabled={checkSubmitting}>
+            {checkSubmitting
+              ? t("inventory.processing")
+              : checking
+              ? t(checking.action === "confirm" ? "inventory.checkReturnConfirmAction" : "inventory.checkReturnRejectAction")
+              : ""}
+          </Button>
+        }
+      >
+        {checking && (
+          <>
+            <p style={{ color: "var(--color-text-muted)", fontSize: 13, marginBottom: 16 }}>
+              {t(checking.action === "confirm" ? "inventory.checkReturnConfirmText" : "inventory.checkReturnRejectText")}
+            </p>
+            <h3 className="section-label">{t("inventory.officerReportTitle")}</h3>
+            <div style={DETAIL_BOX_STYLE}>
+              <p style={DETAIL_ROW_STYLE}>
+                <strong>{t("inventory.colItemId")}:</strong> {checking.tx.itemId?.itemId || "—"}
+                {checking.tx.itemId?.itemName ? ` — ${checking.tx.itemId.itemName}` : ""}
+                {checking.tx.subId ? ` (${checking.tx.subId})` : ""}
+              </p>
+              <p style={DETAIL_ROW_STYLE}>
+                <strong>{t("inventory.colOfficerName")}:</strong> {checking.tx.officerId?.fullName || "—"}
+                {checking.tx.officerId?.rankAndNumber ? ` — ${checking.tx.officerId.rankAndNumber}` : ""}
+              </p>
+              <p style={DETAIL_ROW_STYLE}>
+                <strong>{t("inventory.colCondition")}:</strong> {checking.tx.condition || "—"}
+                {checking.tx.condition === "Faulty" && checking.tx.remarks ? ` — ${checking.tx.remarks}` : ""}
+              </p>
+              {checking.tx.ammoIssued > 0 && (
+                <>
+                  <p style={DETAIL_ROW_STYLE}><strong>{t("inventory.ammoIssued")}:</strong> {checking.tx.ammoIssued}</p>
+                  <p style={DETAIL_ROW_STYLE}><strong>{t("inventory.ammoReturned")}:</strong> {checking.tx.ammoReturned ?? "—"}</p>
+                  <p style={DETAIL_ROW_STYLE}><strong>{t("inventory.ammoDeclaredUsed")}:</strong> {checking.tx.ammoDeclaredUsed ?? "—"}</p>
+                  {checking.tx.ammoDiscrepancy ? (
+                    <p style={{ ...DETAIL_ROW_STYLE, color: "var(--color-danger)" }}>
+                      {t("inventory.ammoDiscrepancyNote").replace("{n}", Math.abs(checking.tx.ammoDiscrepancy))}
+                    </p>
+                  ) : null}
+                </>
+              )}
+              {checking.tx.accessories && (
+                <p style={DETAIL_ROW_STYLE}><strong>{t("inventory.issuedWith")}:</strong> {checking.tx.accessories}</p>
+              )}
+              <p style={DETAIL_ROW_STYLE}>
+                <strong>{t("inventory.accessories")}:</strong>{" "}
+                {checking.tx.accessoriesComplete === false
+                  ? `${t("inventory.accessoriesMissing")} — ${checking.tx.accessoriesRemarks || "—"}`
+                  : t("inventory.accessoriesAllReturned")}
+              </p>
+            </div>
+            <InputField
+              label={t(checking.action === "confirm" ? "inventory.checkReturnRemarks" : "inventory.checkReturnRejectReason")}
+              type="textarea"
+              rows={3}
+              required={checking.action === "reject"}
+              value={checkText}
+              placeholder={checking.action === "reject" ? t("inventory.checkReturnRejectPlaceholder") : undefined}
+              onChange={(e) => setCheckText(e.target.value)}
+              voiceInput
+              sinhalaTyping
+            />
+            {checkError && <p style={{ color: "var(--color-danger)", marginTop: 12 }}>{checkError}</p>}
+          </>
+        )}
+      </Modal>
+
+      <Modal
         open={Boolean(reportingMissingItem)}
         onClose={closeReportMissing}
         title={reportingMissingItem ? `${t("inventory.reportMissing")} — ${reportingMissingItem.itemId}` : ""}
@@ -2576,6 +2327,8 @@ export function InventoryPage() {
             label={editingItem?.category === AMMUNITION_CATEGORY ? t("inventory.roundsInStock") : t("inventory.colQuantity")}
             type="number"
             min="0"
+            readOnly={editingItem?.category !== AMMUNITION_CATEGORY}
+            helperText={editingItem?.category !== AMMUNITION_CATEGORY ? t("inventory.weaponQuantityLockedHelper") : undefined}
             value={editForm.quantity}
             onChange={(e) => setEditForm((f) => ({ ...f, quantity: capRounds(e.target.value) }))}
           />

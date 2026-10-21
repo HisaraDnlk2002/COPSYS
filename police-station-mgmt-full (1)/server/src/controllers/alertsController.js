@@ -48,7 +48,8 @@ async function scanForTimeBasedAlerts(stationId) {
       itemId: tx.itemId?._id,
       officerId: tx.officerId,
       type: { $in: ["return", "damaged"] },
-      confirmationStatus: { $ne: "cancelled" },
+      // A rejected return hasn't been accepted, so it doesn't count.
+      confirmationStatus: { $nin: ["cancelled", "rejected"] },
       dateTime: { $gte: tx.dateTime },
     });
     if (!tx.itemId || alreadyReturned) continue;
@@ -98,13 +99,18 @@ async function scanForTimeBasedAlerts(stationId) {
   }).populate("itemId", "itemId");
 
   for (const tx of unconfirmed) {
+    // A pending ISSUE waits on the officer; a pending RETURN waits on the
+    // Inventory Officer (armory-side alert, no personal recipient).
+    const isIssue = tx.type === "issue";
     await generateAlert({
       alertType: "confirmation_overdue",
-      title: tx.type === "issue" ? "Weapon Receipt Not Confirmed" : "Weapon Return Not Confirmed",
-      message: `${tx.itemId?.itemId || "A weapon"} ${tx.type === "issue" ? "issue" : "return"} has been waiting over ${CONFIRMATION_REMINDER_HOURS} hours for the officer's confirmation on My Weapons.`,
+      title: isIssue ? "Weapon Receipt Not Confirmed" : "Weapon Return Not Checked",
+      message: isIssue
+        ? `${tx.itemId?.itemId || "A weapon"} issue has been waiting over ${CONFIRMATION_REMINDER_HOURS} hours for the officer's confirmation on My Weapons.`
+        : `${tx.itemId?.itemId || "A weapon"} return has been waiting over ${CONFIRMATION_REMINDER_HOURS} hours for the Inventory Officer's check in Return Records.`,
       itemId: tx.itemId?._id || null,
       transactionId: tx._id,
-      recipientId: tx.officerId,
+      recipientId: isIssue ? tx.officerId : null,
       stationId,
     });
     tx.confirmationReminderGenerated = true;

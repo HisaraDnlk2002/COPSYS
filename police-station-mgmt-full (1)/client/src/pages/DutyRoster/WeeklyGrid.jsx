@@ -350,7 +350,9 @@ export function WeeklyGrid({ week, shifts, officers, leaveRequests, editable, on
   }
 
   return (
-    <div style={{ overflowX: "auto" }}>
+    <>
+    <p className="roster-scroll-hint">{t("dutyRoster.swipeHint")}</p>
+    <div className="roster-grid-scroll">
       <table className="roster-grid-table" style={{ borderCollapse: "separate", borderSpacing: 0 }}>
         <thead>
           <tr>
@@ -421,6 +423,7 @@ export function WeeklyGrid({ week, shifts, officers, leaveRequests, editable, on
           ))}
         </tbody>
       </table>
+    </div>
 
       <Modal
         open={Boolean(assignTarget)}
@@ -564,6 +567,6 @@ export function WeeklyGrid({ week, shifts, officers, leaveRequests, editable, on
           </>
         )}
       </Modal>
-    </div>
+    </>
   );
 }

@@ -380,7 +380,7 @@ export function CreateRosterWizard({ onCancel, onComplete, existingWeek, existin
       {step === 2 && (
         <div>
           <h3 style={{ marginTop: 0 }}>{t("dutyRoster.wizard.branchStrengthPlanning")}</h3>
-          <div style={{ overflowX: "auto", marginBottom: 16 }}>
+          <div className="roster-grid-scroll" style={{ marginBottom: 16 }}>
             <table className="roster-grid-table">
               <thead>
                 <tr>

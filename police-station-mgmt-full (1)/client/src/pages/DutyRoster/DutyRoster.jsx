@@ -347,8 +347,8 @@ export function DutyRosterPage() {
       ))}
 
       {!showWizard && selectedWeek && (
-        <div className="roster-content-layout" style={{ display: "flex", gap: 24, alignItems: "flex-start" }}>
-          <Card variant="panel" style={{ flex: 1 }}>
+        <div className="roster-content-layout">
+          <Card variant="panel" className="roster-main-card">
             {unfilledDays.length > 0 && (
               <div className="unfilled-warning">
                 {t("dutyRoster.couldNotFullyStaff")} {unfilledDays.map((d) => `${d.day} (${t("dutyRoster.short")} ${d.shortfall})`).join(", ")}.
@@ -474,7 +474,7 @@ export function DutyRosterPage() {
             )}
           </Card>
 
-          <Card variant="panel" style={{ width: 280, flexShrink: 0 }}>
+          <Card variant="panel" className="roster-side-card">
             <h3 style={{ marginTop: 0 }}>{t("dutyRoster.officersOnLeave")}</h3>
             {officersOnLeaveThisWeek.length === 0 ? (
               <p style={{ color: "var(--color-text-muted)", fontSize: 13 }}>{t("dutyRoster.noOneOnLeave")}</p>
