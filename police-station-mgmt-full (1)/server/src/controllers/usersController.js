@@ -88,7 +88,7 @@ async function changeMyPassword(req, res) {
 // GET /api/users — admin and oic, lists all personnel at this station
 async function listUsers(req, res) {
   try {
-    const users = await User.find({ stationId: req.user.stationId });
+    const users = await User.find({ stationId: req.user.stationId }).sort({ createdAt: -1, _id: -1 });
     return res.json(users.map((u) => u.toJSON()));
   } catch (err) {
     console.error("listUsers error:", err);

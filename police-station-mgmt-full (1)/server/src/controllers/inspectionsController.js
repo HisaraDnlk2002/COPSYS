@@ -14,7 +14,7 @@ async function generateRefId() {
 async function list(req, res) {
   try {
     const records = await Inspection.find({ stationId: req.user.stationId })
-      .sort({ inspectionDate: -1 })
+      .sort({ inspectionDate: -1, createdAt: -1, _id: -1 })
       .populate("itemId", "itemId itemName category")
       .populate("inspectedBy", "fullName rankAndNumber");
 
@@ -40,6 +40,7 @@ async function list(req, res) {
 async function create(req, res) {
   const {
     itemId,
+    subId,
     inspectionType,
     condition,
     findings,
@@ -70,11 +71,24 @@ async function create(req, res) {
       item.nextInspectionDate = nextInspectionDate;
       item.dueAlertGenerated = false; // fresh cycle — eligible for its own Inspection Due alert later
       if (condition) item.condition = condition;
+      if (subId && item.subItems && item.subItems.length > 0) {
+        const sub = item.subItems.find((s) => s.subId === subId);
+        if (sub) {
+          sub.condition = condition || sub.condition || "good";
+        }
+      }
       item.lastUpdatedBy = req.user.uid;
       await item.save();
     } else {
       item.status = "damaged"; // the key rule: a failed inspection cannot leave the weapon available
       item.condition = condition || "damaged";
+      if (subId && item.subItems && item.subItems.length > 0) {
+        const sub = item.subItems.find((s) => s.subId === subId);
+        if (sub) {
+          sub.status = "damaged";
+          sub.condition = condition || "damaged";
+        }
+      }
       item.lastInspectionDate = now;
       item.nextInspectionDate = null;
       item.lastUpdatedBy = req.user.uid;
@@ -84,6 +98,7 @@ async function create(req, res) {
       const maintenance = await Maintenance.create({
         refId: `MR-${String(maintenanceCount + 1).padStart(4, "0")}`,
         itemId: item._id,
+        subId: subId || null,
         issueDescription: damageIssues || findings || "Failed periodic inspection",
         reportedBy: req.user.uid,
         reportedDate: now,
@@ -94,7 +109,7 @@ async function create(req, res) {
       await generateAlert({
         alertType: "inspection_failed",
         title: "Failed Weapon Inspection",
-        message: `${item.itemId} failed inspection — a maintenance record has been opened.`,
+        message: `${item.itemId}${subId ? ` (${subId})` : ""} failed inspection — a maintenance record has been opened.`,
         itemId: item._id,
         maintenanceId: maintenance._id,
         stationId: req.user.stationId,
@@ -102,7 +117,7 @@ async function create(req, res) {
       await generateAlert({
         alertType: "maintenance_pending",
         title: "Maintenance Pending",
-        message: `${item.itemId} is awaiting maintenance.`,
+        message: `${item.itemId}${subId ? ` (${subId})` : ""} is awaiting maintenance.`,
         itemId: item._id,
         maintenanceId: maintenance._id,
         stationId: req.user.stationId,
@@ -112,6 +127,7 @@ async function create(req, res) {
     const record = await Inspection.create({
       refId: await generateRefId(),
       itemId: item._id,
+      subId: subId || null,
       inspectedBy: req.user.uid,
       inspectionDate: now,
       inspectionType,

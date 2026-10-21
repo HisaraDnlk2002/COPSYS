@@ -62,6 +62,36 @@ const inventorySchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Ensure sub-IDs across items are unique when present
+inventorySchema.index({ "subItems.subId": 1 }, { unique: true, sparse: true });
+
+inventorySchema.pre("validate", function (next) {
+  // Ammunition never has individual sub-items
+  if (this.category === "Ammunition") {
+    this.subItems = [];
+  }
+
+  if (this.subItems && this.subItems.length > 0) {
+    const seen = new Set();
+    const parentId = String(this.itemId || "").trim().toLowerCase();
+    for (const sub of this.subItems) {
+      if (!sub.subId) continue;
+      const sId = String(sub.subId).trim();
+      sub.subId = sId;
+
+      if (seen.has(sId)) {
+        return next(new Error(`Duplicate sub-unit ID "${sId}" within item "${this.itemId}"`));
+      }
+      seen.add(sId);
+
+      if (sId.toLowerCase() === parentId) {
+        return next(new Error(`Sub-unit ID "${sId}" cannot be identical to the parent Item ID`));
+      }
+    }
+  }
+  next();
+});
+
 inventorySchema.methods.toJSON = function () {
   const obj = this.toObject();
   obj.id = obj._id;

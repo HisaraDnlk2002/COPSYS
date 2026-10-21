@@ -285,15 +285,22 @@ export function PersonnelPage() {
     }
   }
 
-  const filteredUsers = users.filter((u) => {
-    const term = search.toLowerCase();
-    return (
-      u.fullName?.toLowerCase().includes(term) ||
-      u.rank?.toLowerCase().includes(term) ||
-      u.rankAndNumber?.toLowerCase().includes(term) ||
-      u.department?.toLowerCase().includes(term)
-    );
-  });
+  const filteredUsers = [...users]
+    .sort((a, b) => {
+      const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      if (tA !== tB) return tB - tA;
+      return String(b.rankAndNumber || b.id || "").localeCompare(String(a.rankAndNumber || a.id || ""), undefined, { numeric: true });
+    })
+    .filter((u) => {
+      const term = search.toLowerCase();
+      return (
+        u.fullName?.toLowerCase().includes(term) ||
+        u.rank?.toLowerCase().includes(term) ||
+        u.rankAndNumber?.toLowerCase().includes(term) ||
+        u.department?.toLowerCase().includes(term)
+      );
+    });
 
   const pendingRequestCount = resetRequests.filter((r) => r.status === "pending").length;
 

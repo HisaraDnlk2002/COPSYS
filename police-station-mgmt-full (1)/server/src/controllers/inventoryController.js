@@ -44,18 +44,48 @@ async function getStats(req, res) {
 // Returns the Equipment Inventory Ledger (page 8): Item ID, Name, Category, Quantity, Status
 async function list(req, res) {
   try {
-    const items = await Inventory.find({ stationId: req.user.stationId }).sort({ itemName: 1 });
-    // Automatically ensure all items with quantity > 1 have individual subItems allocated
+    const items = await Inventory.find({ stationId: req.user.stationId }).sort({ createdAt: -1, _id: -1 });
+    // Automatically clean up any ammunition items that accidentally have subItems
+    // and ensure all weapons with quantity > 1 have unique individual subItems allocated
     for (const item of items) {
-      if (item.quantity > 1 && (!item.subItems || item.subItems.length === 0)) {
-        const padLength = item.quantity >= 100 ? 3 : 2;
-        item.subItems = Array.from({ length: item.quantity }, (_, i) => ({
-          subId: `${item.itemId}-${String(i + 1).padStart(padLength, "0")}`,
-          status: item.status === "issued" ? "issued" : "available",
-          condition: item.condition || "good",
-          assignedTo: item.assignedTo || null,
-        }));
-        await Inventory.updateOne({ _id: item._id }, { $set: { subItems: item.subItems } });
+      if (item.category === AMMUNITION_CATEGORY && item.subItems && item.subItems.length > 0) {
+        item.subItems = [];
+        await Inventory.updateOne({ _id: item._id }, { $set: { subItems: [] } });
+      } else if (item.category !== AMMUNITION_CATEGORY && item.quantity > 1) {
+        if (!item.subItems || item.subItems.length === 0) {
+          const padLength = item.quantity >= 100 ? 3 : 2;
+          item.subItems = Array.from({ length: item.quantity }, (_, i) => ({
+            subId: `${item.itemId}-${String(i + 1).padStart(padLength, "0")}`,
+            status: item.status === "issued" ? "issued" : "available",
+            condition: item.condition || "good",
+            assignedTo: item.assignedTo || null,
+          }));
+          await Inventory.updateOne({ _id: item._id }, { $set: { subItems: item.subItems } });
+        } else {
+          // De-duplicate any subItems if needed
+          const seen = new Set();
+          let hasDuplicates = false;
+          for (const s of item.subItems) {
+            if (seen.has(s.subId)) hasDuplicates = true;
+            seen.add(s.subId);
+          }
+          if (hasDuplicates || item.subItems.length !== item.quantity) {
+            const padLength = Math.max(item.quantity, item.subItems.length) >= 100 ? 3 : 2;
+            const updatedSubItems = Array.from({ length: item.quantity }, (_, idx) => {
+              const existing = item.subItems[idx];
+              const uniqueSubId = `${item.itemId}-${String(idx + 1).padStart(padLength, "0")}`;
+              return {
+                subId: uniqueSubId,
+                status: existing?.status || (item.status === "issued" ? "issued" : "available"),
+                condition: existing?.condition || item.condition || "good",
+                assignedTo: existing?.assignedTo || item.assignedTo || null,
+                lastIssuedDate: existing?.lastIssuedDate || null,
+              };
+            });
+            item.subItems = updatedSubItems;
+            await Inventory.updateOne({ _id: item._id }, { $set: { subItems: item.subItems } });
+          }
+        }
       }
     }
     return res.json(items.map((i) => i.toJSON()));
@@ -88,27 +118,74 @@ async function getNextItemId(req, res) {
 // actually labeled when it arrives.
 const WEAPON_ID_PATTERN = /^\d{5}$/;
 
-// Next 5-digit Item ID after whatever's already in use, scanning only
-// well-formed 5-digit weapon IDs so old/irregular legacy data (a stray
-// 4- or 6-digit itemId from before this was auto-generated) can't skew
-// the sequence. Starts at 10001 if nothing matches. Re-checked for
-// uniqueness in a loop (not just trusted) in case a legacy ID happens to
-// already occupy the next slot.
+// Scans all existing item IDs and sub-unit IDs to ensure the next 5-digit
+// weapon ID does not collide with ANY item ID or sub-unit ID anywhere in the DB.
 async function generateNextWeaponItemId() {
-  const weaponItems = await Inventory.find({
-    category: { $in: WEAPON_CATEGORIES },
-    itemId: { $regex: WEAPON_ID_PATTERN },
-  }).select("itemId");
+  const allItems = await Inventory.find({}).select("itemId subItems.subId");
   let max = 10000;
-  for (const item of weaponItems) {
-    const n = Number(item.itemId);
-    if (n > max) max = n;
+  const usedItemIds = new Set();
+  const usedSubIds = new Set();
+
+  for (const item of allItems) {
+    if (item.itemId) {
+      usedItemIds.add(item.itemId);
+      const match = item.itemId.match(/^(\d{5})/);
+      if (match) {
+        const n = Number(match[1]);
+        if (n > max) max = n;
+      }
+    }
+    if (item.subItems && Array.isArray(item.subItems)) {
+      for (const s of item.subItems) {
+        if (s.subId) {
+          usedSubIds.add(s.subId);
+          const sMatch = s.subId.match(/^(\d{5})/);
+          if (sMatch) {
+            const sn = Number(sMatch[1]);
+            if (sn > max) max = sn;
+          }
+        }
+      }
+    }
   }
+
   let next = max + 1;
-  while (await Inventory.exists({ itemId: String(next).padStart(5, "0") })) {
+  while (true) {
+    const candidate = String(next).padStart(5, "0");
+    const collidesDirect = usedItemIds.has(candidate) || usedSubIds.has(candidate);
+
+    let collidesPrefix = false;
+    const prefix = `${candidate}-`;
+    for (const id of usedItemIds) {
+      if (id.startsWith(prefix)) {
+        collidesPrefix = true;
+        break;
+      }
+    }
+    if (!collidesPrefix) {
+      for (const sid of usedSubIds) {
+        if (sid.startsWith(prefix)) {
+          collidesPrefix = true;
+          break;
+        }
+      }
+    }
+
+    if (!collidesDirect && !collidesPrefix) {
+      const existsInDb = await Inventory.exists({
+        $or: [
+          { itemId: candidate },
+          { "subItems.subId": candidate },
+          { itemId: { $regex: `^${candidate}-` } },
+          { "subItems.subId": { $regex: `^${candidate}-` } },
+        ],
+      });
+      if (!existsInDb) {
+        return candidate;
+      }
+    }
     next += 1;
   }
-  return String(next).padStart(5, "0");
 }
 
 async function create(req, res) {
@@ -169,11 +246,17 @@ async function create(req, res) {
 
   try {
     let resolvedItemId = isAmmunition ? String(itemId).trim() : await generateNextWeaponItemId();
-    if (isAmmunition) {
-      const existing = await Inventory.findOne({ itemId: resolvedItemId });
-      if (existing) {
-        return res.status(409).json({ error: "An item with that ID already exists" });
-      }
+
+    // 1. Verify resolvedItemId does not exist as an itemId in any item
+    const existingAsItem = await Inventory.findOne({ itemId: resolvedItemId });
+    if (existingAsItem) {
+      return res.status(409).json({ error: `An item with ID "${resolvedItemId}" already exists` });
+    }
+
+    // 2. Verify resolvedItemId does not exist as a subId in any item
+    const existingAsSub = await Inventory.findOne({ "subItems.subId": resolvedItemId });
+    if (existingAsSub) {
+      return res.status(409).json({ error: `ID "${resolvedItemId}" is already in use as a sub-unit ID` });
     }
 
     // Allocate individual Sub IDs when quantity is more than one (e.g. 10004-01, 10004-02...)
@@ -188,6 +271,19 @@ async function create(req, res) {
           }))
         : [];
     let subItems = buildSubItems(resolvedItemId);
+
+    // Verify none of the generated subIds collide with existing itemIds or subIds
+    if (subItems.length > 0) {
+      const generatedSubIds = subItems.map((s) => s.subId);
+      const conflictItemId = await Inventory.findOne({ itemId: { $in: generatedSubIds } }).select("itemId");
+      if (conflictItemId) {
+        return res.status(409).json({ error: `Generated Sub-ID "${conflictItemId.itemId}" conflicts with an existing Item ID` });
+      }
+      const conflictSubId = await Inventory.findOne({ "subItems.subId": { $in: generatedSubIds } }).select("subItems.subId");
+      if (conflictSubId) {
+        return res.status(409).json({ error: "One or more generated sub-IDs already exist in the inventory" });
+      }
+    }
 
     // A brand-new weapon goes on the periodic inspection schedule
     // immediately — counted from its last inspection if one is known,
@@ -776,7 +872,7 @@ async function listTransactions(req, res) {
     if (type) filter.type = type;
 
     const transactions = await InventoryTransaction.find(filter)
-      .sort({ dateTime: -1 })
+      .sort({ dateTime: -1, createdAt: -1, _id: -1 })
       .populate("itemId", "itemId itemName category")
       .populate("ammoItemId", "itemId itemName")
       .populate("officerId", "fullName rankAndNumber department")
@@ -860,7 +956,7 @@ async function getMyWeapons(req, res) {
     }
     const assignedItemIds = [...netByItem.values()].filter((e) => e.net > 0).map((e) => e.item._id);
     const assigned = assignedItemIds.length
-      ? await Inventory.find({ _id: { $in: assignedItemIds } }).sort({ itemName: 1 })
+      ? await Inventory.find({ _id: { $in: assignedItemIds } }).sort({ createdAt: -1, _id: -1 })
       : [];
 
     // One row per physical weapon in custody (so a unit shows by its exact

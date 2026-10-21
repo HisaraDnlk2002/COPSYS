@@ -65,7 +65,17 @@ function SubIdsCell({ row }) {
   const subs = row.subItems || [];
   if (!subs || subs.length === 0) return <span style={{ color: "var(--color-text-muted)" }}>—</span>;
 
-  const availableCount = subs.filter((s) => s.status === "available").length;
+  // Filter out any duplicate subIds defensively for rendering
+  const uniqueSubs = [];
+  const seen = new Set();
+  for (const s of subs) {
+    if (s && s.subId && !seen.has(s.subId)) {
+      seen.add(s.subId);
+      uniqueSubs.push(s);
+    }
+  }
+
+  const availableCount = uniqueSubs.filter((s) => s.status === "available").length;
 
   return (
     <div className="subid-dropdown-cell" onClick={(e) => e.stopPropagation()}>
@@ -73,12 +83,12 @@ function SubIdsCell({ row }) {
         className="subid-table-dropdown"
         defaultValue=""
         onClick={(e) => e.stopPropagation()}
-        title={`${subs.length} units allocated`}
+        title={`${uniqueSubs.length} units allocated`}
       >
         <option value="" disabled>
-          {subs.length} {subs.length === 1 ? "Unit" : "Units"} ({availableCount} Avail) ▾
+          {uniqueSubs.length} {uniqueSubs.length === 1 ? "Unit" : "Units"} ({availableCount} Avail) ▾
         </option>
-        {subs.map((s) => (
+        {uniqueSubs.map((s) => (
           <option key={s.subId} value={s.subId}>
             {s.subId} — {s.status || "available"}{s.condition ? ` · ${s.condition}` : ""}{s.assignedTo?.fullName ? ` · Assigned to: ${s.assignedTo.fullName}` : ""}
           </option>
@@ -573,6 +583,20 @@ export function InventoryPage() {
       return;
     }
 
+    if (addingAmmunition) {
+      const cleanBatchId = addForm.weaponSerialId.trim().toLowerCase();
+      const existingItem = items.find((i) => i.itemId.toLowerCase() === cleanBatchId);
+      if (existingItem) {
+        setModalError(t("inventory.errDuplicateItemId"));
+        return;
+      }
+      const existingSub = items.find((i) => i.subItems?.some((s) => s.subId.toLowerCase() === cleanBatchId));
+      if (existingSub) {
+        setModalError(t("inventory.errDuplicateSubId"));
+        return;
+      }
+    }
+
     const quantity = Number(addForm.quantity);
     if (!Number.isInteger(quantity) || quantity < 0) {
       setModalError(t("inventory.errQuantityInvalid"));
@@ -858,10 +882,37 @@ export function InventoryPage() {
     );
   }
 
+  // Sorts records so that the last added records appear at the top
+  function sortByLastAdded(arr, dateKeys = ["createdAt", "dateTime", "reportedDate", "inspectionDate"]) {
+    return [...arr].sort((a, b) => {
+      let timeA = 0;
+      let timeB = 0;
+      for (const k of dateKeys) {
+        if (a[k]) {
+          timeA = new Date(a[k]).getTime();
+          break;
+        }
+      }
+      for (const k of dateKeys) {
+        if (b[k]) {
+          timeB = new Date(b[k]).getTime();
+          break;
+        }
+      }
+      if (timeA !== timeB && !isNaN(timeA) && !isNaN(timeB) && timeA > 0 && timeB > 0) {
+        return timeB - timeA;
+      }
+      const idA = String(a.itemId || a.id || a._id || a.refId || "");
+      const idB = String(b.itemId || b.id || b._id || b.refId || "");
+      return idB.localeCompare(idA, undefined, { numeric: true });
+    });
+  }
+
   // Ammunition is its own tab, so the Weapon Details ledger holds
   // everything else — firearms, less-lethal and other weapons.
-  const weaponItems = items.filter((i) => i.category !== AMMUNITION_CATEGORY);
-  const ammunitionItems = items.filter((i) => i.category === AMMUNITION_CATEGORY);
+  // Both tables display the last added items at the top.
+  const weaponItems = sortByLastAdded(items.filter((i) => i.category !== AMMUNITION_CATEGORY));
+  const ammunitionItems = sortByLastAdded(items.filter((i) => i.category === AMMUNITION_CATEGORY));
   const filteredItems = weaponItems.filter(
     (i) => (categoryFilter === "all" || i.category === categoryFilter) && matchesItemSearch(i)
   );
@@ -878,7 +929,7 @@ export function InventoryPage() {
 
   const padLength = addQuantityNum >= 100 ? 3 : 2;
   const addFormSubIds =
-    addQuantityNum > 1
+    !isAddingAmmunition && addQuantityNum > 1
       ? Array.from({ length: addQuantityNum }, (_, i) => {
           const subId = `${previewBaseId}-${String(i + 1).padStart(padLength, "0")}`;
           return {
@@ -903,47 +954,49 @@ export function InventoryPage() {
     });
   }
 
-  const filteredIssueTx = filterTransactions(issueTx);
+  const filteredIssueTx = sortByLastAdded(filterTransactions(issueTx), ["dateTime", "createdAt"]);
   // A faulty return is stored as type "damaged" but is still a return, and
   // it must be checked in just like a good one — so Return Records lists both.
-  const returnRecords = [...returnTx, ...damagedTx].sort((a, b) => new Date(b.dateTime) - new Date(a.dateTime));
+  const returnRecords = sortByLastAdded([...returnTx, ...damagedTx], ["dateTime", "createdAt"]);
   const filteredReturnTx = filterTransactions(returnRecords);
 
   // Combined "Audit Ledger" tab — all three transaction types together,
   // newest first, instead of segregated by type like the other tabs.
-  // Built from what's already loaded rather than a new endpoint; each
-  // transaction already carries its own `type`, so no reshaping needed.
-  const allTx = [...issueTx, ...returnTx, ...damagedTx].sort(
-    (a, b) => new Date(b.dateTime) - new Date(a.dateTime)
-  );
+  const allTx = sortByLastAdded([...issueTx, ...returnTx, ...damagedTx], ["dateTime", "createdAt"]);
   const filteredLedgerTx = filterTransactions(allTx).filter(
     (tx) => typeFilter === "all" || tx.type === typeFilter
   );
 
-  const filteredMaintenanceRecords = maintenanceRecords.filter((r) => {
-    if (!inDateRange(r.reportedDate)) return false;
-    if (!q) return true;
-    return (
-      r.refId?.toLowerCase().includes(q) ||
-      r.itemId?.itemId?.toLowerCase().includes(q) ||
-      r.itemId?.itemName?.toLowerCase().includes(q) ||
-      r.issueDescription?.toLowerCase().includes(q) ||
-      r.reportedBy?.fullName?.toLowerCase().includes(q) ||
-      r.assignedTechnician?.toLowerCase().includes(q)
-    );
-  });
+  const filteredMaintenanceRecords = sortByLastAdded(
+    maintenanceRecords.filter((r) => {
+      if (!inDateRange(r.reportedDate)) return false;
+      if (!q) return true;
+      return (
+        r.refId?.toLowerCase().includes(q) ||
+        r.itemId?.itemId?.toLowerCase().includes(q) ||
+        r.itemId?.itemName?.toLowerCase().includes(q) ||
+        r.issueDescription?.toLowerCase().includes(q) ||
+        r.reportedBy?.fullName?.toLowerCase().includes(q) ||
+        r.assignedTechnician?.toLowerCase().includes(q)
+      );
+    }),
+    ["createdAt", "reportedDate"]
+  );
 
-  const filteredInspectionRecords = inspectionRecords.filter((r) => {
-    if (!inDateRange(r.inspectionDate)) return false;
-    if (!q) return true;
-    return (
-      r.refId?.toLowerCase().includes(q) ||
-      r.itemId?.itemId?.toLowerCase().includes(q) ||
-      r.itemId?.itemName?.toLowerCase().includes(q) ||
-      r.inspectedBy?.fullName?.toLowerCase().includes(q) ||
-      r.findings?.toLowerCase().includes(q)
-    );
-  });
+  const filteredInspectionRecords = sortByLastAdded(
+    inspectionRecords.filter((r) => {
+      if (!inDateRange(r.inspectionDate)) return false;
+      if (!q) return true;
+      return (
+        r.refId?.toLowerCase().includes(q) ||
+        r.itemId?.itemId?.toLowerCase().includes(q) ||
+        r.itemId?.itemName?.toLowerCase().includes(q) ||
+        r.inspectedBy?.fullName?.toLowerCase().includes(q) ||
+        r.findings?.toLowerCase().includes(q)
+      );
+    }),
+    ["createdAt", "inspectionDate"]
+  );
 
   // Everything physically in the armory (not out with an officer, and
   // not currently missing) is eligible for a "Due Inspections" alert —
@@ -1723,7 +1776,7 @@ export function InventoryPage() {
             value={addForm.quantity}
             onChange={(e) => setAddForm((f) => ({ ...f, quantity: capRounds(e.target.value) }))}
           />
-          {addQuantityNum > 1 && (
+          {addQuantityNum > 1 && !isAddingAmmunition && (
             <InputField
               label={`${t("inventory.colSubIds")} (${addFormSubIds.length} ${t("inventory.units") || "Units"})`}
               type="select"
