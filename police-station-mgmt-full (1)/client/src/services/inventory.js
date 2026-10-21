@@ -158,6 +158,19 @@ export async function issueItem(itemId, payload) {
   return api.post(`/inventory/${itemId}/issue`, payload);
 }
 
+export async function returnItem(itemId, payload) {
+  if (USE_DUMMY_DATA) {
+    const newReturn = {
+      id: `r${dummyReturnTransactions.length + 1}`,
+      itemId,
+      ...payload,
+    };
+    dummyReturnTransactions.unshift(newReturn);
+    return Promise.resolve(newReturn);
+  }
+  return api.post(`/inventory/${itemId}/return`, payload);
+}
+
 // POST /api/inventory/my-weapons/return — the officer reporting their own
 // return from My Weapons. payload: { itemId (the weapon's Inventory id),
 // condition: "Good" | "Faulty", remarks (reason, required if Faulty),

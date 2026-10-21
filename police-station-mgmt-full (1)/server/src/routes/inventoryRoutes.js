@@ -6,6 +6,7 @@ const {
   create,
   update,
   issue,
+  returnItem,
   submitMyReturn,
   listTransactions,
   getMyWeapons,
@@ -55,6 +56,7 @@ router.patch("/transactions/:id/review", requireRole("inventory_officer"), revie
 router.post("/", requireRole("inventory_officer"), create);
 router.patch("/:id", requireRole("inventory_officer"), update);
 router.post("/:id/issue", requireRole("inventory_officer"), issue);
+router.post("/:id/return", requireRole("inventory_officer"), returnItem);
 router.post("/:id/report-missing", requireRole("inventory_officer"), reportMissing);
 router.post("/:id/restock", requireRole("inventory_officer"), restock);
 

@@ -698,6 +698,227 @@ async function issue(req, res) {
   }
 }
 
+// POST /api/inventory/:id/return — inventory_officer
+// Direct return recorded and verified by the Inventory Officer at the armory desk.
+async function returnItem(req, res) {
+  const {
+    officerId,
+    condition,
+    remarks,
+    dateTime,
+    ammoReturned,
+    ammoDeclaredUsed,
+    accessoriesComplete,
+    accessoriesRemarks,
+    subId,
+  } = req.body;
+
+  if (!officerId || !condition) {
+    return res.status(400).json({ error: "Officer ID and condition are required" });
+  }
+  const conditionNorm = typeof condition === "string" ? condition.trim().toLowerCase() : "";
+  if (!["good", "faulty"].includes(conditionNorm)) {
+    return res.status(400).json({ error: "Condition must be Good or Faulty" });
+  }
+  if (conditionNorm === "faulty" && !remarks?.trim()) {
+    return res.status(400).json({ error: "Give the reason the weapon is faulty" });
+  }
+
+  try {
+    const item = await Inventory.findById(req.params.id);
+    if (!item || item.stationId !== req.user.stationId) return res.status(404).json({ error: "Item not found" });
+
+    // The officer's open issue for this weapon
+    const outstanding = await getOutstandingIssues(officerId);
+    const open = outstanding.find((e) => String(e.item._id) === String(item._id));
+    if (!open) {
+      return res.status(400).json({ error: "This officer has no open issue for this item" });
+    }
+    const sourceIssue = open.lastIssue;
+    const resolvedSubId = subId || sourceIssue?.subId || null;
+    const quantity = open.net;
+
+    const issuedRounds = hasValue(sourceIssue?.ammoIssued) && sourceIssue.ammoIssued > 0 ? sourceIssue.ammoIssued : null;
+    const returnedRounds = hasValue(ammoReturned) ? Number(ammoReturned) : null;
+    const declaredUsed = hasValue(ammoDeclaredUsed) ? Number(ammoDeclaredUsed) : null;
+    if (issuedRounds === null && ((returnedRounds ?? 0) > 0 || (declaredUsed ?? 0) > 0)) {
+      return res.status(400).json({ error: "No ammunition was issued with this weapon" });
+    }
+
+    if (issuedRounds !== null && issuedRounds > 0 && (returnedRounds === null || declaredUsed === null)) {
+      return res.status(400).json({ error: "Count the returned rounds and record the rounds the officer declares used" });
+    }
+    if ([returnedRounds, declaredUsed].some((n) => n !== null && (!Number.isInteger(n) || n < 0))) {
+      return res.status(400).json({ error: "Ammunition counts must be whole numbers" });
+    }
+    if (issuedRounds !== null && returnedRounds !== null && returnedRounds > issuedRounds) {
+      return res.status(400).json({ error: "Ammunition returned cannot exceed ammunition issued" });
+    }
+    if (issuedRounds !== null && declaredUsed !== null && declaredUsed > issuedRounds) {
+      return res.status(400).json({ error: "Rounds declared used cannot exceed ammunition issued" });
+    }
+
+    const ammoUsed = issuedRounds !== null && returnedRounds !== null ? issuedRounds - returnedRounds : null;
+    const ammoDiscrepancy = ammoUsed !== null && declaredUsed !== null ? ammoUsed - declaredUsed : null;
+    const accessoriesAllBack =
+      accessoriesComplete === undefined || accessoriesComplete === null || accessoriesComplete === ""
+        ? null
+        : accessoriesComplete === true || accessoriesComplete === "true";
+    if (accessoriesAllBack === false && !accessoriesRemarks?.trim()) {
+      return res.status(400).json({ error: "Note which accessories are missing" });
+    }
+
+    const transactionType = conditionNorm === "faulty" ? "damaged" : "return";
+
+    // If there was an open pending return already submitted by the officer, update it; otherwise create new
+    let transaction = await InventoryTransaction.findOne({
+      officerId,
+      itemId: item._id,
+      subId: resolvedSubId,
+      type: { $in: ["return", "damaged"] },
+      confirmationStatus: "pending",
+      dateTime: { $gte: sourceIssue?.dateTime || new Date(0) },
+    }).sort({ dateTime: -1 });
+
+    if (transaction) {
+      transaction.processedBy = req.user.uid;
+      transaction.type = transactionType;
+      transaction.condition = conditionNorm === "faulty" ? "Faulty" : "Good";
+      transaction.remarks = remarks || transaction.remarks;
+      transaction.ammoReturned = returnedRounds;
+      transaction.ammoUsed = ammoUsed;
+      transaction.ammoDeclaredUsed = declaredUsed;
+      transaction.ammoDiscrepancy = ammoDiscrepancy;
+      transaction.accessoriesComplete = accessoriesAllBack;
+      transaction.accessoriesRemarks = accessoriesRemarks?.trim() || transaction.accessoriesRemarks;
+      transaction.confirmationStatus = "secured";
+      transaction.confirmedAt = new Date();
+      transaction.confirmationRemarks = "Verified and returned directly by Inventory Officer";
+      await transaction.save();
+    } else {
+      transaction = await InventoryTransaction.create({
+        itemId: item._id,
+        subId: resolvedSubId,
+        officerId,
+        processedBy: req.user.uid,
+        type: transactionType,
+        dutyType: sourceIssue?.dutyType || "",
+        quantity,
+        dateTime: dateTime || new Date(),
+        condition: conditionNorm === "faulty" ? "Faulty" : "Good",
+        remarks,
+        ammoIssued: issuedRounds,
+        ammoReturned: returnedRounds,
+        ammoUsed,
+        ammoDeclaredUsed: declaredUsed,
+        ammoDiscrepancy,
+        ammoItemId: sourceIssue?.ammoItemId || null,
+        accessories: sourceIssue?.accessories || "",
+        accessoriesComplete: accessoriesAllBack,
+        accessoriesRemarks: accessoriesRemarks?.trim() || "",
+        confirmationStatus: "secured",
+        confirmedAt: new Date(),
+        confirmationRemarks: "Verified and returned directly by Inventory Officer",
+        stationId: req.user.stationId,
+      });
+    }
+
+    // Update inventory item stock and status
+    item.quantity += quantity;
+    item.status = transactionType === "damaged" ? "damaged" : "available";
+    item.condition = conditionNorm === "faulty" ? "faulty" : "good";
+    item.assignedTo = null;
+    item.lastUpdatedBy = req.user.uid;
+
+    if (resolvedSubId && item.subItems && item.subItems.length > 0) {
+      const sub = item.subItems.find((s) => s.subId === resolvedSubId);
+      if (sub) {
+        sub.status = transactionType === "damaged" ? "damaged" : "available";
+        sub.condition = conditionNorm === "faulty" ? "faulty" : "good";
+        sub.assignedTo = null;
+      }
+    }
+    await item.save();
+
+    // If faulty, open maintenance
+    if (transactionType === "damaged") {
+      const maintenanceCount = await Maintenance.countDocuments();
+      await Maintenance.create({
+        refId: `MR-${String(maintenanceCount + 1).padStart(4, "0")}`,
+        itemId: item._id,
+        subId: resolvedSubId || null,
+        issueDescription: `${remarks || "Reported damaged on return"}${resolvedSubId ? ` (Unit: ${resolvedSubId})` : ""}`,
+        reportedBy: officerId,
+        reportedDate: new Date(),
+        sourceTransactionId: transaction._id,
+        stationId: transaction.stationId,
+      });
+
+      await generateAlert({
+        alertType: "weapon_damage",
+        title: "Serious Weapon Damage",
+        message: `${item.itemId} return confirmed and secured. It was reported faulty, so a maintenance record has been opened.`,
+        itemId: item._id,
+        transactionId: transaction._id,
+        recipientId: officerId,
+        stationId: transaction.stationId,
+      });
+      await generateAlert({
+        alertType: "maintenance_pending",
+        title: "Maintenance Pending",
+        message: `${item.itemId} is awaiting maintenance.`,
+        itemId: item._id,
+        transactionId: transaction._id,
+        stationId: transaction.stationId,
+      });
+    } else {
+      await generateAlert({
+        alertType: "weapon_returned",
+        title: "Weapon Returned",
+        message: `${item.itemId} return confirmed and secured.`,
+        itemId: item._id,
+        transactionId: transaction._id,
+        recipientId: officerId,
+        stationId: transaction.stationId,
+      });
+    }
+
+    // Restock ammunition
+    if (sourceIssue?.ammoItemId && returnedRounds > 0) {
+      const ammoItem = await Inventory.findById(sourceIssue.ammoItemId);
+      if (ammoItem) {
+        ammoItem.quantity += returnedRounds;
+        ammoItem.lastUpdatedBy = req.user.uid;
+        await ammoItem.save();
+        await syncLowStockAlert(ammoItem);
+      }
+    }
+
+    if (ammoDiscrepancy && ammoDiscrepancy !== 0) {
+      await generateAlert({
+        alertType: "ammo_discrepancy",
+        title: "Ammunition Discrepancy Flagged",
+        message: `Discrepancy of ${Math.abs(ammoDiscrepancy)} round(s) detected during return of ${item.itemId}.`,
+        itemId: item._id,
+        transactionId: transaction._id,
+        recipientId: officerId,
+        stationId: transaction.stationId,
+      });
+    }
+
+    const officer = await User.findById(officerId).select("fullName");
+    logAuditForActor(req, {
+      action: `Returned ${item.itemId} (${item.itemName})${resolvedSubId ? ` [${resolvedSubId}]` : ""} from ${officer?.fullName || "an officer"}${ammoUsed !== null ? ` (rounds used: ${ammoUsed}, declared: ${declaredUsed})` : ""}`,
+      module: "Inventory",
+    });
+
+    return res.status(201).json(transaction.toJSON());
+  } catch (err) {
+    console.error("return inventory error:", err);
+    return res.status(500).json({ error: "Could not process return transaction" });
+  }
+}
+
 // POST /api/inventory/my-weapons/return — the OFFICER holding the weapon
 // (any operational role). They report the return from their My Weapons
 // page: condition (Good/Faulty, reason required if Faulty), rounds handed
@@ -1058,9 +1279,6 @@ async function confirmTransaction(req, res) {
       if (req.user.role !== "inventory_officer" || tx.stationId !== req.user.stationId) {
         return res.status(403).json({ error: "Only the Inventory Officer can confirm a return" });
       }
-      if (String(tx.officerId) === String(req.user.uid)) {
-        return res.status(403).json({ error: "You cannot confirm your own return — another Inventory Officer must check it" });
-      }
     } else if (String(tx.officerId) !== String(req.user.uid)) {
       return res.status(403).json({ error: "Only the officer on this transaction can confirm it" });
     }
@@ -1274,9 +1492,6 @@ async function rejectTransaction(req, res) {
       if (req.user.role !== "inventory_officer" || tx.stationId !== req.user.stationId) {
         return res.status(403).json({ error: "Only the Inventory Officer can reject a return" });
       }
-      if (String(tx.officerId) === String(req.user.uid)) {
-        return res.status(403).json({ error: "You cannot reject your own return — another Inventory Officer must check it" });
-      }
     } else if (String(tx.officerId) !== String(req.user.uid)) {
       return res.status(403).json({ error: "Only the officer on this transaction can reject it" });
     }
@@ -1434,6 +1649,7 @@ module.exports = {
   update,
   restock,
   issue,
+  returnItem,
   submitMyReturn,
   listTransactions,
   getMyWeapons,

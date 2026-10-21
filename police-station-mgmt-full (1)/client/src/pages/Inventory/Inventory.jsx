@@ -1168,9 +1168,6 @@ export function InventoryPage() {
       // A return the officer submitted: the Inventory Officer checks the
       // weapon and confirms or rejects it. Never the officer's own return.
       if (row.type !== "issue" && row.confirmationStatus === "pending") {
-        if (String(row.officerId?._id) === String(user?.id)) {
-          return <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>{t("inventory.ownReturnNote")}</span>;
-        }
         return (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <Button variant="primary" onClick={() => openCheck(row, "confirm")}>{t("inventory.checkReturnConfirmBtn")}</Button>

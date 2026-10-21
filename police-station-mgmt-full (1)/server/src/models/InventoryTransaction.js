@@ -109,7 +109,7 @@ const inventoryTransactionSchema = new mongoose.Schema(
     // Inventory Officer. resubmitCount counts how many times a rejected
     // return was corrected and sent again (it replaces the old record in
     // place, so there is only ever one record per return).
-    initiatedBy: { type: String, enum: ["officer", null], default: null },
+    initiatedBy: { type: String, enum: ["officer", "inventory_officer", null], default: null },
     resubmitCount: { type: Number, default: 0 },
 
     stationId: { type: String, default: "default-station" },
