@@ -5,6 +5,7 @@ const Maintenance = require("../models/Maintenance");
 const User = require("../models/User");
 const LeaveRequest = require("../models/LeaveRequest");
 const { generateAlert } = require("../utils/alerts");
+const { sendToUser } = require("../utils/sseHub");
 const { logAuditForActor } = require("../utils/auditLogger");
 const {
   WEAPON_CATALOG,
@@ -1050,6 +1051,7 @@ async function confirmTransaction(req, res) {
       return res.status(400).json({ error: "This transaction type cannot be confirmed" });
     }
     const returnLike = tx.type === "return" || tx.type === "damaged";
+    let selfVerified = false;
     if (returnLike) {
       // The Inventory Officer is the one physically holding the weapon at
       // this point, so only they can confirm a return — never the officer
@@ -1059,7 +1061,21 @@ async function confirmTransaction(req, res) {
         return res.status(403).json({ error: "Only the Inventory Officer can confirm a return" });
       }
       if (String(tx.officerId) === String(req.user.uid)) {
-        return res.status(403).json({ error: "You cannot confirm your own return — another Inventory Officer must check it" });
+        // Normally someone else must check an Inventory Officer's own
+        // return. If this station has no other active Inventory Officer,
+        // nobody else can, so the officer confirms it themselves and the
+        // return is flagged to the OIC for review afterwards (see the
+        // self_verified_return alert below).
+        const otherInventoryOfficers = await User.countDocuments({
+          stationId: req.user.stationId,
+          role: "inventory_officer",
+          status: "active",
+          _id: { $ne: req.user.uid },
+        });
+        if (otherInventoryOfficers > 0) {
+          return res.status(403).json({ error: "You cannot confirm your own return — another Inventory Officer must check it" });
+        }
+        selfVerified = true;
       }
     } else if (String(tx.officerId) !== String(req.user.uid)) {
       return res.status(403).json({ error: "Only the officer on this transaction can confirm it" });
@@ -1195,13 +1211,42 @@ async function confirmTransaction(req, res) {
     tx.confirmedAt = new Date();
     tx.confirmationRemarks = req.body.remarks || null;
     if (returnLike) tx.processedBy = req.user.uid; // the Inventory Officer who checked it in
+    if (selfVerified) tx.selfVerified = true;
     await tx.save();
 
     const confirmedItem = await Inventory.findById(tx.itemId).select("itemId");
     logAuditForActor(req, {
-      action: `Confirmed ${tx.type === "issue" ? "receipt" : "return"} of ${confirmedItem?.itemId || "a weapon"}`,
+      action: selfVerified
+        ? `Confirmed own return of ${confirmedItem?.itemId || "a weapon"} (only Inventory Officer — flagged for OIC review)`
+        : `Confirmed ${tx.type === "issue" ? "receipt" : "return"} of ${confirmedItem?.itemId || "a weapon"}`,
       module: "Inventory",
     });
+
+    if (selfVerified) {
+      // The return is already secured; a failure to raise the flag must
+      // not turn that into an error response, so it is only logged.
+      try {
+        const self = await User.findById(req.user.uid).select("fullName rankAndNumber");
+        const alertTitle = "Return Checked by the Same Officer";
+        await generateAlert({
+          alertType: "self_verified_return",
+          title: alertTitle,
+          message: `${confirmedItem?.itemId || "A weapon"} was returned and confirmed by the same Inventory Officer (${
+            self?.fullName || self?.rankAndNumber || "unknown"
+          }), the station's only active Inventory Officer. Please review this return.`,
+          itemId: tx.itemId,
+          transactionId: tx._id,
+          stationId: tx.stationId,
+        });
+        // Live push so the OIC sees it straight away if they are online.
+        const oics = await User.find({ stationId: tx.stationId, role: "oic", status: "active" }).select("_id");
+        for (const oic of oics) {
+          sendToUser(oic._id, { type: "alert", alertType: "self_verified_return", priority: "warning", title: alertTitle });
+        }
+      } catch (alertErr) {
+        console.error("self_verified_return alert error:", alertErr);
+      }
+    }
 
     return res.json(tx.toJSON());
   } catch (err) {

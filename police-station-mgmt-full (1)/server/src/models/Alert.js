@@ -22,6 +22,7 @@ const ALERT_TYPES = [
   "inspection_due",
   "maintenance_pending",
   "return_awaiting_confirmation",
+  "self_verified_return",
   "leave_rejected",
   // info
   "weapon_issued",
@@ -49,6 +50,7 @@ const ALERT_SOURCE_BY_TYPE = {
   inspection_due: "inventory",
   maintenance_pending: "inventory",
   return_awaiting_confirmation: "inventory",
+  self_verified_return: "inventory",
   weapon_issued: "inventory",
   weapon_returned: "inventory",
   maintenance_completed: "inventory",

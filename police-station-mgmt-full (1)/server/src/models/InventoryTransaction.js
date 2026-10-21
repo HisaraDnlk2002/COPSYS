@@ -94,6 +94,12 @@ const inventoryTransactionSchema = new mongoose.Schema(
     // still-pending transaction, so the alert scan doesn't repeat it.
     confirmationReminderGenerated: { type: Boolean, default: false },
 
+    // Return/damaged only. true when the station's only active Inventory
+    // Officer confirmed their OWN return (nobody else could check it).
+    // Such a return is flagged to the OIC with a "self_verified_return"
+    // alert for after-the-fact review (see confirmTransaction).
+    selfVerified: { type: Boolean, default: false },
+
     // Reject-and-review workflow. The officer must give a reason when
     // rejecting; the Inventory Officer then either sends it back for
     // confirmation or cancels it (reviewTransaction). Nothing about stock

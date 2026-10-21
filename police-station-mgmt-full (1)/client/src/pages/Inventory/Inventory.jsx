@@ -1169,6 +1169,18 @@ export function InventoryPage() {
       // weapon and confirms or rejects it. Never the officer's own return.
       if (row.type !== "issue" && row.confirmationStatus === "pending") {
         if (String(row.officerId?._id) === String(user?.id)) {
+          // The station's only Inventory Officer may confirm their own
+          // return; it is then flagged to the OIC for review. (The server
+          // refuses if another Inventory Officer exists.) Any other role
+          // just sees the note.
+          if (user?.role === "inventory_officer") {
+            return (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <Button variant="primary" onClick={() => openCheck(row, "confirm")}>{t("inventory.checkReturnConfirmBtn")}</Button>
+                <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>{t("inventory.ownReturnSelfConfirmNote")}</span>
+              </div>
+            );
+          }
           return <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>{t("inventory.ownReturnNote")}</span>;
         }
         return (
